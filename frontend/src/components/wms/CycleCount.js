@@ -1,4 +1,4 @@
-import { Fragment, useState, useEffect, useCallback } from "react";
+import { Fragment, useState, useEffect, useCallback, useRef } from "react";
 import { toast } from "sonner";
 import { ArrowLeft, ChevronUp, ChevronDown, MapPin, Loader2, Download, CheckCircle, Plus, ClipboardList, Trash2, History, BarChart3, FileSpreadsheet, AlertTriangle, Shuffle } from "lucide-react";
 import * as XLSX from "xlsx";
@@ -45,6 +45,10 @@ const fmtHourKey = (k) => `${k.slice(8, 10)}/${k.slice(5, 7)} ${k.slice(11, 13)}
 
 export const CycleCountModule = () => {
   const { t } = useLang();
+  // Las cargas memoizadas (loadKpis) no deben re-correr al cambiar idioma: el
+  // traductor va por ref.
+  const tRef = useRef(t);
+  useEffect(() => { tRef.current = t; }, [t]);
   const { user } = useAuth();
   const isAdmin = ['admin', 'supersu', 'inspector_qc', 'qc'].includes(user?.role);
   // Nivel de inventario efectivo (mismo criterio que WMS.js / deps.get_inventory_level):
@@ -121,7 +125,7 @@ export const CycleCountModule = () => {
     try {
       setKpiReport(await fetcher(`/cycle-counts/${countId}/report`));
     } catch {
-      toast.error('Error cargando KPIs del conteo');
+      toast.error(tRef.current('wms_cc_kpi_load_err'));
       setKpiReport(null);
     } finally {
       setLoadingKpi(false);
@@ -138,7 +142,7 @@ export const CycleCountModule = () => {
   const [effOpen, setEffOpen] = useState(null); // by_name del contador expandido
 
   const loadEfficiency = async () => {
-    if (!effFrom || !effTo) { toast.error('Selecciona ambas fechas'); return; }
+    if (!effFrom || !effTo) { toast.error(t('wms_cc_select_both_dates')); return; }
     setLoadingEff(true);
     try {
       // Fechas locales → instantes UTC: [desde 00:00 local, hasta+1día 00:00 local)
@@ -149,7 +153,7 @@ export const CycleCountModule = () => {
       setEffEvents(data.events || []);
       setEffOpen(null);
     } catch {
-      toast.error('Error cargando eficiencia');
+      toast.error(t('wms_cc_eff_load_err'));
     } finally {
       setLoadingEff(false);
     }
@@ -351,9 +355,9 @@ export const CycleCountModule = () => {
       auditorStats[name].units += (l.counted_qty || 0);
       if (l.discrepancy && l.discrepancy !== 0) auditorStats[name].diffs += 1;
       if (l.counted_at) {
-        const t = new Date(l.counted_at);
-        if (!auditorStats[name].first || t < auditorStats[name].first) auditorStats[name].first = t;
-        if (!auditorStats[name].last  || t > auditorStats[name].last)  auditorStats[name].last  = t;
+        const ts = new Date(l.counted_at);
+        if (!auditorStats[name].first || ts < auditorStats[name].first) auditorStats[name].first = ts;
+        if (!auditorStats[name].last  || ts > auditorStats[name].last)  auditorStats[name].last  = ts;
       }
     });
     const prodData = Object.entries(auditorStats)
@@ -421,9 +425,9 @@ export const CycleCountModule = () => {
     setExportingId(countId);
     try {
       const rd = await fetcher(`/cycle-counts/${countId}/report`);
-      if (!rd || !rd.count_id) { toast.error('No se pudo generar el reporte de este conteo'); return; }
+      if (!rd || !rd.count_id) { toast.error(t('wms_cc_report_err')); return; }
       exportExcel(rd);
-    } catch { toast.error('No se pudo generar el reporte de este conteo'); }
+    } catch { toast.error(t('wms_cc_report_err')); }
     finally { setExportingId(null); }
   };
 
@@ -451,7 +455,7 @@ export const CycleCountModule = () => {
   const handleCreate = async () => {
     if (!form.name) { toast.error(t('wms_name_req')); return; }
     if (form.is_random && form.random_zones.length === 0) {
-      toast.error('Selecciona al menos una zona para el conteo aleatorio');
+      toast.error(t('wms_cc_random_zone_req'));
       return;
     }
     setLoading(true);
@@ -471,16 +475,16 @@ export const CycleCountModule = () => {
         // contador.
         if (data.is_random) {
           toast.success(data.mode === 'pieces'
-            ? `Conteo aleatorio por pieza creado: ${data.total_lines} renglones de ${(data.random_zones || []).length} zona(s)`
-            : `Conteo aleatorio creado: ${data.total_scan_locations} ubicaciones de ${(data.random_zones || []).length} zona(s)`);
+            ? t('wms_cc_random_pieces_created', { lines: data.total_lines, zones: (data.random_zones || []).length })
+            : t('wms_cc_random_created', { locs: data.total_scan_locations, zones: (data.random_zones || []).length }));
         } else {
           toast.success(t('wms_cc_created', { count: data.total_lines }));
         }
         setShowForm(false);
         setForm({ name: '', is_general: false, is_random: false, random_zones: [], random_per_zone: 5, random_only_stocked: false, random_mode: 'box_scan', location_filter: '', customer_filter: '', style_filter: '', color_filter: '', include_empty: false, assigned_to: '', assigned_to_name: '' });
         load();
-      } else { const err = await res.json().catch(() => ({})); toast.error(err.detail || 'Error'); }
-    } catch { toast.error('Error de conexion'); }
+      } else { const err = await res.json().catch(() => ({})); toast.error(err.detail || t('error')); }
+    } catch { toast.error(t('wms_conn_err')); }
     finally { setLoading(false); }
   };
 
@@ -493,13 +497,13 @@ export const CycleCountModule = () => {
 
   const handleDelete = async (countId, e) => {
     e.stopPropagation();
-    if (!window.confirm(t('wms_cc_delete_conf') || '¿Está seguro de que desea eliminar este conteo cíclico?')) return;
+    if (!window.confirm(t('wms_cc_delete_conf'))) return;
     try {
       const res = await deleter(`/cycle-counts/${countId}`);
-      toast.success(res.message || 'Conteo cíclico eliminado correctamente');
+      toast.success(res.message || t('wms_cc_deleted'));
       load();
     } catch {
-      toast.error('Error al eliminar conteo cíclico');
+      toast.error(t('wms_cc_delete_err'));
     }
   };
 
@@ -511,21 +515,21 @@ export const CycleCountModule = () => {
       if (res.ok) {
         const data = await res.json().catch(() => ({}));
         toast.success(data.adjustments
-          ? `${t('wms_cc_saved')} · ${data.adjustments} ajuste(s) aplicados al inventario`
+          ? `${t('wms_cc_saved')} · ${t('wms_cc_saved_adjustments', { n: data.adjustments })}`
           : t('wms_cc_saved'));
         const updated = await fetcher(`/cycle-counts/${selectedCount.count_id}`);
         setSelectedCount(updated);
         load();
-      } else { const err = await res.json().catch(() => ({})); toast.error(err.detail || 'Error'); }
-    } catch { toast.error('Error'); }
+      } else { const err = await res.json().catch(() => ({})); toast.error(err.detail || t('error')); }
+    } catch { toast.error(t('error')); }
     finally { setSaving(false); }
   };
 
   const approveCount = async () => {
     if (!selectedCount) return;
     setConfirmDialog({
-      title: 'Aprobar conteo',
-      message: '¿Confirmas que quieres aprobar este conteo? Esta acción aplicará los ajustes de inventario y no se puede deshacer.',
+      title: t('wms_cc_approve_title'),
+      message: t('wms_cc_approve_msg'),
       onConfirm: async () => {
         setSaving(true);
         try {
@@ -599,9 +603,9 @@ export const CycleCountModule = () => {
           };
         })
       }));
-      if (alreadyScanned) toast.warning(`${shown} ya estaba escaneada`);
-      else if (data.bound) toast.success(`${shown} identificada y registrada ✔`);
-      else if (!data.expected_here) toast.warning(`⚠️ ${shown} NO pertenece a ${loc} (ajena)`);
+      if (alreadyScanned) toast.warning(t('wms_cc_scan_already', { box: shown }));
+      else if (data.bound) toast.success(t('wms_cc_scan_bound', { box: shown }));
+      else if (!data.expected_here) toast.warning(t('wms_cc_scan_foreign', { box: shown, loc }));
     };
 
     // Envía el escaneo. Si el backend pide SKU o unidades, abre el diálogo.
@@ -611,7 +615,7 @@ export const CycleCountModule = () => {
       if (opts.forceUnknown) payload.force_unknown = true;
       if (opts.units !== undefined && opts.units !== '') payload.actual_units = parseInt(opts.units, 10);
       const res = await poster(`/cycle-counts/${selectedCount.count_id}/scan-location`, payload);
-      if (!res.ok) { const e = await res.json().catch(() => ({})); toast.error(e.detail || 'Error al escanear'); return null; }
+      if (!res.ok) { const e = await res.json().catch(() => ({})); toast.error(e.detail || t('wms_cc_scan_err')); return null; }
       const data = await res.json();
       if (data.needs_box) {
         // Código físico sin registrar: el contador elige a MANO a qué caja
@@ -633,14 +637,14 @@ export const CycleCountModule = () => {
       if (!boxId) return;
       setScanDraft(d => ({ ...d, [loc]: '' }));
       try { await sendScan(loc, boxId); }
-      catch { toast.error('Error de conexión'); }
+      catch { toast.error(t('wms_conn_err')); }
     };
 
     // Quita un LPN escaneado por error antes de cerrar la ubicación.
     const unscanBox = async (loc, boxId) => {
       try {
         const res = await poster(`/cycle-counts/${selectedCount.count_id}/unscan-location`, { location: loc, box_id: boxId });
-        if (!res.ok) { const e = await res.json().catch(() => ({})); toast.error(e.detail || 'Error al quitar'); return; }
+        if (!res.ok) { const e = await res.json().catch(() => ({})); toast.error(e.detail || t('wms_cc_unscan_err')); return; }
         const data = await res.json().catch(() => ({}));
         const canonical = data.box_id || boxId;
         setSelectedCount(prev => ({
@@ -649,8 +653,8 @@ export const CycleCountModule = () => {
             ? { ...L, scanned_boxes: (L.scanned_boxes || []).filter(b => b !== canonical) }
             : L)
         }));
-        toast.success(`${data.scanned_code || boxId} quitada del escaneo`);
-      } catch { toast.error('Error de conexión'); }
+        toast.success(t('wms_cc_unscanned', { box: data.scanned_code || boxId }));
+      } catch { toast.error(t('wms_conn_err')); }
     };
 
     // Resolución manual (nivel 3) de una ubicación en 'supervisor': por cada LPN
@@ -665,70 +669,66 @@ export const CycleCountModule = () => {
           : { box_id: b, action: 'discard' };
       });
       const bad = resolutions.find(r => r.action === 'create' && (!r.units || r.units <= 0 || !r.style));
-      if (bad) { toast.error(`Falta el estilo o unidades (>0) para crear ${bad.box_id}`); return; }
+      if (bad) { toast.error(t('wms_cc_sup_missing', { box: bad.box_id })); return; }
       // El país y la composición son la identidad del LOTE: sin ellos la caja
       // nace con firma vacía y no casa con ningún renglón. Se avisa, pero no se
       // bloquea — en piso puede tocar un cartón sin etiqueta legible.
       const sinLote = resolutions.filter(r => r.action === 'create' && (!r.country_of_origin || !r.fabric_content));
       if (sinLote.length) {
-        const seguir = window.confirm(
-          `${sinLote.length} caja(s) se crearán SIN país de origen o sin contenido de tela.\n\n` +
-          `Esos campos son la identidad del lote: sin ellos la caja no se puede casar con su ` +
-          `renglón de inventario y el país es requisito de etiquetado para exportación.\n\n` +
-          `¿Continuar de todas formas?`);
+        const seguir = window.confirm(t('wms_cc_sup_no_lot_conf', { n: sinLote.length }));
         if (!seguir) return;
       }
       setResolvingSup(true);
       try {
         const res = await poster(`/cycle-counts/${selectedCount.count_id}/resolve-supervisor`, { location: loc, resolutions });
-        if (!res.ok) { const e = await res.json().catch(() => ({})); toast.error(e.detail || 'Error'); return; }
+        if (!res.ok) { const e = await res.json().catch(() => ({})); toast.error(e.detail || t('error')); return; }
         const data = await res.json();
         // El número de caja lo asigna el sistema (secuencia BOX-######), no el
         // código que se escaneó: hay que decírselo al operador para que sepa
         // qué etiqueta imprimir y pegar en el cartón.
         const nuevas = (data.items || []).filter(i => i.action === 'create');
-        toast.success(`${loc}: resuelta · ${data.created} creada(s), ${data.discarded} descartada(s)`);
+        toast.success(t('wms_cc_sup_resolved', { loc, created: data.created, discarded: data.discarded }));
         if (nuevas.length) {
           toast.info(
-            `Cajas creadas — imprime y pega estas etiquetas:\n` +
+            `${t('wms_cc_sup_created_labels')}\n` +
             nuevas.map(i => `${i.box_id}${i.codigo_escaneado && i.codigo_escaneado !== i.box_id
-              ? `  (escaneaste ${i.codigo_escaneado})` : ''}`).join('\n'),
+              ? `  ${t('wms_cc_sup_scanned_as', { code: i.codigo_escaneado })}` : ''}`).join('\n'),
             { duration: 15000 });
         }
         const updated = await fetcher(`/cycle-counts/${selectedCount.count_id}`);
         setSelectedCount(updated);
-      } catch { toast.error('Error de conexión'); }
+      } catch { toast.error(t('wms_conn_err')); }
       finally { setResolvingSup(false); }
     };
 
     const closeLocation = async (loc) => {
       try {
         const res = await poster(`/cycle-counts/${selectedCount.count_id}/close-location`, { location: loc });
-        if (!res.ok) { const e = await res.json().catch(() => ({})); toast.error(e.detail || 'Error'); return; }
+        if (!res.ok) { const e = await res.json().catch(() => ({})); toast.error(e.detail || t('error')); return; }
         const data = await res.json();
         const r = data.resolution;
         const acts = r ? (r.moved + r.restored + r.shrunk) : 0;
         const summ = r
-          ? [r.moved && `${r.moved} movida(s)`, r.shrunk && `${r.shrunk} agotada(s)`, r.restored && `${r.restored} restaurada(s)`]
+          ? [r.moved && t('wms_cc_res_moved', { n: r.moved }), r.shrunk && t('wms_cc_res_shrunk', { n: r.shrunk }), r.restored && t('wms_cc_res_restored', { n: r.restored })]
               .filter(Boolean).join(' · ')
           : '';
         if (data.needs_supervisor) {
           // Discrepancia confirmada con LPN desconocido(s) → supervisor.
-          const unk = r?.unknown?.length ? ` (${r.unknown.length} LPN desconocido[s])` : '';
-          toast.error(`${loc}: revisión de supervisor${unk}${acts ? ` · ${summ}` : ''}`);
+          const unk = r?.unknown?.length ? ` ${t('wms_cc_unknown_lpn_n', { n: r.unknown.length })}` : '';
+          toast.error(`${t('wms_cc_close_sup_review', { loc })}${unk}${acts ? ` · ${summ}` : ''}`);
         } else if (r) {
           // Discrepancia confirmada y resuelta (pase 2 == contador 1, o cierre nivel 3).
           toast.success(acts
-            ? `${loc}: ✅ confirmada y resuelta · ${summ}`
-            : `${loc}: ✅ confirmada (sin cambios de inventario)`);
+            ? t('wms_cc_close_resolved', { loc, summ })
+            : t('wms_cc_close_confirmed_nochange', { loc }));
         } else if (data.matched) {
-          toast.success(`${loc}: ✅ cuadra con el sistema`);
+          toast.success(t('wms_cc_close_matched', { loc }));
         } else {
-          toast.warning(`${loc}: discrepancia → pasa al ${data.pass}° conteo`);
+          toast.warning(t('wms_cc_close_discrepancy', { loc, pass: data.pass }));
         }
         const updated = await fetcher(`/cycle-counts/${selectedCount.count_id}`);
         setSelectedCount(updated);
-      } catch { toast.error('Error de conexión'); }
+      } catch { toast.error(t('wms_conn_err')); }
     };
 
     if (selectedCount.mode === 'box_scan') {
@@ -744,9 +744,9 @@ export const CycleCountModule = () => {
       // El 3er conteo solo lo procesa inventario nivel 3.
       const canPass3 = invLevel >= 3;
       const TABS = [
-        { k: '1', label: '1er Conteo' }, { k: '2', label: '2do Cicloconteo' },
-        { k: '3', label: '3er Cicloconteo', lvl3: true }, { k: 'supervisor', label: 'Rev. Supervisor' },
-        { k: 'ok', label: 'Cuadradas' },
+        { k: '1', label: t('wms_cc_pass1') }, { k: '2', label: t('wms_cc_pass2') },
+        { k: '3', label: t('wms_cc_pass3'), lvl3: true }, { k: 'supervisor', label: t('wms_cc_pass_sup') },
+        { k: 'ok', label: t('wms_cc_pass_ok') },
       ].filter(tb => !tb.lvl3 || canPass3);
       // Si un no-nivel-3 quedó parado en la pestaña 3, mándalo a la 1.
       const effectivePass = (scanPass === '3' && !canPass3) ? '1' : scanPass;
@@ -764,10 +764,10 @@ export const CycleCountModule = () => {
               </div>
               <div className="px-5 py-3 bg-muted/40 border-t border-border/40 flex justify-end gap-2">
                 <Btn onClick={() => setConfirmDialog(null)}>
-                  Cancelar
+                  {t('cancel')}
                 </Btn>
                 <Btn variant="primary" onClick={() => { confirmDialog.onConfirm(); setConfirmDialog(null); }}>
-                  Confirmar
+                  {t('confirm')}
                 </Btn>
               </div>
             </div>
@@ -783,16 +783,16 @@ export const CycleCountModule = () => {
             <div className="fixed inset-0 z-[120] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4" data-testid="cc-bind-modal">
               <div className="w-full max-w-md bg-card border border-border rounded-lg shadow-xl overflow-hidden">
                 <div className="px-5 py-3 bg-amber-50 dark:bg-amber-500/10 border-b border-amber-200/70 dark:border-amber-500/25">
-                  <div className="font-semibold text-sm text-amber-700 dark:text-amber-300">Identificar caja</div>
+                  <div className="font-semibold text-sm text-amber-700 dark:text-amber-300">{t('wms_cc_bind_title')}</div>
                   <div className="text-xs text-muted-foreground mt-0.5">
-                    <span className="font-mono font-medium text-foreground">{bindPrompt.code}</span> en {bindPrompt.loc}
+                    <span className="font-mono font-medium text-foreground">{bindPrompt.code}</span> {t('wms_cc_bind_in_loc', { loc: bindPrompt.loc })}
                   </div>
                 </div>
                 <div className="p-5 space-y-3">
                   <p className="text-xs text-muted-foreground">
-                    Este número no está en el sistema. Elige a qué caja de <b className="text-foreground">{bindPrompt.loc}</b> corresponde
+                    {t('wms_cc_bind_choose_pre')} <b className="text-foreground">{bindPrompt.loc}</b> {t('wms_cc_bind_choose_post')}
                     {bindPrompt.total > bindPrompt.candidates.length && (
-                      <> <span className="text-amber-500">(mostrando {bindPrompt.candidates.length} de {bindPrompt.total})</span></>
+                      <> <span className="text-amber-500">{t('wms_cc_bind_showing', { shown: bindPrompt.candidates.length, total: bindPrompt.total })}</span></>
                     )}:
                   </p>
                   <div className="space-y-1.5 max-h-[38vh] overflow-y-auto custom-scrollbar">
@@ -816,7 +816,7 @@ export const CycleCountModule = () => {
                       );
                     })}
                   </div>
-                  <label className="text-xs font-medium text-muted-foreground block pt-1">Unidades REALES en la caja</label>
+                  <label className="text-xs font-medium text-muted-foreground block pt-1">{t('wms_cc_bind_units_label')}</label>
                   <input type="number" min="0" inputMode="numeric"
                     value={bindPrompt.units}
                     onChange={e => setBindPrompt(p => ({ ...p, units: e.target.value }))}
@@ -828,24 +828,24 @@ export const CycleCountModule = () => {
                     }}
                     className="w-full px-3 py-2.5 bg-background border border-input rounded-md text-lg font-semibold font-mono tabular-nums text-foreground"
                     data-testid="cc-bind-units" />
-                  <p className="text-xs text-muted-foreground">Cuenta lo que hay físicamente. Se aplica al confirmar el conteo, no ahora.</p>
+                  <p className="text-xs text-muted-foreground">{t('wms_cc_bind_units_hint')}</p>
                 </div>
                 <div className="px-5 py-3 bg-muted/40 border-t border-border/40 flex justify-between gap-2">
                   <button
                     onClick={() => sendScan(bindPrompt.loc, bindPrompt.code, { forceUnknown: true })}
                     className="px-3 py-2 bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-500/10 dark:text-amber-300 dark:border-amber-500/25 rounded-md text-xs font-medium"
-                    title="El producto de esta caja no coincide con ninguna de la lista — se manda a revisión de supervisor."
+                    title={t('wms_cc_bind_none_title')}
                     data-testid="cc-bind-none">
-                    Ninguna de estas
+                    {t('wms_cc_bind_none')}
                   </button>
                   <div className="flex gap-2">
-                    <Btn onClick={() => setBindPrompt(null)} data-testid="cc-bind-cancel">Cancelar</Btn>
+                    <Btn onClick={() => setBindPrompt(null)} data-testid="cc-bind-cancel">{t('cancel')}</Btn>
                     <Btn
                       variant="primary"
                       onClick={() => sendScan(bindPrompt.loc, bindPrompt.code, { targetBoxId: bindPrompt.target, units: bindPrompt.units })}
                       disabled={!bindPrompt.target || bindPrompt.units === ''}
                       data-testid="cc-bind-confirm">
-                      Registrar caja
+                      {t('wms_cc_bind_register')}
                     </Btn>
                   </div>
                 </div>
@@ -856,7 +856,7 @@ export const CycleCountModule = () => {
             <button onClick={() => setSelectedCount(null)} className="p-1.5 text-muted-foreground hover:text-foreground rounded-md hover:bg-muted transition-colors"><ArrowLeft className="w-4 h-4" /></button>
             <div>
               <h2 className="text-lg font-bold text-foreground">{selectedCount.name}</h2>
-              <span className="text-xs text-muted-foreground">Conteo por caja (escaneo LPN) · {SL.length} ubicaciones</span>
+              <span className="text-xs text-muted-foreground">{t('wms_cc_boxscan_subtitle', { n: SL.length })}</span>
             </div>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
@@ -868,13 +868,13 @@ export const CycleCountModule = () => {
             ))}
             {!canPass3 && buckets['3'].length > 0 && (
               <span className="px-3 py-1.5 text-xs text-muted-foreground italic">
-                {buckets['3'].length} ubicación(es) en 3er conteo — requiere inventario nivel 3
+                {t('wms_cc_pass3_gate', { n: buckets['3'].length })}
               </span>
             )}
           </div>
           <div className="border border-border rounded-lg overflow-hidden max-h-[620px] overflow-y-auto custom-scrollbar">
             {active.length === 0 && (
-              <div className="text-center text-muted-foreground text-sm py-10">Sin ubicaciones en esta pestaña.</div>
+              <div className="text-center text-muted-foreground text-sm py-10">{t('wms_cc_no_locs_tab')}</div>
             )}
             {active.map(L => {
               const exp = new Set(L.expected_boxes || []);
@@ -911,21 +911,21 @@ export const CycleCountModule = () => {
                           value={scanDraft[L.location] || ''}
                           onChange={e => setScanDraft(d => ({ ...d, [L.location]: e.target.value }))}
                           onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); scanBox(L.location); } }}
-                          placeholder="Escanea la caja (LPN o número físico A-…)"
+                          placeholder={t('wms_cc_scan_ph')}
                           className="flex-1 px-3 py-2 bg-background border border-input rounded-md text-sm font-mono"
                           data-testid={`cc-scan-${L.location}`} />
-                        <Btn onClick={() => scanBox(L.location)}>Escanear</Btn>
+                        <Btn onClick={() => scanBox(L.location)}>{t('wms_cc_scan_btn')}</Btn>
                       </div>
                     )}
                     {scanned.length > 0 && (
                       <div className="flex flex-wrap gap-1.5">
                         {scanned.map(b => (
-                          <span key={b} className={`inline-flex items-center gap-1 text-xs font-mono font-medium px-2 py-0.5 rounded-md border ${exp.has(b) ? 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-300 dark:border-emerald-500/25' : 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-500/10 dark:text-amber-300 dark:border-amber-500/25'}`} title={`${labels[b] ? `Etiqueta física ${labels[b]} → ${b}. ` : ''}${exp.has(b) ? 'Esperada aquí' : 'AJENA — no pertenece a esta ubicación'}`}>
+                          <span key={b} className={`inline-flex items-center gap-1 text-xs font-mono font-medium px-2 py-0.5 rounded-md border ${exp.has(b) ? 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-300 dark:border-emerald-500/25' : 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-500/10 dark:text-amber-300 dark:border-amber-500/25'}`} title={`${labels[b] ? `${t('wms_cc_label_phys', { label: labels[b], box: b })} ` : ''}${exp.has(b) ? t('wms_cc_expected_here') : t('wms_cc_foreign_box')}`}>
                             {labels[b] || b}{exp.has(b) ? '' : ' ⚠'}
                             {!isTerminal && (
                               <button onClick={() => unscanBox(L.location, b)}
                                 className="ml-0.5 leading-none text-sm opacity-60 hover:opacity-100 hover:text-red-500"
-                                title="Quitar (escaneada por error)"
+                                title={t('wms_cc_unscan_title')}
                                 data-testid={`cc-unscan-${L.location}-${b}`}>×</button>
                             )}
                           </span>
@@ -934,27 +934,27 @@ export const CycleCountModule = () => {
                     )}
                     {(L.missing?.length > 0 || L.extra?.length > 0) && (
                       <div className="text-xs space-y-0.5">
-                        {L.missing?.length > 0 && <div className="text-red-600 dark:text-red-400">Faltan: <span className="font-mono">{L.missing.join(', ')}</span></div>}
-                        {L.extra?.length > 0 && <div className="text-amber-600 dark:text-amber-400">Ajenas: <span className="font-mono">{L.extra.join(', ')}</span></div>}
+                        {L.missing?.length > 0 && <div className="text-red-600 dark:text-red-400">{t('wms_cc_missing')} <span className="font-mono">{L.missing.join(', ')}</span></div>}
+                        {L.extra?.length > 0 && <div className="text-amber-600 dark:text-amber-400">{t('wms_cc_foreign')} <span className="font-mono">{L.extra.join(', ')}</span></div>}
                       </div>
                     )}
                     {!isTerminal && (
                       <button
                         onClick={() => setConfirmDialog({
-                          title: `Cerrar ${L.location}`,
-                          message: `¿Confirmas que terminaste de escanear todas las cajas de ${L.location}? Esta acción registrará el conteo y no se puede deshacer fácilmente.`,
+                          title: t('wms_cc_close_loc_title', { loc: L.location }),
+                          message: t('wms_cc_close_loc_msg', { loc: L.location }),
                           onConfirm: () => closeLocation(L.location),
                         })}
                         className="w-full mt-1 px-3 py-2 bg-primary text-primary-foreground rounded-md text-sm font-medium hover:opacity-90 transition-opacity"
                         data-testid={`cc-close-${L.location}`}>
-                        Cerrar ubicación
+                        {t('wms_cc_close_loc_btn')}
                       </button>
                     )}
                     {L.status === 'supervisor' && (
                       <div className="space-y-2 border-t border-red-200 dark:border-red-500/25 pt-2 mt-1">
-                        <div className="text-xs text-red-600 dark:text-red-400 font-semibold">⚑ Cajas desconocidas — requiere resolución del supervisor</div>
+                        <div className="text-xs text-red-600 dark:text-red-400 font-semibold">{t('wms_cc_sup_unknown_hdr')}</div>
                         {invLevel < 3 ? (
-                          <div className="text-xs text-muted-foreground italic">Requiere inventario nivel 3 para resolver.</div>
+                          <div className="text-xs text-muted-foreground italic">{t('wms_cc_sup_lvl3_req')}</div>
                         ) : (
                           <>
                             {(L.unknown_boxes || []).map(b => {
@@ -967,16 +967,16 @@ export const CycleCountModule = () => {
                                   <div className="flex items-center gap-2">
                                     <span className="text-xs font-mono font-medium text-amber-600 dark:text-amber-400">{b}</span>
                                     <div className="ml-auto flex gap-1">
-                                      <button onClick={() => upd({ action: 'create' })} className={`px-2 py-0.5 rounded-md text-xs font-medium transition-colors ${isCreate ? 'bg-emerald-600 text-white' : 'bg-muted text-muted-foreground hover:text-foreground'}`}>Crear</button>
-                                      <button onClick={() => upd({ action: 'discard' })} className={`px-2 py-0.5 rounded-md text-xs font-medium transition-colors ${!isCreate ? 'bg-red-600 text-white' : 'bg-muted text-muted-foreground hover:text-foreground'}`}>Descartar</button>
+                                      <button onClick={() => upd({ action: 'create' })} className={`px-2 py-0.5 rounded-md text-xs font-medium transition-colors ${isCreate ? 'bg-emerald-600 text-white' : 'bg-muted text-muted-foreground hover:text-foreground'}`}>{t('wms_cc_sup_create')}</button>
+                                      <button onClick={() => upd({ action: 'discard' })} className={`px-2 py-0.5 rounded-md text-xs font-medium transition-colors ${!isCreate ? 'bg-red-600 text-white' : 'bg-muted text-muted-foreground hover:text-foreground'}`}>{t('wms_cc_sup_discard')}</button>
                                     </div>
                                   </div>
                                   {isCreate && (
                                     <div className="grid grid-cols-2 gap-1.5">
-                                      <input value={f.units || ''} onChange={e => upd({ units: e.target.value })} type="number" min="1" placeholder="Unidades *" className="px-2 py-1 bg-background border border-input rounded-md text-xs font-mono" />
-                                      <input value={f.style || ''} onChange={e => upd({ style: e.target.value })} placeholder="Estilo *" className="px-2 py-1 bg-background border border-input rounded-md text-xs font-mono" />
-                                      <input value={f.color || ''} onChange={e => upd({ color: e.target.value })} placeholder="Color" className="px-2 py-1 bg-background border border-input rounded-md text-xs font-mono" />
-                                      <input value={f.size || ''} onChange={e => upd({ size: e.target.value })} placeholder="Talla" className="px-2 py-1 bg-background border border-input rounded-md text-xs font-mono" />
+                                      <input value={f.units || ''} onChange={e => upd({ units: e.target.value })} type="number" min="1" placeholder={t('wms_cc_units_req_ph')} className="px-2 py-1 bg-background border border-input rounded-md text-xs font-mono" />
+                                      <input value={f.style || ''} onChange={e => upd({ style: e.target.value })} placeholder={t('wms_cc_style_req_ph')} className="px-2 py-1 bg-background border border-input rounded-md text-xs font-mono" />
+                                      <input value={f.color || ''} onChange={e => upd({ color: e.target.value })} placeholder={t('wms_label_color')} className="px-2 py-1 bg-background border border-input rounded-md text-xs font-mono" />
+                                      <input value={f.size || ''} onChange={e => upd({ size: e.target.value })} placeholder={t('wms_label_size')} className="px-2 py-1 bg-background border border-input rounded-md text-xs font-mono" />
                                       {/* País y composición: el LOTE. Van por catálogo curado, no
                                           texto libre — es lo que impide que vuelvan a entrar
                                           valores como 'WASH COLD' en el campo país. */}
@@ -984,23 +984,23 @@ export const CycleCountModule = () => {
                                         value={f.country_of_origin || ''}
                                         onChange={v => upd({ country_of_origin: v })}
                                         options={countryOptions}
-                                        placeholder="País de origen *"
+                                        placeholder={t('wms_cc_coo_req_ph')}
                                         allowCreate={false}
                                         testId={`cc-sup-coo-${b}`} />
                                       <SearchableSelect
                                         value={f.fabric_content || ''}
                                         onChange={v => upd({ fabric_content: v })}
                                         options={fabricOptions}
-                                        placeholder="Contenido de tela *"
+                                        placeholder={t('wms_cc_fabric_req_ph')}
                                         allowCreate={false}
                                         testId={`cc-sup-fabric-${b}`} />
                                       <div className="col-span-2 text-[11px] text-muted-foreground font-mono">
                                         SKU: <span className="text-foreground font-medium">{ccAutoSku(f.style, f.color, f.size) || '—'}</span>
-                                        <span className="opacity-70"> · se genera solo</span>
+                                        <span className="opacity-70"> {t('wms_cc_sku_auto')}</span>
                                       </div>
                                       <div className="col-span-2 text-[11px] text-muted-foreground">
-                                        N° de caja: <span className="text-foreground font-medium font-mono">BOX-######</span>
-                                        <span className="opacity-70"> · lo asigna el sistema al crear; imprime esa etiqueta para el cartón</span>
+                                        {t('wms_cc_box_no_label')} <span className="text-foreground font-medium font-mono">BOX-######</span>
+                                        <span className="opacity-70"> {t('wms_cc_box_no_hint')}</span>
                                       </div>
                                     </div>
                                   )}
@@ -1009,20 +1009,20 @@ export const CycleCountModule = () => {
                             })}
                             <button
                               onClick={() => setConfirmDialog({
-                                title: `Resolver y cerrar ${L.location}`,
-                                message: `¿Confirmas que las decisiones para cada caja desconocida son correctas? Se crearán o descartarán según lo indicado y se cerrará la ubicación.`,
+                                title: t('wms_cc_resolve_title', { loc: L.location }),
+                                message: t('wms_cc_resolve_msg'),
                                 onConfirm: () => resolveSupervisor(L.location, L.unknown_boxes),
                               })}
                               disabled={resolvingSup}
                               className="w-full px-3 py-2 bg-primary text-primary-foreground rounded-md text-sm font-medium hover:opacity-90 transition-opacity disabled:opacity-50"
                               data-testid={`cc-resolve-sup-${L.location}`}>
-                              {resolvingSup ? 'Resolviendo…' : 'Cerrar ubicación (resuelto)'}
+                              {resolvingSup ? t('wms_cc_resolving') : t('wms_cc_close_resolved_btn')}
                             </button>
                           </>
                         )}
                       </div>
                     )}
-                    {L.status === 'ok' && <div className="text-xs text-emerald-600 dark:text-emerald-400 font-medium">✅ Cuadró</div>}
+                    {L.status === 'ok' && <div className="text-xs text-emerald-600 dark:text-emerald-400 font-medium">{t('wms_cc_matched_ok')}</div>}
                   </div>
                   )}
                 </div>
@@ -1047,10 +1047,10 @@ export const CycleCountModule = () => {
             </div>
             <div className="px-5 py-3 bg-muted/40 border-t border-border/40 flex justify-end gap-2">
               <Btn onClick={() => setConfirmDialog(null)}>
-                Cancelar
+                {t('cancel')}
               </Btn>
               <Btn variant="primary" onClick={() => { confirmDialog.onConfirm(); setConfirmDialog(null); }}>
-                Confirmar
+                {t('confirm')}
               </Btn>
             </div>
           </div>
@@ -1126,7 +1126,7 @@ export const CycleCountModule = () => {
                                 <span title={line.fabric_content}>· {line.fabric_content}</span>
                               )}
                               {line.country_of_origin && (
-                                <span className="font-mono text-muted-foreground/70" title="País">· {line.country_of_origin}</span>
+                                <span className="font-mono text-muted-foreground/70" title={t('wms_cc_country_title')}>· {line.country_of_origin}</span>
                               )}
                             </div>
                           )}
@@ -1152,7 +1152,7 @@ export const CycleCountModule = () => {
                               </span>
                             )}
                             {line.adjusted && (
-                              <div className="text-[10px] font-medium text-emerald-600 dark:text-emerald-400" title="Diferencia ya aplicada al inventario">ajustado</div>
+                              <div className="text-[10px] font-medium text-emerald-600 dark:text-emerald-400" title={t('wms_cc_adjusted_title')}>{t('wms_cc_adjusted')}</div>
                             )}
                           </div>
                         )}
@@ -1188,7 +1188,7 @@ export const CycleCountModule = () => {
   const effList = effEvents || [];
   const effByCounter = {};
   effList.forEach(ev => {
-    const name = ev.by_name || ev.by || 'Desconocido';
+    const name = ev.by_name || ev.by || t('wms_cc_unknown_counter');
     if (!effByCounter[name]) effByCounter[name] = { name, locations: 0, boxes: 0, hours: {} };
     const agg = effByCounter[name];
     const hk = localHourKey(ev.at);
@@ -1228,7 +1228,7 @@ export const CycleCountModule = () => {
             className={`flex items-center gap-2 px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${activeTab === 'active' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
           >
             <ClipboardList className="w-4 h-4" />
-            ACTIVOS
+            {t('wms_cc_tab_active')}
           </button>
           {canExportReport && (
             <button
@@ -1254,7 +1254,7 @@ export const CycleCountModule = () => {
               data-testid="cc-tab-efficiency"
             >
               <BarChart3 className="w-4 h-4" />
-              EFICIENCIA
+              {t('wms_cc_tab_efficiency')}
             </button>
           )}
           {/* Cola de auditoría del material de la carga inicial. La llena el
@@ -1266,7 +1266,7 @@ export const CycleCountModule = () => {
             data-testid="cc-tab-cuarentena"
           >
             <AlertTriangle className="w-4 h-4" />
-            POR AUDITAR
+            {t('wms_cc_tab_audit')}
             {cuarentena?.length > 0 && (
               <span className="px-1.5 py-0.5 rounded-full bg-amber-500 text-black text-[10px] font-bold tabular-nums">
                 {cuarentena.length}
@@ -1316,7 +1316,7 @@ export const CycleCountModule = () => {
               data-testid="cc-is-general"
             />
             <label htmlFor="cc_is_general" className="text-xs font-medium text-foreground cursor-pointer select-none">
-              Conteo General (Contar Todo el Inventario)
+              {t('wms_cc_general_label')}
             </label>
           </div>
 
@@ -1340,9 +1340,9 @@ export const CycleCountModule = () => {
                 data-testid="cc-is-random"
               />
               <label htmlFor="cc_is_random" className="text-xs font-medium text-foreground cursor-pointer select-none">
-                Conteo Aleatorio (muestreo por zona)
+                {t('wms_cc_random_label')}
                 <span className="block text-muted-foreground/70 font-normal mt-0.5">
-                  Elige las zonas y el sistema toma ubicaciones al azar de cada una.
+                  {t('wms_cc_random_hint')}
                 </span>
               </label>
             </div>
@@ -1353,11 +1353,11 @@ export const CycleCountModule = () => {
                     = captura de unidades renglon por renglon. Solo se ofrece en
                     aleatorio; el resto de los conteos siguen siendo por caja. */}
                 <div>
-                  <div className="text-xs font-medium text-muted-foreground mb-1">Modo de conteo</div>
+                  <div className="text-xs font-medium text-muted-foreground mb-1">{t('wms_cc_mode_label')}</div>
                   <div className="flex gap-2">
                     {[
-                      { k: 'box_scan', label: 'Por caja', hint: 'Escanea el LPN de cada caja de la ubicacion. 3 pases + supervisor.' },
-                      { k: 'pieces', label: 'Por pieza', hint: 'Captura las unidades contadas renglon por renglon.' },
+                      { k: 'box_scan', label: t('wms_cc_mode_box'), hint: t('wms_cc_mode_box_hint') },
+                      { k: 'pieces', label: t('wms_cc_mode_pieces'), hint: t('wms_cc_mode_pieces_hint') },
                     ].map(m => (
                       <button
                         key={m.k}
@@ -1386,13 +1386,13 @@ export const CycleCountModule = () => {
                   </div>
                   <div className="text-xs text-muted-foreground/70 mt-1">
                     {form.random_mode === 'pieces'
-                      ? 'El contador captura unidades por renglon (estilo/color/talla). Solo entran ubicaciones con stock.'
-                      : 'El contador escanea el LPN de cada caja de la ubicacion; escalan a 2do y 3er pase y luego a supervisor.'}
+                      ? t('wms_cc_mode_pieces_desc')
+                      : t('wms_cc_mode_box_desc')}
                   </div>
                 </div>
 
                 <div className="flex items-center gap-3 flex-wrap">
-                  <label className="text-xs text-muted-foreground" htmlFor="cc_random_per_zone">Ubicaciones por zona</label>
+                  <label className="text-xs text-muted-foreground" htmlFor="cc_random_per_zone">{t('wms_cc_per_zone')}</label>
                   <input
                     id="cc_random_per_zone"
                     type="number"
@@ -1408,7 +1408,7 @@ export const CycleCountModule = () => {
                     data-testid="cc-random-per-zone"
                   />
                   <span className="text-xs text-muted-foreground/70">
-                    Si una zona tiene menos, se toman todas las que haya.
+                    {t('wms_cc_per_zone_hint')}
                   </span>
                 </div>
 
@@ -1430,18 +1430,18 @@ export const CycleCountModule = () => {
                     data-testid="cc-random-only-stocked"
                   />
                   <span className="text-xs font-medium text-foreground">
-                    Solo ubicaciones con stock
+                    {t('wms_cc_only_stocked')}
                     <span className="block text-muted-foreground/70 font-normal mt-0.5">
                       {form.random_mode === 'pieces'
-                        ? 'Obligatorio en conteo por pieza: una ubicacion vacia no tiene renglon que capturar.'
-                        : 'Apagado (default): el sorteo entra a TODA la zona, vacias incluidas — asi se caza stock encontrado donde el sistema no ve nada. Prendido: solo ubicaciones con caja viva.'}
+                        ? t('wms_cc_only_stocked_pieces')
+                        : t('wms_cc_only_stocked_hint')}
                     </span>
                   </span>
                 </label>
 
                 <div className="flex items-center justify-between">
                   <div className="text-xs font-medium text-muted-foreground">
-                    Zonas ({form.random_zones.length} seleccionada{form.random_zones.length === 1 ? '' : 's'})
+                    {t('wms_cc_zones_selected', { n: form.random_zones.length })}
                   </div>
                   <div className="flex gap-2">
                     <button
@@ -1451,18 +1451,18 @@ export const CycleCountModule = () => {
                         ...p,
                         random_zones: zones.filter(z => (p.random_only_stocked ? z.with_stock : z.total) > 0).map(z => z.zone),
                       }))}
-                    >Todas</button>
+                    >{t('all')}</button>
                     <button
                       type="button"
                       className="text-xs text-muted-foreground hover:underline"
                       onClick={() => setForm(p => ({ ...p, random_zones: [] }))}
-                    >Ninguna</button>
+                    >{t('wms_cc_zones_none')}</button>
                   </div>
                 </div>
 
                 <div className="max-h-56 overflow-y-auto border border-border rounded bg-background divide-y divide-border" data-testid="cc-random-zones">
                   {zones.length === 0 && (
-                    <div className="px-3 py-4 text-xs text-muted-foreground">Cargando zonas...</div>
+                    <div className="px-3 py-4 text-xs text-muted-foreground">{t('wms_cc_loading_zones')}</div>
                   )}
                   {zones.map(z => {
                     const checked = form.random_zones.includes(z.zone);
@@ -1491,8 +1491,8 @@ export const CycleCountModule = () => {
                         <span className="text-xs font-medium text-foreground flex-1">{z.zone}</span>
                         <span className="text-xs text-muted-foreground/70">
                           {pool === 0
-                            ? 'sin ubicaciones para muestrear'
-                            : `${take} de ${pool} ubicacion${pool === 1 ? '' : 'es'}${form.random_only_stocked ? '' : ` · ${z.with_stock} con stock`}`}
+                            ? t('wms_cc_zone_no_pool')
+                            : `${t('wms_cc_zone_take', { take, pool })}${form.random_only_stocked ? '' : ` ${t('wms_cc_zone_with_stock', { n: z.with_stock })}`}`}
                         </span>
                       </label>
                     );
@@ -1501,11 +1501,11 @@ export const CycleCountModule = () => {
 
                 {form.random_zones.length > 0 && (
                   <div className="text-xs text-muted-foreground/80" data-testid="cc-random-preview">
-                    Se generaran hasta{' '}
+                    {t('wms_cc_random_preview_pre')}{' '}
                     <b>{zones
                       .filter(z => form.random_zones.includes(z.zone))
                       .reduce((n, z) => n + Math.min(form.random_only_stocked ? z.with_stock : z.total, Number(form.random_per_zone) || 5), 0)}</b>
-                    {' '}ubicaciones a contar.
+                    {' '}{t('wms_cc_random_preview_post')}
                   </div>
                 )}
               </div>
@@ -1518,7 +1518,7 @@ export const CycleCountModule = () => {
               <div>
                 <label className="text-xs text-muted-foreground mb-1 block">
                   {t('wms_cc_loc_filter')}
-                  <span className="ml-1 text-muted-foreground font-medium">(prefijo)</span>
+                  <span className="ml-1 text-muted-foreground font-medium">{t('wms_cc_prefix')}</span>
                 </label>
                 <PrefixLocationInput
                   locations={options.locations}
@@ -1531,16 +1531,16 @@ export const CycleCountModule = () => {
                 <SearchableSelect options={options.customers} value={form.customer_filter} onChange={val => setForm(p => ({ ...p, customer_filter: val }))} placeholder={t('all')} testId="cc-customer" />
               </div>
               <div>
-                <label className="text-xs text-muted-foreground mb-1 block">{t('style')}</label>
+                <label className="text-xs text-muted-foreground mb-1 block">{t('wms_label_style')}</label>
                 <SearchableSelect options={options.styles} value={form.style_filter} onChange={val => setForm(p => ({ ...p, style_filter: val }))} placeholder={t('all')} testId="cc-style" />
               </div>
               <div>
-                <label className="text-xs text-muted-foreground mb-1 block">Color</label>
+                <label className="text-xs text-muted-foreground mb-1 block">{t('wms_label_color')}</label>
                 <SearchableSelect options={options.colors} value={form.color_filter} onChange={val => setForm(p => ({ ...p, color_filter: val }))} placeholder={t('all')} testId="cc-color" />
               </div>
             </div>
             <div className="text-xs text-muted-foreground/70 mt-1">
-              Puedes combinar filtros. Ej: solo <b>style 5000 + color BLACK</b> cuenta esas dos dimensiones donde existan.
+              {t('wms_cc_combine_pre')} <b>style 5000 + color BLACK</b> {t('wms_cc_combine_post')}
             </div>
           </div>
 
@@ -1567,10 +1567,10 @@ export const CycleCountModule = () => {
                   data-testid="cc-include-empty"
                 />
                 <label htmlFor="cc_include_empty" className="text-xs font-medium text-foreground cursor-pointer select-none">
-                  Incluir locaciones vacías
+                  {t('wms_cc_include_empty')}
                   <span className="block text-muted-foreground/70 font-normal mt-0.5">
-                    Visita también las ubicaciones que el sistema cree vacías para detectar stock encontrado.
-                    {emptyApplicable ? '' : ' No aplica con filtro de cliente/estilo/color.'}
+                    {t('wms_cc_include_empty_hint')}
+                    {emptyApplicable ? '' : ` ${t('wms_cc_include_empty_na')}`}
                   </span>
                 </label>
               </div>
@@ -1634,7 +1634,7 @@ export const CycleCountModule = () => {
                       onClick={(e) => { e.stopPropagation(); exportCountById(c.count_id); }}
                       disabled={exportingId === c.count_id}
                       className="p-1.5 rounded-md text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors disabled:opacity-50"
-                      title="Exportar reporte Excel"
+                      title={t('wms_cc_export_report')}
                       data-testid={`export-cc-${c.count_id}`}
                     >
                       {exportingId === c.count_id ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileSpreadsheet className="w-4 h-4" />}
@@ -1644,7 +1644,7 @@ export const CycleCountModule = () => {
                       <button
                         onClick={(e) => handleDelete(c.count_id, e)}
                         className="p-1.5 rounded-md text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
-                        title={t('delete') || 'Eliminar'}
+                        title={t('delete')}
                         data-testid={`delete-cc-${c.count_id}`}
                       >
                         <Trash2 className="w-4 h-4" />
@@ -1664,8 +1664,8 @@ export const CycleCountModule = () => {
                   <div className="mt-2 text-xs text-muted-foreground flex items-center justify-between">
                     {isBoxScan ? (
                       <span>
-                        {locDone} {t('of')} {SL.length} ubicaciones
-                        <span className="ml-1.5 text-foreground font-medium">· {boxesScanned} cajas</span>
+                        {t('wms_cc_locs_progress', { done: locDone, total: SL.length })}
+                        <span className="ml-1.5 text-foreground font-medium">· {t('wms_cc_boxes_n', { n: boxesScanned })}</span>
                       </span>
                     ) : (
                       <span>{c.counted_lines} {t('of')} {c.total_lines} {t('wms_cc_items')}</span>
@@ -1679,10 +1679,10 @@ export const CycleCountModule = () => {
                   {c.is_random ? (
                     <span className="flex items-center gap-1 opacity-80" title={(c.random_zones || []).join(', ')}>
                       <Shuffle className="w-3 h-3" />
-                      Aleatorio {c.mode === 'pieces' ? 'por pieza' : 'por caja'} - {(c.random_zones || []).length} zona(s) x {c.random_per_zone}
+                      {t('wms_cc_random_card', { mode: c.mode === 'pieces' ? t('wms_cc_by_piece') : t('wms_cc_by_box'), zones: (c.random_zones || []).length, per: c.random_per_zone })}
                     </span>
                   ) : c.is_general ? (
-                    <span className="px-2 py-0.5 rounded-md border text-xs font-medium bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-300 dark:border-emerald-500/25 flex items-center gap-1">Conteo General</span>
+                    <span className="px-2 py-0.5 rounded-md border text-xs font-medium bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-300 dark:border-emerald-500/25 flex items-center gap-1">{t('wms_cc_general_badge')}</span>
                   ) : (
                     <div className="flex flex-wrap items-center gap-1 justify-end">
                       {c.location_filter && <span className="flex items-center gap-1 opacity-80"><MapPin className="w-3 h-3" /> {c.location_filter}</span>}
@@ -1712,17 +1712,17 @@ export const CycleCountModule = () => {
           {/* ── Selector de conteo ────────────────────────────────────────── */}
           <div className="flex items-end gap-3 flex-wrap">
             <div className="min-w-[18rem]">
-              <label className="text-xs font-medium text-muted-foreground block mb-1">Conteo</label>
+              <label className="text-xs font-medium text-muted-foreground block mb-1">{t('wms_cc_count')}</label>
               <select
                 value={kpiCountId}
                 onChange={e => { setKpiCountId(e.target.value); loadKpis(e.target.value); }}
                 className="w-full px-3 py-2 bg-background border border-border rounded text-sm text-foreground"
                 data-testid="cc-kpi-select"
               >
-                <option value="">Selecciona un conteo…</option>
+                <option value="">{t('wms_cc_select_count')}</option>
                 {counts.map(c => (
                   <option key={c.count_id} value={c.count_id}>
-                    {(c.name || c.count_id)} · {c.status === 'approved' ? 'aprobado' : c.status}
+                    {(c.name || c.count_id)} · {c.status === 'approved' ? t('wms_status_approved') : c.status === 'completed' ? t('wms_status_completed') : c.status === 'in_progress' ? t('wms_status_in_progress') : c.status}
                     {c.created_at ? ` · ${new Date(c.created_at).toLocaleDateString()}` : ''}
                   </option>
                 ))}
@@ -1730,7 +1730,7 @@ export const CycleCountModule = () => {
             </div>
             {kpiCountId && (
               <Btn onClick={() => loadKpis(kpiCountId)} disabled={loadingKpi} data-testid="cc-kpi-reload">
-                Actualizar
+                {t('wms_refresh')}
               </Btn>
             )}
             {kpiReport && (
@@ -1743,28 +1743,28 @@ export const CycleCountModule = () => {
           {loadingKpi ? (
             <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
               <Loader2 className="w-8 h-8 animate-spin mb-4" />
-              <p className="text-sm">Cargando KPIs...</p>
+              <p className="text-sm">{t('wms_cc_loading_kpis')}</p>
             </div>
           ) : !kpiReport ? (
-            <EmptyState art="clipboard" title="Elige un conteo para ver sus KPIs."
-              hint="Se muestran los datos de ese conteo: líneas, unidades y cajas." />
+            <EmptyState art="clipboard" title={t('wms_cc_kpi_empty_title')}
+              hint={t('wms_cc_kpi_empty_hint')} />
           ) : (
             <>
               {/* ── Inventario: piezas/cajas en sistema, discrepancias, ILA/IRA ── */}
               {kpiReport.inventory_kpis && (() => {
                 const inv = kpiReport.inventory_kpis;
-                const unidad = inv.discrepancy_unit || 'piezas';
+                const unidad = inv.discrepancy_unit || t('wms_cc_pieces_unit');
                 const netSigno = inv.net_discrepancy > 0 ? '+' : '';
                 return (
                   <div>
-                    <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">Inventario</h3>
+                    <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">{t('wms_cc_inventory_hdr')}</h3>
                     <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
-                      <StatCard label="Piezas en sistema" value={(inv.system_pieces ?? 0).toLocaleString()} />
-                      <StatCard label="Cajas en sistema" value={inv.system_boxes != null ? inv.system_boxes.toLocaleString() : '—'} />
-                      <StatCard label="Discrepancia neta"
+                      <StatCard label={t('wms_cc_pieces_in_system')} value={(inv.system_pieces ?? 0).toLocaleString()} />
+                      <StatCard label={t('wms_cc_boxes_in_system')} value={inv.system_boxes != null ? inv.system_boxes.toLocaleString() : '—'} />
+                      <StatCard label={t('wms_cc_net_disc')}
                         value={`${netSigno}${(inv.net_discrepancy ?? 0).toLocaleString()}`}
                         sub={unidad} />
-                      <StatCard label="Discrepancia absoluta"
+                      <StatCard label={t('wms_cc_abs_disc')}
                         value={(inv.abs_discrepancy ?? 0).toLocaleString()}
                         sub={unidad} />
                       <StatCard label="ILA"
@@ -1776,7 +1776,7 @@ export const CycleCountModule = () => {
                     </div>
                     {inv.is_box_scan && (
                       <p className="text-xs text-muted-foreground mt-2">
-                        Discrepancia en cajas · ILA por ubicación · IRA ponderado por piezas.
+                        {t('wms_cc_boxscan_kpi_note')}
                       </p>
                     )}
                   </div>
@@ -1785,24 +1785,24 @@ export const CycleCountModule = () => {
 
               {/* ── Precisión del conteo ──────────────────────────────────── */}
               <div>
-                <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">Precisión</h3>
+                <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">{t('wms_cc_precision_hdr')}</h3>
                 <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
-                  <StatCard label="Líneas en sistema" value={kpiReport.kpis.total_lines} />
-                  <StatCard label="Líneas contadas" value={kpiReport.kpis.counted_lines} />
-                  <StatCard label="Pendientes" value={kpiReport.kpis.total_lines - kpiReport.kpis.counted_lines} />
-                  <StatCard label="Con discrepancia" value={kpiReport.kpis.discrepant_lines} />
-                  <StatCard label="Exactitud" value={`${kpiReport.kpis.accuracy_pct}%`} />
+                  <StatCard label={t('wms_cc_lines_in_system')} value={kpiReport.kpis.total_lines} />
+                  <StatCard label={t('wms_cc_lines_counted')} value={kpiReport.kpis.counted_lines} />
+                  <StatCard label={t('wms_cc_pending_lbl')} value={kpiReport.kpis.total_lines - kpiReport.kpis.counted_lines} />
+                  <StatCard label={t('wms_cc_with_disc')} value={kpiReport.kpis.discrepant_lines} />
+                  <StatCard label={t('wms_cc_accuracy')} value={`${kpiReport.kpis.accuracy_pct}%`} />
                 </div>
               </div>
 
               {/* ── Unidades ──────────────────────────────────────────────── */}
               <div>
-                <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">Unidades</h3>
+                <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">{t('wms_label_units')}</h3>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-                  <StatCard label="Unidades faltantes" value={kpiReport.kpis.units_short} />
-                  <StatCard label="Unidades sobrantes" value={kpiReport.kpis.units_over} />
-                  <StatCard label="Ajustes aplicados" value={kpiReport.kpis.adjusted_count} />
-                  <StatCard label="Duración" value={kpiReport.kpis.duration_mins != null
+                  <StatCard label={t('wms_cc_units_short')} value={kpiReport.kpis.units_short} />
+                  <StatCard label={t('wms_cc_units_over')} value={kpiReport.kpis.units_over} />
+                  <StatCard label={t('wms_cc_adjustments_applied')} value={kpiReport.kpis.adjusted_count} />
+                  <StatCard label={t('wms_cc_duration')} value={kpiReport.kpis.duration_mins != null
                     ? `${Math.floor(kpiReport.kpis.duration_mins / 60)}h ${kpiReport.kpis.duration_mins % 60}m`
                     : '—'} />
                 </div>
@@ -1811,24 +1811,24 @@ export const CycleCountModule = () => {
               {/* ── Cajas: solo conteos por escaneo ───────────────────────── */}
               {kpiReport.box_kpis?.is_box_scan ? (
                 <div>
-                  <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">Cajas escaneadas</h3>
+                  <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">{t('wms_cc_boxes_scanned_hdr')}</h3>
                   <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
-                    <StatCard label="Ubicaciones" value={kpiReport.box_kpis.locations_total} />
-                    <StatCard label="Ubic. cerradas" value={kpiReport.box_kpis.locations_closed} />
-                    <StatCard label="Ubic. con hallazgos" value={kpiReport.box_kpis.locations_with_findings} />
-                    <StatCard label="Cajas escaneadas" value={kpiReport.box_kpis.boxes_scanned} />
-                    <StatCard label="Cajas faltantes" value={kpiReport.box_kpis.boxes_missing} />
-                    <StatCard label="Fuera de inventario" value={kpiReport.box_kpis.boxes_out_of_inventory} />
+                    <StatCard label={t('wms_locs')} value={kpiReport.box_kpis.locations_total} />
+                    <StatCard label={t('wms_cc_locs_closed')} value={kpiReport.box_kpis.locations_closed} />
+                    <StatCard label={t('wms_cc_locs_findings')} value={kpiReport.box_kpis.locations_with_findings} />
+                    <StatCard label={t('wms_cc_boxes_scanned_hdr')} value={kpiReport.box_kpis.boxes_scanned} />
+                    <StatCard label={t('wms_cc_boxes_missing')} value={kpiReport.box_kpis.boxes_missing} />
+                    <StatCard label={t('wms_cc_out_of_inv')} value={kpiReport.box_kpis.boxes_out_of_inventory} />
                   </div>
                   {kpiReport.box_kpis.boxes_unknown > 0 && (
                     <p className="text-xs text-muted-foreground mt-2">
-                      {kpiReport.box_kpis.boxes_unknown} caja(s) con código desconocido, atadas por supervisor.
+                      {t('wms_cc_boxes_unknown_n', { n: kpiReport.box_kpis.boxes_unknown })}
                     </p>
                   )}
                 </div>
               ) : (
                 <p className="text-xs text-muted-foreground">
-                  Este conteo es por líneas, no por escaneo de cajas: los KPIs de caja no aplican.
+                  {t('wms_cc_no_box_kpis')}
                 </p>
               )}
 
@@ -1836,13 +1836,13 @@ export const CycleCountModule = () => {
               {outOfInventoryRows.length > 0 && (
                 <div>
                   <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
-                    Cajas contadas fuera de inventario ({outOfInventoryRows.length})
+                    {t('wms_cc_out_of_inv_hdr', { n: outOfInventoryRows.length })}
                   </h3>
                   <div className="bg-card border border-border rounded-lg overflow-hidden">
                     <div className="overflow-x-auto max-h-80 overflow-y-auto">
                       <table className="w-full text-left text-sm">
                         <thead className="bg-muted/50 border-b border-border sticky top-0">
-                          <tr><Th>Ubicación</Th><Th>Caja</Th><Th>Contó</Th><Th>Fecha</Th></tr>
+                          <tr><Th>{t('location')}</Th><Th>{t('wms_box')}</Th><Th>{t('wms_cc_counted_by')}</Th><Th>{t('date')}</Th></tr>
                         </thead>
                         <tbody>
                           {outOfInventoryRows.map((b, i) => (
@@ -1863,12 +1863,12 @@ export const CycleCountModule = () => {
               {/* ── Ubicaciones con más discrepancias ─────────────────────── */}
               {(kpiReport.location_breakdown || []).some(l => l.discrepant > 0) && (
                 <div>
-                  <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">Ubicaciones con más discrepancias</h3>
+                  <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">{t('wms_cc_top_disc_locs')}</h3>
                   <div className="bg-card border border-border rounded-lg overflow-hidden">
                     <div className="overflow-x-auto max-h-80 overflow-y-auto">
                       <table className="w-full text-left text-sm">
                         <thead className="bg-muted/50 border-b border-border sticky top-0">
-                          <tr><Th>Ubicación</Th><Th right>Líneas</Th><Th right>Contadas</Th><Th right>Discrepantes</Th><Th right>Δ unidades</Th></tr>
+                          <tr><Th>{t('location')}</Th><Th right>{t('wms_cc_lines')}</Th><Th right>{t('wms_cc_counted')}</Th><Th right>{t('wms_cc_discrepant')}</Th><Th right>{t('wms_cc_delta_units')}</Th></tr>
                         </thead>
                         <tbody>
                           {kpiReport.location_breakdown.filter(l => l.discrepant > 0).slice(0, 50).map(l => (
@@ -1895,47 +1895,42 @@ export const CycleCountModule = () => {
         <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-300" data-testid="cc-cuarentena">
           <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-4">
             <div className="flex items-center gap-2 text-amber-600 dark:text-amber-400 font-semibold text-sm">
-              <AlertTriangle className="w-4 h-4" /> Material de la carga inicial (Excel)
+              <AlertTriangle className="w-4 h-4" /> {t('wms_cc_quar_title')}
             </div>
             <p className="text-xs text-muted-foreground mt-1.5 leading-relaxed">
-              Estas cajas se crearon a partir de un total, no de un cartón real: su
-              número no está impreso en ningún lado y sus piezas son un reparto
-              estimado. La lista la llena el piso — cada vez que un operador se topa
-              con una, reporta su ubicación. <b className="text-foreground">Las de
-              arriba son las que más estorban</b>: audítalas primero.
+              {t('wms_cc_quar_desc')} <b className="text-foreground">{t('wms_cc_quar_desc_bold')}</b>: {t('wms_cc_quar_desc_post')}
             </p>
           </div>
 
           <div className="flex items-center gap-2">
             <Btn variant="secondary" onClick={loadCuarentena} disabled={loadingCuar}>
-              {loadingCuar ? 'Cargando…' : 'Actualizar'}
+              {loadingCuar ? t('loading') : t('wms_refresh')}
             </Btn>
             {cuarentena?.length > 0 && (
               <span className="text-xs text-muted-foreground">
-                {cuarentena.length} ubicación{cuarentena.length === 1 ? '' : 'es'} ·{' '}
-                {cuarentena.reduce((s, i) => s + (i.unidades_import || 0), 0).toLocaleString()} pz por auditar
+                {t('wms_cc_quar_summary', { locs: cuarentena.length, units: cuarentena.reduce((s, i) => s + (i.unidades_import || 0), 0).toLocaleString() })}
               </span>
             )}
           </div>
 
           {loadingCuar ? (
             <div className="flex items-center gap-2 text-sm text-muted-foreground p-6">
-              <Loader2 className="w-4 h-4 animate-spin" /> Cargando…
+              <Loader2 className="w-4 h-4 animate-spin" /> {t('loading')}
             </div>
           ) : !cuarentena?.length ? (
-            <EmptyState art="done" title="Nada por auditar"
-              subtitle="El piso no ha reportado cajas de la carga inicial. Aparecerán aquí conforme se las encuentren." />
+            <EmptyState art="done" title={t('wms_cc_quar_empty_title')}
+              subtitle={t('wms_cc_quar_empty_sub')} />
           ) : (
             <div className="overflow-x-auto rounded-lg border border-border">
               <table className="w-full text-sm">
                 <thead className="bg-muted/40">
                   <tr>
-                    <Th>Ubicación</Th>
-                    <Th className="text-right">Veces topada</Th>
-                    <Th className="text-right">Cajas sin auditar</Th>
-                    <Th className="text-right">Piezas</Th>
-                    <Th>Último reporte</Th>
-                    <Th>Acción</Th>
+                    <Th>{t('location')}</Th>
+                    <Th className="text-right">{t('wms_cc_quar_hits')}</Th>
+                    <Th className="text-right">{t('wms_cc_quar_unaudited')}</Th>
+                    <Th className="text-right">{t('wms_label_pieces')}</Th>
+                    <Th>{t('wms_cc_quar_last_report')}</Th>
+                    <Th>{t('wms_cc_action')}</Th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1960,9 +1955,9 @@ export const CycleCountModule = () => {
                       </td>
                       <td className="px-3 py-2">
                         <Btn variant="secondary"
-                          onClick={() => { setForm(f => ({ ...f, name: `Auditoría ${it.location}`, location_filter: it.location, include_empty: true })); setActiveTab('active'); setShowForm(true); }}
+                          onClick={() => { setForm(f => ({ ...f, name: t('wms_cc_audit_name', { loc: it.location }), location_filter: it.location, include_empty: true })); setActiveTab('active'); setShowForm(true); }}
                           data-testid={`cc-cuar-count-${it.location}`}>
-                          Crear conteo
+                          {t('wms_create_cc')}
                         </Btn>
                       </td>
                     </tr>
@@ -1980,34 +1975,34 @@ export const CycleCountModule = () => {
           {/* ── Rango de fechas (locales; se mandan como instantes UTC) ───── */}
           <div className="flex items-end gap-3 flex-wrap">
             <div className="w-40">
-              <label className="text-xs font-medium text-muted-foreground block mb-1">Desde</label>
+              <label className="text-xs font-medium text-muted-foreground block mb-1">{t('wms_from')}</label>
               <input type="date" value={effFrom} onChange={e => setEffFrom(e.target.value)}
                 className={cls.input} data-testid="cc-eff-from" />
             </div>
             <div className="w-40">
-              <label className="text-xs font-medium text-muted-foreground block mb-1">Hasta</label>
+              <label className="text-xs font-medium text-muted-foreground block mb-1">{t('wms_to')}</label>
               <input type="date" value={effTo} onChange={e => setEffTo(e.target.value)}
                 className={cls.input} data-testid="cc-eff-to" />
             </div>
             <Btn variant="primary" onClick={loadEfficiency} disabled={loadingEff} data-testid="cc-eff-apply">
-              Aplicar
+              {t('wms_apply')}
             </Btn>
           </div>
 
           {loadingEff ? (
             <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
               <Loader2 className="w-8 h-8 animate-spin mb-4" />
-              <p className="text-sm">Cargando eficiencia...</p>
+              <p className="text-sm">{t('wms_cc_loading_eff')}</p>
             </div>
           ) : effCounters.length === 0 ? (
-            <EmptyState art="clipboard" title="Sin actividad de conteo en el rango."
-              hint="Ajusta las fechas y vuelve a aplicar." />
+            <EmptyState art="clipboard" title={t('wms_cc_eff_empty_title')}
+              hint={t('wms_cc_eff_empty_hint')} />
           ) : (
             <>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                <StatCard label="Ubicaciones contadas" value={effList.length} />
-                <StatCard label="Cajas contadas" value={effTotalBoxes} />
-                <StatCard label="Contadores activos" value={effCounters.length} />
+                <StatCard label={t('wms_cc_locs_counted')} value={effList.length} />
+                <StatCard label={t('wms_cc_boxes_counted')} value={effTotalBoxes} />
+                <StatCard label={t('wms_cc_active_counters')} value={effCounters.length} />
               </div>
 
               <div className="bg-card border border-border rounded-lg overflow-hidden">
@@ -2015,12 +2010,12 @@ export const CycleCountModule = () => {
                   <table className="w-full text-left text-sm">
                     <thead className="bg-muted/50 border-b border-border">
                       <tr>
-                        <Th>Contador</Th>
-                        <Th right>Ubicaciones</Th>
-                        <Th right>Cajas</Th>
-                        <Th right>Horas activas</Th>
-                        <Th right>Ubic./hora</Th>
-                        <Th right>Cajas/hora</Th>
+                        <Th>{t('wms_cc_counter')}</Th>
+                        <Th right>{t('wms_locs')}</Th>
+                        <Th right>{t('wms_boxes')}</Th>
+                        <Th right>{t('wms_cc_active_hours')}</Th>
+                        <Th right>{t('wms_cc_locs_per_hour')}</Th>
+                        <Th right>{t('wms_cc_boxes_per_hour')}</Th>
                       </tr>
                     </thead>
                     <tbody>
@@ -2052,9 +2047,9 @@ export const CycleCountModule = () => {
                                   <table className="w-full max-w-md text-sm">
                                     <thead className="bg-muted/50 border-b border-border">
                                       <tr>
-                                        <Th>Hora</Th>
-                                        <Th right>Ubicaciones</Th>
-                                        <Th right>Cajas</Th>
+                                        <Th>{t('wms_cc_hour')}</Th>
+                                        <Th right>{t('wms_locs')}</Th>
+                                        <Th right>{t('wms_boxes')}</Th>
                                       </tr>
                                     </thead>
                                     <tbody>

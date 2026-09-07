@@ -1,6 +1,7 @@
 import { useState, useRef } from "react";
 import { toast } from "sonner";
 import { Upload, Loader2, CheckCircle2, FileDown, RotateCcw, Boxes } from "lucide-react";
+import { useLang } from "../../contexts/LanguageContext";
 import { poster } from "./lib";
 import { SoftAlert, Btn, cls } from "./ui";
 
@@ -31,14 +32,17 @@ function normalizeRow(raw) {
   return out;
 }
 
+// Etiqueta por labelKey: se traduce en el render (constante a nivel de módulo,
+// sin acceso a hooks).
 const STATUS_META = {
-  adjust: { label: "Ajuste", cls: "bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-500/10 dark:text-blue-300 dark:border-blue-500/25" },
-  new: { label: "Nueva", cls: "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-300 dark:border-emerald-500/25" },
-  error: { label: "Error", cls: "bg-red-50 text-red-700 border-red-200 dark:bg-red-500/10 dark:text-red-300 dark:border-red-500/25" },
-  skip: { label: "Sin cambio", cls: "bg-muted text-foreground/70 border-border" },
+  adjust: { labelKey: "wms_bulk_status_adjust", cls: "bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-500/10 dark:text-blue-300 dark:border-blue-500/25" },
+  new: { labelKey: "wms_bulk_status_new", cls: "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-300 dark:border-emerald-500/25" },
+  error: { labelKey: "error", cls: "bg-red-50 text-red-700 border-red-200 dark:bg-red-500/10 dark:text-red-300 dark:border-red-500/25" },
+  skip: { labelKey: "wms_bulk_status_skip", cls: "bg-muted text-foreground/70 border-border" },
 };
 
 export default function BulkInventoryAdjust() {
+  const { t } = useLang();
   const [rows, setRows] = useState([]);
   const [fileName, setFileName] = useState("");
   const [busy, setBusy] = useState(false);
@@ -57,8 +61,8 @@ export default function BulkInventoryAdjust() {
     try {
       const res = await poster("/inventory/bulk-adjust", { rows: rws, dry_run: true });
       if (res.ok) setPreview(await res.json());
-      else { const err = await res.json().catch(() => ({})); toast.error(err.detail || "No se pudo previsualizar"); }
-    } catch { toast.error("Error de conexión"); }
+      else { const err = await res.json().catch(() => ({})); toast.error(err.detail || t("wms_bulk_preview_err")); }
+    } catch { toast.error(t("wms_conn_err")); }
   };
 
   const onFile = async (e) => {
@@ -72,19 +76,19 @@ export default function BulkInventoryAdjust() {
       const ws = wb.Sheets[wb.SheetNames[0]];
       const json = XLSX.utils.sheet_to_json(ws, { defval: "" });
       const norm = json.map(normalizeRow).filter(r => r.style || r.location || (r.on_hand !== "" && r.on_hand !== undefined));
-      if (!norm.length) { toast.error("El archivo no tiene filas válidas (revisa los encabezados)"); return; }
+      if (!norm.length) { toast.error(t("wms_bulk_no_valid_rows")); return; }
       setRows(norm); setFileName(file.name);
       await runPreview(norm);
     } catch {
-      toast.error("No se pudo leer el archivo Excel");
+      toast.error(t("wms_bulk_read_err"));
     } finally { setBusy(false); }
   };
 
   const apply = async () => {
-    if (!reason.trim()) { toast.error("El motivo del ajuste es obligatorio"); return; }
+    if (!reason.trim()) { toast.error(t("wms_bulk_reason_req")); return; }
     const changes = (preview?.summary?.adjust || 0) + (preview?.summary?.new || 0);
-    if (!changes) { toast.error("No hay cambios aplicables"); return; }
-    if (!window.confirm(`¿Aplicar ${changes} cambio(s) de inventario? Esta acción no se puede deshacer en bloque.`)) return;
+    if (!changes) { toast.error(t("wms_bulk_no_changes")); return; }
+    if (!window.confirm(t("wms_bulk_apply_conf", { n: changes }))) return;
     setApplying(true);
     try {
       const res = await poster("/inventory/bulk-adjust", { rows, dry_run: false, reason: reason.trim() });
@@ -92,12 +96,12 @@ export default function BulkInventoryAdjust() {
         const data = await res.json();
         setResult(data);
         setPreview(data); // refresh statuses after applying
-        toast.success(`Ajuste aplicado: ${data.summary.applied} línea(s)`);
+        toast.success(t("wms_bulk_applied_toast", { n: data.summary.applied }));
       } else {
         const err = await res.json().catch(() => ({}));
-        toast.error(err.detail || "No se pudo aplicar el ajuste");
+        toast.error(err.detail || t("wms_bulk_apply_err"));
       }
-    } catch { toast.error("Error de conexión"); }
+    } catch { toast.error(t("wms_conn_err")); }
     finally { setApplying(false); }
   };
 
@@ -110,7 +114,7 @@ export default function BulkInventoryAdjust() {
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, "Ajuste");
       XLSX.writeFile(wb, "Formato ajuste de inventario.xlsx");
-    } catch { toast.error("No se pudo generar la plantilla"); }
+    } catch { toast.error(t("wms_bulk_template_err")); }
   };
 
   const s = preview?.summary;
@@ -121,43 +125,39 @@ export default function BulkInventoryAdjust() {
       {/* Instructions */}
       <div className="bg-card border border-border rounded-lg p-5 space-y-3">
         <div className="text-sm font-semibold text-foreground flex items-center gap-2">
-          <Boxes className="w-4 h-4 text-muted-foreground" /> Ajuste masivo de inventario
+          <Boxes className="w-4 h-4 text-muted-foreground" /> {t("wms_bulk_title")}
         </div>
         <p className="text-xs text-muted-foreground leading-relaxed">
-          Sube el Excel <b>Formato ajuste de inventario</b> (Customer, Style, Color, Size,
-          Location, <b>Qty to Adjust</b>). La columna <b>Qty to Adjust</b> es el <b>ajuste</b>:
-          un número positivo <b>suma</b> y uno negativo <b>resta</b> sobre la existencia actual.
-          Verás una vista previa antes de aplicar. Las líneas que no existan se marcan como
-          <b>Nueva</b> y se crean al confirmar. Si un material tiene varios lotes en la misma
-          locación (país/composición distintos), las restas se validan contra el <b>total</b> y
-          se reparten entre lotes; para afectar un lote específico —u obligatorio al sumar—
-          agrega la columna <b>Country of Origin</b>.
+          {t("wms_bulk_intro_upload")} <b>Formato ajuste de inventario</b> (Customer, Style, Color, Size,
+          Location, <b>Qty to Adjust</b>). {t("wms_bulk_intro_delta")}{" "}
+          {t("wms_bulk_intro_preview")}{" "}
+          {t("wms_bulk_intro_lots")}
         </p>
         <div className="flex flex-wrap gap-2">
           <Btn onClick={downloadTemplate}>
-            <FileDown className="w-4 h-4" /> Descargar plantilla
+            <FileDown className="w-4 h-4" /> {t("wms_bulk_download_template")}
           </Btn>
           <label className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-primary text-primary-foreground text-sm font-medium cursor-pointer hover:opacity-90 transition-colors">
             {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
-            {fileName ? "Cambiar archivo" : "Subir Excel"}
+            {fileName ? t("wms_bulk_change_file") : t("wms_bulk_upload_excel")}
             <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={onFile} disabled={busy} />
           </label>
           {fileName && (
             <Btn onClick={reset} className="text-muted-foreground">
-              <RotateCcw className="w-4 h-4" /> Limpiar
+              <RotateCcw className="w-4 h-4" /> {t("clear")}
             </Btn>
           )}
         </div>
-        {fileName && <p className="text-xs font-mono text-muted-foreground">📄 {fileName} · {rows.length} fila(s)</p>}
+        {fileName && <p className="text-xs font-mono text-muted-foreground">📄 {fileName} · {t("wms_bulk_rows_n", { n: rows.length })}</p>}
       </div>
 
       {/* Summary */}
       {s && (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          <SummaryPill label="Ajustes" value={s.adjust} cls="" />
-          <SummaryPill label="Nuevas" value={s.new} cls="" />
-          <SummaryPill label="Errores" value={s.error} cls={s.error > 0 ? "text-red-600 dark:text-red-400" : "text-muted-foreground"} />
-          <SummaryPill label="Sin cambio" value={s.skip} cls="text-muted-foreground" />
+          <SummaryPill label={t("wms_bulk_adjustments")} value={s.adjust} valueCls="" />
+          <SummaryPill label={t("wms_bulk_new_pl")} value={s.new} valueCls="" />
+          <SummaryPill label={t("wms_bulk_errors")} value={s.error} valueCls={s.error > 0 ? "text-red-600 dark:text-red-400" : "text-muted-foreground"} />
+          <SummaryPill label={t("wms_bulk_status_skip")} value={s.skip} valueCls="text-muted-foreground" />
         </div>
       )}
 
@@ -169,11 +169,11 @@ export default function BulkInventoryAdjust() {
               <thead className="sticky top-0 bg-muted/50 border-b border-border">
                 <tr className="text-left text-xs font-semibold text-muted-foreground">
                   <th className="px-3 py-2.5">#</th>
-                  <th className="px-3 py-2.5">Línea</th>
-                  <th className="px-3 py-2.5 text-right">Actual</th>
-                  <th className="px-3 py-2.5 text-right">Ajuste</th>
-                  <th className="px-3 py-2.5 text-right">Nuevo</th>
-                  <th className="px-3 py-2.5">Estado</th>
+                  <th className="px-3 py-2.5">{t("wms_bulk_line")}</th>
+                  <th className="px-3 py-2.5 text-right">{t("wms_bulk_current")}</th>
+                  <th className="px-3 py-2.5 text-right">{t("wms_bulk_status_adjust")}</th>
+                  <th className="px-3 py-2.5 text-right">{t("wms_bulk_new_qty")}</th>
+                  <th className="px-3 py-2.5">{t("status")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -189,7 +189,7 @@ export default function BulkInventoryAdjust() {
                       </td>
                       <td className="px-3 py-2.5 text-right tabular-nums font-medium">{r.new ?? "—"}</td>
                       <td className="px-3 py-2.5">
-                        <span className={`inline-flex items-center px-2 py-0.5 rounded-md border text-xs font-medium whitespace-nowrap ${m.cls}`}>{m.label}</span>
+                        <span className={`inline-flex items-center px-2 py-0.5 rounded-md border text-xs font-medium whitespace-nowrap ${m.cls}`}>{t(m.labelKey)}</span>
                         {r.message && <span className="block text-xs text-muted-foreground mt-0.5">{r.message}</span>}
                       </td>
                     </tr>
@@ -204,14 +204,14 @@ export default function BulkInventoryAdjust() {
       {/* Apply */}
       {s && (s.adjust + s.new) > 0 && !result && (
         <div className="bg-card border border-border rounded-lg p-5 space-y-3">
-          <label className="text-xs font-medium text-muted-foreground block">Motivo del ajuste *</label>
+          <label className="text-xs font-medium text-muted-foreground block">{t("wms_bulk_reason_label")}</label>
           <textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={2}
-            placeholder="Ej. Conteo cíclico SAT — corrección física vs sistema"
+            placeholder={t("wms_bulk_reason_ph")}
             className={`${cls.input} resize-none`} />
           <button onClick={apply} disabled={!canApply}
             className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 transition-colors disabled:opacity-50 disabled:pointer-events-none">
             {applying ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
-            Aplicar {s.adjust + s.new} cambio(s)
+            {t("wms_bulk_apply_n", { n: s.adjust + s.new })}
           </button>
         </div>
       )}
@@ -220,31 +220,32 @@ export default function BulkInventoryAdjust() {
       {result && (
         <SoftAlert
           tone="success"
-          title="Ajuste aplicado"
+          title={t("wms_bulk_applied_title")}
           action={
             <Btn onClick={reset}>
-              <RotateCcw className="w-4 h-4" /> Hacer otro ajuste
+              <RotateCcw className="w-4 h-4" /> {t("wms_bulk_another")}
             </Btn>
           }
         >
-          {result.summary.applied} línea(s) aplicadas · {result.summary.error} con error · {result.summary.skip} sin cambio.
+          {t("wms_bulk_result_summary", { applied: result.summary.applied, error: result.summary.error, skip: result.summary.skip })}
         </SoftAlert>
       )}
 
       {!preview && !busy && (
         <div className="py-16 text-center">
-          <p className="text-sm font-semibold text-foreground/80">Sube un archivo para ver la vista previa</p>
+          <p className="text-sm font-semibold text-foreground/80">{t("wms_bulk_upload_hint")}</p>
         </div>
       )}
     </div>
   );
 }
 
-function SummaryPill({ label, value, cls }) {
+// `valueCls` (no `cls`): el nombre `cls` sombreaba al import de ./ui.
+function SummaryPill({ label, value, valueCls }) {
   return (
     <div className="bg-card border border-border rounded-lg px-5 py-4">
       <div className="text-xs font-medium text-muted-foreground">{label}</div>
-      <div className={`text-2xl font-semibold tracking-tight tabular-nums mt-1 ${cls}`}>{value ?? 0}</div>
+      <div className={`text-2xl font-semibold tracking-tight tabular-nums mt-1 ${valueCls}`}>{value ?? 0}</div>
     </div>
   );
 }

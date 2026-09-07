@@ -143,15 +143,15 @@ export const LocationsModule = ({ currentUser }) => {
     try {
       if (l.on_hold) {
         await deleter(`/location-holds/${encodeURIComponent(l.name)}`);
-        toast.success(`${l.name} liberada de HOLD`);
+        toast.success(t('wms_loc_hold_released', { name: l.name }));
       } else {
-        if (!window.confirm(`¿Poner ${l.name} en HOLD? Nadie podrá mover/surtir su material hasta liberarla.`)) return;
+        if (!window.confirm(t('wms_loc_hold_confirm', { name: l.name }))) return;
         await poster('/location-holds', { locations: [l.name], reason: 'SAT' });
-        toast.success(`${l.name} puesta en HOLD`);
+        toast.success(t('wms_loc_hold_set', { name: l.name }));
       }
       load();
     } catch {
-      toast.error('No se pudo cambiar el HOLD (requiere superusuario)');
+      toast.error(t('wms_loc_hold_err'));
     }
   };
 
@@ -214,63 +214,63 @@ export const LocationsModule = ({ currentUser }) => {
       setBoxesByInv(seeded);
     } catch (err) {
       logLoadError('location detail')(err);
-      toast.error('No se pudo cargar el detalle de la ubicación');
+      toast.error(t('wms_loc_detail_err'));
     } finally { setDetailLoading(false); }
-  }, [activeLocLoaded]);
+  }, [activeLocLoaded, t]);
 
   // Delete one inventory line (and its boxes) from the open location.
   const deleteInvLine = useCallback(async (it) => {
-    if (!it.inventory_id) { toast.error('Este renglón no tiene inventory_id; no se puede borrar individualmente'); return; }
+    if (!it.inventory_id) { toast.error(t('wms_line_no_inv_id_delete')); return; }
     const label = `${it.style || ''}${it.color ? '-' + it.color : ''}${it.size ? '-' + it.size : ''}`;
     const units = (it.on_hand ?? it.units_on_hand ?? 0).toLocaleString();
-    if (!window.confirm(`¿Borrar ${label} (${units} pzs) de ${detailLoc?.name}? Se elimina el inventario de esta ubicación.`)) return;
+    if (!window.confirm(t('wms_line_delete_confirm', { label, units, location: detailLoc?.name }))) return;
     try {
       await deleter(`/inventory/${encodeURIComponent(it.inventory_id)}`);
       setDetailItems(prev => prev.filter(x => x.inventory_id !== it.inventory_id));
-      toast.success('Renglón eliminado de la ubicación');
+      toast.success(t('wms_line_deleted'));
       load();
     } catch {
-      toast.error('No se pudo borrar (¿permisos de admin?)');
+      toast.error(t('wms_delete_err_admin'));
     }
-  }, [detailLoc, load]);
+  }, [detailLoc, load, t]);
 
   // Clear ALL inventory content from the open location.
   const clearLocation = useCallback(async () => {
     const items = detailItems.filter(x => x.inventory_id);
-    if (items.length === 0) { toast.error('No hay renglones con inventory_id para borrar'); return; }
-    if (!window.confirm(`¿VACIAR por completo ${detailLoc?.name}? Se eliminarán ${items.length} renglón(es) de inventario. No se puede deshacer.`)) return;
+    if (items.length === 0) { toast.error(t('wms_no_lines_inv_id')); return; }
+    if (!window.confirm(t('wms_clear_loc_confirm', { location: detailLoc?.name, n: items.length }))) return;
     setClearingLoc(true);
     let ok = 0;
     for (const it of items) {
       try { await deleter(`/inventory/${encodeURIComponent(it.inventory_id)}`); ok++; } catch { /* keep going */ }
     }
     setClearingLoc(false);
-    toast.success(`${ok}/${items.length} renglones eliminados`);
+    toast.success(t('wms_lines_deleted_count', { ok, total: items.length }));
     if (detailLoc) openDetail(detailLoc);
     load();
-  }, [detailItems, detailLoc, load, openDetail]);
+  }, [detailItems, detailLoc, load, openDetail, t]);
 
   const findBox = useCallback(async () => {
     const lpn = (lpnSearch || '').trim().toUpperCase();
-    if (!lpn) { toast.error('Escribe un LPN para buscar'); return; }
+    if (!lpn) { toast.error(t('wms_lpn_search_req')); return; }
     setLpnSearching(true);
     setFoundBox(null);
     setHighlightBoxId(null);
     try {
       // Direct lookup. The backend already 404s if the box doesn't exist.
       const res = await fetch(`${API}/boxes/${encodeURIComponent(lpn)}`, { credentials: 'include' });
-      if (res.status === 404) { toast.error(`Caja '${lpn}' no encontrada`); return; }
+      if (res.status === 404) { toast.error(t('wms_box_not_found', { box: lpn })); return; }
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        toast.error(err.detail || `Error ${res.status}`);
+        toast.error(err.detail || t('wms_err_status', { status: res.status }));
         return;
       }
       const box = await res.json();
-      if (!box || !box.box_id) { toast.error(`Caja '${lpn}' no encontrada`); return; }
+      if (!box || !box.box_id) { toast.error(t('wms_box_not_found', { box: lpn })); return; }
 
       const boxLoc = (box.location || '').toUpperCase();
       if (!boxLoc) {
-        toast.error(`La caja ${box.box_id} no tiene ubicación asignada`);
+        toast.error(t('wms_box_no_location', { box: box.box_id }));
         return;
       }
       // Find the location object in our local list so openDetail can render
@@ -280,12 +280,12 @@ export const LocationsModule = ({ currentUser }) => {
       setFoundBox(box);
       setHighlightBoxId(box.box_id);
       await openDetail(loc);
-      toast.success(`Caja ${box.box_id} en ${box.location}`);
+      toast.success(t('wms_box_at_location', { box: box.box_id, location: box.location }));
     } catch (err) {
       logLoadError('lookup box')(err);
-      toast.error('Error al buscar la caja');
+      toast.error(t('wms_box_search_err'));
     } finally { setLpnSearching(false); }
-  }, [lpnSearch, locations, openDetail]);
+  }, [lpnSearch, locations, openDetail, t]);
 
   const startRelocate = useCallback((boxId) => {
     setRelocatingBoxId(boxId);
@@ -301,17 +301,17 @@ export const LocationsModule = ({ currentUser }) => {
 
   const confirmRelocate = useCallback(async (box, inventoryId) => {
     const dst = (relocateDst || '').trim().toUpperCase();
-    if (!dst) { toast.error('Escribe la ubicación destino'); return; }
+    if (!dst) { toast.error(t('wms_dest_req')); return; }
     if (!detailLoc) return;
-    if (dst === (detailLoc.name || '').toUpperCase()) { toast.error('Destino igual al origen'); return; }
+    if (dst === (detailLoc.name || '').toUpperCase()) { toast.error(t('wms_dest_same_as_origin')); return; }
     const exists = activeLocations.some(l => (l.name || '').toUpperCase() === dst);
-    if (!exists) { toast.error(`'${dst}' no existe en las ubicaciones`); return; }
+    if (!exists) { toast.error(t('wms_dest_not_exists', { dest: dst })); return; }
     setRelocateSaving(true);
     try {
       const res = await poster('/boxes/relocate', { box_ids: [box.box_id], to: dst });
       if (res.ok) {
         const data = await res.json();
-        toast.success(data.message || 'Caja movida');
+        toast.success(data.message || t('wms_box_moved'));
         // Drop the moved LPN from the open drawer so the UI matches reality.
         setBoxesByInv(prev => {
           const node = prev[inventoryId];
@@ -330,13 +330,13 @@ export const LocationsModule = ({ currentUser }) => {
         load();
       } else {
         const err = await res.json().catch(() => ({}));
-        toast.error(err.detail || 'Error al mover la caja');
+        toast.error(err.detail || t('wms_box_move_err'));
       }
     } catch (err) {
       logLoadError('relocate box')(err);
-      toast.error('Error de conexión');
+      toast.error(t('wms_err_connection'));
     } finally { setRelocateSaving(false); }
-  }, [relocateDst, detailLoc, activeLocations, load]);
+  }, [relocateDst, detailLoc, activeLocations, load, t]);
 
   const startLineMove = useCallback((it) => {
     setRelocatingLineId(it.inventory_id);
@@ -355,11 +355,11 @@ export const LocationsModule = ({ currentUser }) => {
   // inventory at both ends).
   const confirmLineMove = useCallback(async (it) => {
     const dst = (lineDst || '').trim().toUpperCase();
-    if (!dst) { toast.error('Escribe la ubicación destino'); return; }
+    if (!dst) { toast.error(t('wms_dest_req')); return; }
     if (!detailLoc) return;
-    if (dst === (detailLoc.name || '').toUpperCase()) { toast.error('Destino igual al origen'); return; }
+    if (dst === (detailLoc.name || '').toUpperCase()) { toast.error(t('wms_dest_same_as_origin')); return; }
     if (!activeLocations.some(l => (l.name || '').toUpperCase() === dst)) {
-      toast.error(`'${dst}' no existe en las ubicaciones`); return;
+      toast.error(t('wms_dest_not_exists', { dest: dst })); return;
     }
     setLineSaving(true);
     try {
@@ -373,28 +373,28 @@ export const LocationsModule = ({ currentUser }) => {
         boxes = await fetcher(`/boxes?${params.toString()}`);
       }
       const boxIds = (Array.isArray(boxes) ? boxes : []).map(b => b.box_id).filter(Boolean);
-      if (boxIds.length === 0) { toast.error('Esta línea no tiene cajas (LPNs) para mover'); return; }
+      if (boxIds.length === 0) { toast.error(t('wms_line_no_boxes')); return; }
       const res = await poster('/boxes/relocate', { box_ids: boxIds, to: dst });
       if (res.ok) {
         const data = await res.json();
-        toast.success(data.message || `Renglón movido a ${dst} (${boxIds.length} cajas)`);
+        toast.success(data.message || t('wms_line_moved', { dest: dst, n: boxIds.length }));
         cancelLineMove();
         if (detailLoc) openDetail(detailLoc);
         load();
       } else {
         const err = await res.json().catch(() => ({}));
-        toast.error(err.detail || 'Error al mover el renglón');
+        toast.error(err.detail || t('wms_line_move_err'));
       }
     } catch (err) {
       logLoadError('move line')(err);
-      toast.error('Error de conexión');
+      toast.error(t('wms_err_connection'));
     } finally { setLineSaving(false); }
-  }, [lineDst, detailLoc, activeLocations, openDetail, load, cancelLineMove]);
+  }, [lineDst, detailLoc, activeLocations, openDetail, load, cancelLineMove, t]);
 
   const toggleBoxes = useCallback(async (it) => {
     const id = it.inventory_id;
     if (!id) {
-      toast.error('Este renglón no tiene inventory_id — no se pueden listar cajas');
+      toast.error(t('wms_line_no_inv_id_boxes'));
       return;
     }
     // If the drawer is already open, just close it (data stays cached).
@@ -432,35 +432,35 @@ export const LocationsModule = ({ currentUser }) => {
       setBoxesByInv(prev => ({ ...prev, [id]: { loading: false, boxes: Array.isArray(data) ? data : [] } }));
     } catch (err) {
       logLoadError('boxes by inventory')(err);
-      toast.error('Error al cargar las cajas');
+      toast.error(t('wms_boxes_load_err'));
       setBoxesByInv(prev => {
         const next = { ...prev };
         delete next[id];
         return next;
       });
     }
-  }, [boxesByInv, detailLoc, openDrawers]);
+  }, [boxesByInv, detailLoc, openDrawers, t]);
 
   // Super-user only. Deletes an LPN and refetches the location so the line
   // counts / on-hand reflect the inventory rebalance the backend just did.
   const deleteBox = useCallback(async (box) => {
     const id = box?.box_id;
     if (!id) return;
-    if (!window.confirm(`¿Borrar la caja ${id}? Descuenta sus unidades del inventario y no se puede deshacer.`)) return;
+    if (!window.confirm(t('wms_box_delete_confirm', { box: id }))) return;
     try {
       const res = await fetch(`${API}/boxes/${encodeURIComponent(id)}`, { method: 'DELETE', credentials: 'include' });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        toast.error(err.detail || 'No se pudo borrar la caja');
+        toast.error(err.detail || t('wms_box_delete_err'));
         return;
       }
-      toast.success(`Caja ${id} borrada`);
+      toast.success(t('wms_box_deleted', { box: id }));
       if (detailLoc) openDetail(detailLoc);
     } catch (err) {
       logLoadError('delete box')(err);
-      toast.error('Error de conexión');
+      toast.error(t('wms_err_connection'));
     }
-  }, [detailLoc, openDetail]);
+  }, [detailLoc, openDetail, t]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -485,11 +485,11 @@ export const LocationsModule = ({ currentUser }) => {
 
   const handleCreateLoc = async () => {
     const name = newLoc.name.trim().toUpperCase();
-    if (!name) { toast.error(t('wms_name_req') || 'Nombre requerido'); return; }
+    if (!name) { toast.error(t('wms_name_req')); return; }
 
     // Client-side check for immediate feedback
     if (locations.some(l => l.name.toUpperCase() === name)) {
-      toast.error(`La ubicación '${name}' ya existe`);
+      toast.error(t('wms_loc_exists', { name }));
       return;
     }
 
@@ -497,35 +497,35 @@ export const LocationsModule = ({ currentUser }) => {
     try {
       const res = await poster('/locations', { ...newLoc, name });
       if (res.ok) {
-        toast.success(t('wms_loc_created') || 'Ubicación creada');
+        toast.success(t('wms_loc_created'));
         setNewLoc({ name: '', zone: '', type: 'rack' });
         setShowNewLoc(false);
         load();
       } else {
         const err = await res.json().catch(() => ({}));
-        toast.error(err.detail || 'Error al crear ubicación');
+        toast.error(err.detail || t('wms_loc_create_err'));
       }
     } catch {
-      toast.error(t('error_connection'));
+      toast.error(t('wms_err_connection'));
     } finally {
       setLoading(false);
     }
   };
 
   const handleDelete = async (id, name) => {
-    if (!window.confirm(`¿Estás seguro de eliminar la ubicación '${name}'?`)) return;
+    if (!window.confirm(t('wms_loc_delete_confirm', { name }))) return;
     setLoading(true);
     try {
       const res = await fetch(`${API}/locations/${id}`, { method: 'DELETE', credentials: 'include' });
       if (res.ok) {
-        toast.success('Ubicación eliminada');
+        toast.success(t('wms_loc_deleted'));
         load();
       } else {
         const err = await res.json().catch(() => ({}));
-        toast.error(err.detail || 'Error al eliminar');
+        toast.error(err.detail || t('wms_delete_err'));
       }
     } catch {
-      toast.error(t('error_connection'));
+      toast.error(t('wms_err_connection'));
     } finally {
       setLoading(false);
     }
@@ -535,10 +535,10 @@ export const LocationsModule = ({ currentUser }) => {
 
   const handleUpdateLoc = async () => {
     const name = editingLoc.name.trim().toUpperCase();
-    if (!name) { toast.error(t('wms_name_req') || 'Nombre requerido'); return; }
+    if (!name) { toast.error(t('wms_name_req')); return; }
 
     if (locations.some(l => l.name.toUpperCase() === name && l.location_id !== editingLoc.location_id)) {
-      toast.error(`La ubicación '${name}' ya existe`);
+      toast.error(t('wms_loc_exists', { name }));
       return;
     }
 
@@ -551,40 +551,40 @@ export const LocationsModule = ({ currentUser }) => {
         credentials: 'include'
       });
       if (res.ok) {
-        toast.success('Ubicación actualizada');
+        toast.success(t('wms_loc_updated'));
         setEditingLoc(null);
         load();
       } else {
         const err = await res.json().catch(() => ({}));
-        toast.error(err.detail || 'Error al actualizar');
+        toast.error(err.detail || t('update_err'));
       }
     } catch {
-      toast.error(t('error_connection'));
+      toast.error(t('wms_err_connection'));
     } finally {
       setLoading(false);
     }
   };
 
   const handleBulkMove = async () => {
-    if (!moveBulk || !moveBulk.to?.trim()) { toast.error('Selecciona ubicación destino'); return; }
+    if (!moveBulk || !moveBulk.to?.trim()) { toast.error(t('wms_select_dest')); return; }
     const dst = moveBulk.to.trim().toUpperCase();
     const src = moveBulk.from.name;
-    if (dst === src.toUpperCase()) { toast.error('La ubicación destino debe ser distinta'); return; }
+    if (dst === src.toUpperCase()) { toast.error(t('wms_dest_must_differ')); return; }
     setMovingBulk(true);
     try {
       const res = await poster('/move-location', { from: src, to: dst });
       if (res.ok) {
         const data = await res.json();
-        toast.success(data.message || 'Stock movido');
+        toast.success(data.message || t('wms_stock_moved'));
         setMoveBulk(null);
         load();
       } else {
         const err = await res.json().catch(() => ({}));
-        toast.error(err.detail || 'Error al mover');
+        toast.error(err.detail || t('wms_move_err'));
       }
     } catch (err) {
       logLoadError('bulk move')(err);
-      toast.error('Error de conexión');
+      toast.error(t('wms_err_connection'));
     } finally { setMovingBulk(false); }
   };
 
@@ -614,11 +614,11 @@ export const LocationsModule = ({ currentUser }) => {
             <Btn onClick={() => window.open(`${API}/locations/print?ids=all`, '_blank')}>
               <Printer className="w-4 h-4"
       />
-              Imprimir Etiquetas
+              {t('wms_print_labels_btn')}
             </Btn>
             <Btn variant="primary" onClick={() => setShowNewLoc(!showNewLoc)}>
               {showNewLoc ? <X className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
-              {showNewLoc ? t('cancel') : 'Nueva Ubicación'}
+              {showNewLoc ? t('cancel') : t('wms_new_loc')}
             </Btn>
           </div>
         }
@@ -630,14 +630,14 @@ export const LocationsModule = ({ currentUser }) => {
           onClick={() => switchTab('custom')}
           className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${activeTab === 'custom' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground hover:bg-muted'}`}
         >
-          Mis Locaciones
+          {t('wms_tab_my_locations')}
           <span className={`ml-2 px-1.5 py-0.5 rounded text-xs ${activeTab === 'custom' ? 'bg-black/10' : 'bg-background text-muted-foreground'}`}>{locations.filter(l => l.tab !== 'narro' && l.tab !== 'pallet' && l.is_custom).length}</span>
         </button>
         <button
           onClick={() => switchTab('system')}
           className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${activeTab === 'system' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground hover:bg-muted'}`}
         >
-          Sistema / Inventario
+          {t('wms_tab_system_inventory')}
           <span className={`ml-2 px-1.5 py-0.5 rounded text-xs ${activeTab === 'system' ? 'bg-black/10' : 'bg-background text-muted-foreground'}`}>{locations.filter(l => l.tab !== 'narro' && l.tab !== 'pallet' && !l.is_custom).length}</span>
         </button>
         <button
@@ -660,24 +660,24 @@ export const LocationsModule = ({ currentUser }) => {
         <div className="p-4 bg-card border border-border rounded-lg animate-in fade-in duration-150">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div className="space-y-1">
-              <label className="text-xs font-medium text-muted-foreground block">Nombre de Locación</label>
+              <label className="text-xs font-medium text-muted-foreground block">{t('wms_loc_name_label')}</label>
               <div className="relative">
                 <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground/60" />
                 <input
-                  placeholder="Ej: A-01-01"
+                  placeholder={t('wms_loc_name_example')}
                   value={newLoc.name}
                   onChange={e => setNewLoc(p => ({ ...p, name: e.target.value.toUpperCase() }))}
                   className={`${cls.input} pl-9 font-mono`}
                 />
               </div>
               {locations.some(l => l.name.toUpperCase() === newLoc.name.trim().toUpperCase()) && (
-                <p className="text-xs text-red-600 dark:text-red-400 mt-1">Esta ubicación ya existe</p>
+                <p className="text-xs text-red-600 dark:text-red-400 mt-1">{t('wms_loc_exists_inline')}</p>
               )}
             </div>
             <div className="space-y-1">
-              <label className="text-xs font-medium text-muted-foreground block">Zona / Pasillo</label>
+              <label className="text-xs font-medium text-muted-foreground block">{t('wms_zone_aisle')}</label>
               <input
-                placeholder="Ej: ZONA A"
+                placeholder={t('wms_zone_example')}
                 value={newLoc.zone}
                 onChange={e => setNewLoc(p => ({ ...p, zone: e.target.value.toUpperCase() }))}
                 className={cls.input}
@@ -690,7 +690,7 @@ export const LocationsModule = ({ currentUser }) => {
                 disabled={loading || !newLoc.name || locations.some(l => l.name.toUpperCase() === newLoc.name.trim().toUpperCase())}
                 className="w-full"
               >
-                {loading ? <Loader2 className="w-4 h-4 animate-spin mx-auto" /> : 'Confirmar Creación'}
+                {loading ? <Loader2 className="w-4 h-4 animate-spin mx-auto" /> : t('wms_confirm_create')}
               </Btn>
             </div>
           </div>
@@ -701,7 +701,7 @@ export const LocationsModule = ({ currentUser }) => {
       <div className="relative">
         <Box className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground/60" />
         <input
-          placeholder="Buscar por número de caja (LPN)…"
+          placeholder={t('wms_search_lpn_ph')}
           value={lpnSearch}
           onChange={e => setLpnSearch(e.target.value.toUpperCase())}
           onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); findBox(); } }}
@@ -715,14 +715,14 @@ export const LocationsModule = ({ currentUser }) => {
           className="absolute right-1.5 top-1/2 -translate-y-1/2 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-border bg-card hover:bg-muted text-xs font-medium disabled:opacity-50 transition-colors"
         >
           {lpnSearching ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Search className="w-3.5 h-3.5" />}
-          Buscar
+          {t('search')}
         </button>
       </div>
 
       <div className="relative">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground/60" />
         <input
-          placeholder={`Buscar en ${activeTab === 'custom' ? 'mis locaciones' : 'locaciones de sistema'}...`}
+          placeholder={activeTab === 'custom' ? t('wms_search_in_my_locs') : t('wms_search_in_system_locs')}
           value={search}
           onChange={e => setSearch(e.target.value)}
           className={`${cls.input} pl-9`}
@@ -737,14 +737,14 @@ export const LocationsModule = ({ currentUser }) => {
           <div className="absolute inset-0 z-20 flex items-center justify-center bg-background/70 backdrop-blur-sm rounded-lg animate-in fade-in duration-150">
             <div className="flex flex-col items-center gap-2">
               <Loader2 className="w-8 h-8 text-muted-foreground animate-spin" />
-              <span className="text-xs font-medium text-muted-foreground">Cargando…</span>
+              <span className="text-xs font-medium text-muted-foreground">{t('loading')}</span>
             </div>
           </div>
         )}
         <div key={activeTab} className="animate-in fade-in slide-in-from-bottom-2 duration-300">
         {(() => {
           const grouped = filtered.reduce((acc, l) => {
-            const zone = l.zone || 'SIN ZONA';
+            const zone = l.zone || t('wms_no_zone');
             if (!acc[zone]) acc[zone] = [];
             acc[zone].push(l);
             return acc;
@@ -763,8 +763,8 @@ export const LocationsModule = ({ currentUser }) => {
           const hiddenZoneCount = sortedZones.length - zonesToRender.length;
 
           if (filtered.length === 0) return (
-            <EmptyState art="rack" title="No se encontraron ubicaciones"
-              hint="Prueba con otro texto de búsqueda o cambia de pestaña." />
+            <EmptyState art="rack" title={t('wms_no_locs_found')}
+              hint={t('wms_no_locs_found_hint')} />
           );
 
           return (<>
@@ -784,21 +784,21 @@ export const LocationsModule = ({ currentUser }) => {
                 <h3 className="text-base font-semibold flex items-center gap-2">
                   {zone}
                   <span className="text-xs font-medium bg-muted px-2 py-0.5 rounded-md text-muted-foreground">
-                    {grouped[zone].length} {t('wms_locations') || 'UBICACIONES'}
+                    {grouped[zone].length} {t('wms_locations')}
                   </span>
                 </h3>
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
-                    if (window.confirm(`¿Imprimir todas las ${grouped[zone].length} ubicaciones de zona "${zone}"?`)) {
+                    if (window.confirm(t('wms_print_zone_confirm', { n: grouped[zone].length, zone }))) {
                       window.open(`${API}/locations/print?zone=${encodeURIComponent(zone)}`, '_blank');
                     }
                   }}
                   className="ml-auto flex items-center gap-1.5 px-2.5 py-1 bg-card hover:bg-muted text-muted-foreground hover:text-foreground border border-border rounded-md text-xs font-medium transition-colors"
-                  title={`Imprimir todas las etiquetas de zona ${zone}`}
+                  title={t('wms_print_zone_title', { zone })}
                 >
                   <Printer className="w-3 h-3" />
-                  Imprimir Zona
+                  {t('wms_print_zone')}
                 </button>
               </div>
 
@@ -808,11 +808,11 @@ export const LocationsModule = ({ currentUser }) => {
                 style={{ overflowAnchor: 'none' }}
               >
                 <div className="grid grid-cols-[minmax(140px,1.2fr)_110px_70px_minmax(180px,2.4fr)_140px] gap-3 px-4 py-2 text-xs font-semibold text-muted-foreground bg-muted/50 border-b border-border">
-                  <span>Ubicación</span>
-                  <span className="text-right">Inventario</span>
+                  <span>{t('location')}</span>
+                  <span className="text-right">{t('wms_inventory')}</span>
                   <span className="text-right">SKUs</span>
-                  <span>Items (top 5)</span>
-                  <span className="text-right">Acciones</span>
+                  <span>{t('wms_items_top5')}</span>
+                  <span className="text-right">{t('actions')}</span>
                 </div>
                 {grouped[zone].map(l => {
                   const summary = l.inventory_summary || { total_units: 0, skus_count: 0, items: [] };
@@ -832,7 +832,7 @@ export const LocationsModule = ({ currentUser }) => {
                         <MapPin className={`w-3.5 h-3.5 flex-shrink-0 ${l.on_hold ? 'text-red-600 dark:text-red-400' : isEmpty ? 'text-muted-foreground/40' : 'text-muted-foreground'}`} />
                         <span className="font-mono font-medium text-sm truncate" title={l.name}>{l.name}</span>
                         {l.on_hold && (
-                          <span className="flex items-center gap-1 text-xs font-medium bg-red-50 text-red-700 border border-red-200 dark:bg-red-500/10 dark:text-red-300 dark:border-red-500/25 rounded-md px-1.5 py-0.5 flex-shrink-0" title={`En HOLD (${l.hold_reason || 'SAT'}) — solo un superusuario puede liberarla`}>
+                          <span className="flex items-center gap-1 text-xs font-medium bg-red-50 text-red-700 border border-red-200 dark:bg-red-500/10 dark:text-red-300 dark:border-red-500/25 rounded-md px-1.5 py-0.5 flex-shrink-0" title={t('wms_hold_badge_title', { reason: l.hold_reason || 'SAT' })}>
                             <Lock className="w-2.5 h-2.5" /> HOLD
                           </span>
                         )}
@@ -845,7 +845,7 @@ export const LocationsModule = ({ currentUser }) => {
                       </span>
                       <div className="text-xs font-mono truncate" title={summary.items.map(it => `${it.style}: ${it.units}`).join(' · ')}>
                         {isEmpty ? (
-                          <span className="text-muted-foreground/40 italic">Vacío</span>
+                          <span className="text-muted-foreground/40 italic">{t('wms_empty')}</span>
                         ) : (
                           <>
                             {summary.items.map((item, idx) => (
@@ -865,7 +865,7 @@ export const LocationsModule = ({ currentUser }) => {
                         <button
                           onClick={() => window.open(`${API}/locations/print?ids=${l.location_id}`, '_blank')}
                           className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted rounded-md transition-colors"
-                          title="Imprimir etiqueta"
+                          title={t('wms_print_label')}
                         >
                           <Printer className="w-3.5 h-3.5" />
                         </button>
@@ -873,7 +873,7 @@ export const LocationsModule = ({ currentUser }) => {
                           <button
                             onClick={() => toggleHold(l)}
                             className={`p-1.5 rounded-md transition-colors ${l.on_hold ? 'text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10' : 'text-muted-foreground hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10'}`}
-                            title={l.on_hold ? `Liberar ${l.name} de HOLD` : `Poner ${l.name} en HOLD (SAT)`}
+                            title={l.on_hold ? t('wms_release_hold_title', { name: l.name }) : t('wms_set_hold_title', { name: l.name })}
                           >
                             {l.on_hold ? <Unlock className="w-3.5 h-3.5" /> : <Lock className="w-3.5 h-3.5" />}
                           </button>
@@ -882,7 +882,7 @@ export const LocationsModule = ({ currentUser }) => {
                           <button
                             onClick={() => setMoveBulk({ from: l, to: '' })}
                             className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted rounded-md transition-colors"
-                            title={`Mover todo el contenido de ${l.name} a otra ubicación`}
+                            title={t('wms_move_all_title', { name: l.name })}
                           >
                             <ArrowRightLeft className="w-3.5 h-3.5" />
                           </button>
@@ -892,14 +892,14 @@ export const LocationsModule = ({ currentUser }) => {
                             <button
                               onClick={() => setEditingLoc({ location_id: l.location_id, name: l.name, zone: l.zone || '' })}
                               className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted rounded-md transition-colors"
-                              title="Editar ubicación"
+                              title={t('wms_edit_loc')}
                             >
                               <Edit3 className="w-3.5 h-3.5" />
                             </button>
                             <button
                               onClick={() => handleDelete(l.location_id, l.name)}
                               className="p-1.5 text-muted-foreground hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-md transition-colors"
-                              title="Eliminar ubicación"
+                              title={t('wms_delete_loc')}
                             >
                               <Trash2 className="w-3.5 h-3.5" />
                             </button>
@@ -908,9 +908,9 @@ export const LocationsModule = ({ currentUser }) => {
                         {SYSTEM_TRANSIT_NAMES.has((l.name || '').toUpperCase()) && (
                           <span
                             className="px-1.5 py-0.5 text-xs font-medium bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-500/10 dark:text-amber-300 dark:border-amber-500/25 rounded-md"
-                            title="Ubicación del sistema (módulo Putaway 2.0) — no editable ni eliminable"
+                            title={t('wms_system_loc_title')}
                           >
-                            sistema
+                            {t('wms_system_badge')}
                           </span>
                         )}
                       </div>
@@ -925,7 +925,7 @@ export const LocationsModule = ({ currentUser }) => {
           {hiddenZoneCount > 0 && (
             <div className="flex justify-center pt-2">
               <Btn onClick={() => setVisibleZones(v => v + ZONES_PER_PAGE)}>
-                Mostrar más zonas ({hiddenZoneCount} restantes)
+                {t('wms_show_more_zones', { n: hiddenZoneCount })}
               </Btn>
             </div>
           )}
@@ -938,7 +938,7 @@ export const LocationsModule = ({ currentUser }) => {
           <div className="w-full max-w-md p-6 bg-card border border-border rounded-lg shadow-xl space-y-5 mx-4">
             <div className="flex items-start justify-between">
               <div className="min-w-0">
-                <h3 className="text-sm font-semibold">Mover todo el stock</h3>
+                <h3 className="text-sm font-semibold">{t('wms_move_all_stock')}</h3>
                 <p className="text-xs text-muted-foreground mt-0.5">Bulk relocation</p>
               </div>
               <button onClick={() => setMoveBulk(null)} className="p-1 hover:bg-muted rounded-md transition-colors" disabled={movingBulk}>
@@ -947,25 +947,25 @@ export const LocationsModule = ({ currentUser }) => {
             </div>
 
             <div className="bg-muted/40 rounded-lg p-4 border border-border">
-              <div className="text-xs font-medium text-muted-foreground mb-1">Origen</div>
+              <div className="text-xs font-medium text-muted-foreground mb-1">{t('wms_origin')}</div>
               <div className="font-mono font-semibold text-lg">{moveBulk.from.name}</div>
               <div className="text-xs text-muted-foreground mt-1">
-                {moveBulk.from.inventory_summary?.skus_count || 0} SKUs · {(moveBulk.from.inventory_summary?.total_units || 0).toLocaleString()} unidades
+                {moveBulk.from.inventory_summary?.skus_count || 0} SKUs · {(moveBulk.from.inventory_summary?.total_units || 0).toLocaleString()} {t('wms_units_lc')}
               </div>
             </div>
 
             <div>
-              <label className="text-xs font-medium text-muted-foreground mb-1 block">Ubicación destino</label>
+              <label className="text-xs font-medium text-muted-foreground mb-1 block">{t('wms_dest_loc')}</label>
               <input
                 value={moveBulk.to}
                 onChange={e => setMoveBulk(m => ({ ...m, to: e.target.value.toUpperCase() }))}
-                placeholder="Ej: A-02-01"
+                placeholder={t('wms_dest_example')}
                 className={`${cls.input} font-mono`}
                 data-testid="bulk-move-dst"
                 autoFocus
               />
               <p className="text-xs text-muted-foreground mt-2">
-                La ubicación destino debe existir. Si ya tiene el mismo SKU, las unidades se sumarán.
+                {t('wms_bulk_move_hint')}
               </p>
             </div>
 
@@ -978,14 +978,14 @@ export const LocationsModule = ({ currentUser }) => {
                 data-testid="bulk-move-confirm"
               >
                 {movingBulk ? <Loader2 className="w-4 h-4 animate-spin" /> : <ArrowRightLeft className="w-4 h-4" />}
-                Mover
+                {t('wms_move')}
               </Btn>
               <Btn
                 onClick={() => setMoveBulk(null)}
                 disabled={movingBulk}
                 className="flex-1"
               >
-                Cancelar
+                {t('cancel')}
               </Btn>
             </div>
           </div>
@@ -996,13 +996,13 @@ export const LocationsModule = ({ currentUser }) => {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
           <div className="w-full max-w-md p-6 bg-card border border-border rounded-lg shadow-xl space-y-6 mx-4">
             <div>
-              <h3 className="text-lg font-semibold">Editar Ubicación</h3>
-              <p className="text-sm text-muted-foreground mt-0.5">Modificar parámetros de la ubicación</p>
+              <h3 className="text-lg font-semibold">{t('wms_edit_loc')}</h3>
+              <p className="text-sm text-muted-foreground mt-0.5">{t('wms_edit_loc_hint')}</p>
             </div>
 
             <div className="space-y-4">
               <div className="space-y-1">
-                <label className="text-xs font-medium text-muted-foreground block">Nombre de Locación</label>
+                <label className="text-xs font-medium text-muted-foreground block">{t('wms_loc_name_label')}</label>
                 <input
                   value={editingLoc.name}
                   onChange={e => setEditingLoc(p => ({ ...p, name: e.target.value.toUpperCase() }))}
@@ -1011,7 +1011,7 @@ export const LocationsModule = ({ currentUser }) => {
               </div>
 
               <div className="space-y-1">
-                <label className="text-xs font-medium text-muted-foreground block">Zona / Pasillo</label>
+                <label className="text-xs font-medium text-muted-foreground block">{t('wms_zone_aisle')}</label>
                 <input
                   value={editingLoc.zone}
                   onChange={e => setEditingLoc(p => ({ ...p, zone: e.target.value.toUpperCase() }))}
@@ -1027,13 +1027,13 @@ export const LocationsModule = ({ currentUser }) => {
                 disabled={loading || !editingLoc.name}
                 className="flex-1"
               >
-                {loading ? <Loader2 className="w-4 h-4 animate-spin mx-auto" /> : 'Guardar Cambios'}
+                {loading ? <Loader2 className="w-4 h-4 animate-spin mx-auto" /> : t('wms_save_changes')}
               </Btn>
               <Btn
                 onClick={() => setEditingLoc(null)}
                 className="flex-1"
               >
-                Cancelar
+                {t('cancel')}
               </Btn>
             </div>
           </div>
@@ -1054,9 +1054,9 @@ export const LocationsModule = ({ currentUser }) => {
               <div className="min-w-0">
                 <h3 className="font-mono font-semibold text-lg">{detailLoc.name}</h3>
                 <p className="text-xs text-muted-foreground">
-                  Zona {detailLoc.zone || 'SIN ZONA'}
+                  {t('wms_zone')} {detailLoc.zone || t('wms_no_zone')}
                   {detailLoc.inventory_summary && (
-                    <> · {detailLoc.inventory_summary.skus_count || 0} SKUs · {(detailLoc.inventory_summary.total_units || 0).toLocaleString()} pzs</>
+                    <> · {detailLoc.inventory_summary.skus_count || 0} SKUs · {(detailLoc.inventory_summary.total_units || 0).toLocaleString()} {t('wms_pcs')}</>
                   )}
                 </p>
               </div>
@@ -1072,11 +1072,11 @@ export const LocationsModule = ({ currentUser }) => {
               {detailLoading ? (
                 <div className="flex flex-col items-center justify-center py-20">
                   <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
-                  <span className="text-sm text-muted-foreground mt-3">Cargando contenido…</span>
+                  <span className="text-sm text-muted-foreground mt-3">{t('wms_loading_content')}</span>
                 </div>
               ) : detailItems.length === 0 ? (
                 <div className="text-center py-16 text-sm text-muted-foreground">
-                  Sin contenido en esta ubicación
+                  {t('wms_loc_no_content')}
                 </div>
               ) : (
                 <div className="border border-border rounded-lg bg-card overflow-hidden">
@@ -1085,17 +1085,17 @@ export const LocationsModule = ({ currentUser }) => {
                       <thead className="bg-muted/50 sticky top-0 border-b border-border">
                         <tr>
                           <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground w-8"></th>
-                          <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">Cliente</th>
+                          <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">{t('wms_label_customer')}</th>
                           <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">Style</th>
                           <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">SKU</th>
-                          <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">Color · Talla</th>
-                          <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">Descripción</th>
-                          <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">País</th>
+                          <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">{t('wms_color_size_col')}</th>
+                          <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">{t('description')}</th>
+                          <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">{t('wms_country_col')}</th>
                           <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">Fabric</th>
-                          <th className="px-3 py-2.5 text-right text-xs font-semibold text-muted-foreground">Cajas</th>
-                          <th className="px-3 py-2.5 text-right text-xs font-semibold text-muted-foreground">On hand</th>
-                          <th className="px-3 py-2.5 text-right text-xs font-semibold text-muted-foreground">Disponible</th>
-                          {canManageLocations && <th className="px-3 py-2.5 text-right text-xs font-semibold text-muted-foreground w-10">Acción</th>}
+                          <th className="px-3 py-2.5 text-right text-xs font-semibold text-muted-foreground">{t('wms_boxes')}</th>
+                          <th className="px-3 py-2.5 text-right text-xs font-semibold text-muted-foreground">{t('wms_on_hand')}</th>
+                          <th className="px-3 py-2.5 text-right text-xs font-semibold text-muted-foreground">{t('wms_available_col')}</th>
+                          {canManageLocations && <th className="px-3 py-2.5 text-right text-xs font-semibold text-muted-foreground w-10">{t('wms_action_col')}</th>}
                         </tr>
                       </thead>
                       <tbody>
@@ -1148,7 +1148,7 @@ export const LocationsModule = ({ currentUser }) => {
                                           type="button"
                                           onClick={(e) => { e.stopPropagation(); startLineMove(it); }}
                                           className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-                                          title="Mover este renglón a otra ubicación"
+                                          title={t('wms_move_line_title')}
                                         >
                                           <ArrowRightLeft className="w-3.5 h-3.5" />
                                         </button>
@@ -1158,7 +1158,7 @@ export const LocationsModule = ({ currentUser }) => {
                                           type="button"
                                           onClick={(e) => { e.stopPropagation(); deleteInvLine(it); }}
                                           className="p-1.5 rounded-md text-muted-foreground hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors"
-                                          title="Borrar este renglón de la ubicación (solo Super Usuario)"
+                                          title={t('wms_delete_line_title')}
                                         >
                                           <Trash2 className="w-3.5 h-3.5" />
                                         </button>
@@ -1173,7 +1173,7 @@ export const LocationsModule = ({ currentUser }) => {
                                   <td colSpan={canManageLocations ? 12 : 11} className="py-2.5 px-4">
                                     <div className="flex items-center gap-2 flex-wrap">
                                       <span className="text-xs font-medium text-amber-700 dark:text-amber-300 whitespace-nowrap">
-                                        Mover {it.style}{it.color ? `-${it.color}` : ''}{it.size ? `-${it.size}` : ''} →
+                                        {t('wms_move')} {it.style}{it.color ? `-${it.color}` : ''}{it.size ? `-${it.size}` : ''} →
                                       </span>
                                       <div className="relative">
                                         <input
@@ -1181,7 +1181,7 @@ export const LocationsModule = ({ currentUser }) => {
                                           value={lineDst}
                                           onChange={(e) => { setLineDst(e.target.value.toUpperCase()); setLineDrop(true); }}
                                           onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); confirmLineMove(it); } if (e.key === 'Escape') cancelLineMove(); }}
-                                          placeholder="Ubicación destino (ej. RP10-A26)"
+                                          placeholder={t('wms_dest_loc_ph')}
                                           className="w-60 px-3 py-1.5 bg-card border border-input rounded-md text-sm font-mono focus:outline-none focus:ring-2 focus:ring-ring/25 focus:border-ring"
                                         />
                                         {lineDrop && (() => {
@@ -1209,14 +1209,14 @@ export const LocationsModule = ({ currentUser }) => {
                                         disabled={lineSaving || !lineDst.trim()}
                                         onClick={() => confirmLineMove(it)}
                                       >
-                                        {lineSaving ? <Loader2 className="w-3 h-3 animate-spin" /> : <ArrowRightLeft className="w-3 h-3" />} Mover
+                                        {lineSaving ? <Loader2 className="w-3 h-3 animate-spin" /> : <ArrowRightLeft className="w-3 h-3" />} {t('wms_move')}
                                       </Btn>
                                       <Btn
                                         type="button"
                                         disabled={lineSaving}
                                         onClick={cancelLineMove}
                                       >
-                                        Cancelar
+                                        {t('cancel')}
                                       </Btn>
                                     </div>
                                   </td>
@@ -1241,18 +1241,18 @@ export const LocationsModule = ({ currentUser }) => {
                           {boxesByInv[it.inventory_id].loading ? (
                             <div className="flex items-center justify-center py-4 gap-2 text-muted-foreground">
                               <Loader2 className="w-4 h-4 animate-spin" />
-                              <span className="text-xs font-medium">Cargando LPNs…</span>
+                              <span className="text-xs font-medium">{t('wms_loading_lpns')}</span>
                             </div>
                           ) : boxesByInv[it.inventory_id].boxes.length === 0 ? (
-                            <div className="text-center text-sm text-muted-foreground py-6">Sin LPNs registrados</div>
+                            <div className="text-center text-sm text-muted-foreground py-6">{t('wms_no_lpns')}</div>
                           ) : (
                             <table className="w-full text-sm">
                               <thead className="bg-muted/50 border-b border-border">
                                 <tr>
                                   <th className="px-3 py-2 text-left text-xs font-semibold text-muted-foreground">LPN</th>
-                                  <th className="px-3 py-2 text-right text-xs font-semibold text-muted-foreground">Unidades</th>
-                                  <th className="px-3 py-2 text-left text-xs font-semibold text-muted-foreground">Estado</th>
-                                  <th className="px-3 py-2 text-right text-xs font-semibold text-muted-foreground">Acción</th>
+                                  <th className="px-3 py-2 text-right text-xs font-semibold text-muted-foreground">{t('wms_label_units')}</th>
+                                  <th className="px-3 py-2 text-left text-xs font-semibold text-muted-foreground">{t('status')}</th>
+                                  <th className="px-3 py-2 text-right text-xs font-semibold text-muted-foreground">{t('wms_action_col')}</th>
                                 </tr>
                               </thead>
                               <tbody>
@@ -1286,7 +1286,7 @@ export const LocationsModule = ({ currentUser }) => {
                                                   if (e.key === 'Enter') { e.preventDefault(); confirmRelocate(b, it.inventory_id); }
                                                   if (e.key === 'Escape') { e.preventDefault(); cancelRelocate(); }
                                                 }}
-                                                placeholder="Ubicación destino"
+                                                placeholder={t('wms_dest_loc')}
                                                 className="w-full px-2 py-1 bg-card border border-input rounded-md text-xs font-mono focus:outline-none focus:ring-2 focus:ring-ring/25 focus:border-ring"
                                               />
                                               {showLocDrop && matches.length > 0 && (
@@ -1345,26 +1345,26 @@ export const LocationsModule = ({ currentUser }) => {
                                             type="button"
                                             onClick={() => window.open(`${API}/labels/box/${encodeURIComponent(b.box_id)}`, '_blank')}
                                             className="transition-colors inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-muted-foreground hover:text-foreground bg-card hover:bg-muted rounded-md border border-border"
-                                            title={`Imprimir etiqueta de ${b.box_id || 'esta caja'}`}
+                                            title={t('wms_print_box_label_title', { box: b.box_id || t('wms_this_box') })}
                                           >
-                                            <Printer className="w-2.5 h-2.5" /> Etiqueta
+                                            <Printer className="w-2.5 h-2.5" /> {t('wms_label_btn')}
                                           </button>
                                           <button
                                             type="button"
                                             onClick={() => startRelocate(b.box_id)}
                                             className="transition-colors inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-muted-foreground hover:text-foreground bg-card hover:bg-muted rounded-md border border-border"
-                                            title={`Mover ${b.box_id || 'esta caja'} a otra ubicación`}
+                                            title={t('wms_move_box_title', { box: b.box_id || t('wms_this_box') })}
                                           >
-                                            <ArrowRightLeft className="w-2.5 h-2.5" /> Mover
+                                            <ArrowRightLeft className="w-2.5 h-2.5" /> {t('wms_move')}
                                           </button>
                                           {canManageLocations && (
                                             <button
                                               type="button"
                                               onClick={() => deleteBox(b)}
                                               className="transition-colors inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-red-600 dark:text-red-400 bg-card hover:bg-red-50 dark:hover:bg-red-500/10 rounded-md border border-border"
-                                              title={`Borrar ${b.box_id || 'esta caja'} (solo Super Usuario)`}
+                                              title={t('wms_delete_box_title', { box: b.box_id || t('wms_this_box') })}
                                             >
-                                              <Trash2 className="w-2.5 h-2.5" /> Borrar
+                                              <Trash2 className="w-2.5 h-2.5" /> {t('wms_delete_short')}
                                             </button>
                                           )}
                                         </div>
@@ -1386,9 +1386,9 @@ export const LocationsModule = ({ currentUser }) => {
                                             return n;
                                           })}
                                           className="w-full py-1.5 text-xs font-medium text-muted-foreground hover:text-foreground bg-muted/40 transition-colors"
-                                          title="Cajas surtidas a 0. Si una caja fisica marca 0 al escanearla pero tiene material, usa MOVER → Ajustar caja."
+                                          title={t('wms_empty_boxes_title')}
                                         >
-                                          {abierto ? '· Ocultar' : `· Ver ${vacias}`} caja{vacias === 1 ? '' : 's'} en 0
+                                          {abierto ? t('wms_hide_empty_boxes') : (vacias === 1 ? t('wms_show_empty_box_one') : t('wms_show_empty_boxes', { n: vacias }))}
                                         </button>
                                       </td>
                                     </tr>
@@ -1419,12 +1419,12 @@ export const LocationsModule = ({ currentUser }) => {
                     || (it.allocated ?? it.units_allocated ?? 0) > 0 || (it.total_boxes ?? 0) > 0)).length;
                   const vivos = detailItems.length - muertos;
                   return (<>
-                    {vivos} línea{vivos === 1 ? '' : 's'} en esta ubicación
+                    {vivos === 1 ? t('wms_line_in_loc_one') : t('wms_lines_in_loc', { n: vivos })}
                     {muertos > 0 && (
                       <button onClick={() => setShowZeroRows(v => !v)}
                         className="ml-2 underline decoration-dotted text-muted-foreground hover:text-foreground"
-                        title="Renglones sin stock. OJO: a veces el material SÍ está físicamente (secuela del FIFO viejo) — si una caja marca 0 teniendo material, usa MOVER → Ajustar caja.">
-                        {showZeroRows ? 'ocultar' : 'ver'} {muertos} en cero
+                        title={t('wms_zero_rows_title')}>
+                        {showZeroRows ? t('wms_hide_zero_rows', { n: muertos }) : t('wms_show_zero_rows', { n: muertos })}
                       </button>
                     )}
                   </>);
@@ -1434,9 +1434,9 @@ export const LocationsModule = ({ currentUser }) => {
                 {detailItems.length > 0 && (
                   <Btn
                     onClick={() => window.open(`${API}/labels/location?location=${encodeURIComponent(detailLoc.name)}`, '_blank')}
-                    title="Imprimir las etiquetas de todas las cajas de esta ubicación"
+                    title={t('wms_print_loc_labels_title')}
                   >
-                    <Printer className="w-3.5 h-3.5" /> Imprimir etiquetas
+                    <Printer className="w-3.5 h-3.5" /> {t('wms_print_labels_btn')}
                   </Btn>
                 )}
                 {canManageLocations && detailItems.length > 0 && (
@@ -1444,14 +1444,14 @@ export const LocationsModule = ({ currentUser }) => {
                     variant="danger"
                     onClick={clearLocation}
                     disabled={clearingLoc}
-                    title="Eliminar todo el inventario de esta ubicación (solo Super Usuario)"
+                    title={t('wms_clear_loc_title')}
                   >
                     {clearingLoc ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
-                    Vaciar ubicación
+                    {t('wms_clear_loc')}
                   </Btn>
                 )}
                 <Btn onClick={() => setDetailLoc(null)}>
-                  Cerrar
+                  {t('close')}
                 </Btn>
               </div>
             </div>

@@ -19,12 +19,14 @@ import {
   LayoutDashboard, Scissors, Clock, Truck, Move, ShieldCheck, ShieldAlert, Boxes,
 } from "lucide-react";
 
+/* Grupos del menú. `label`/`hint` son el respaldo en español para quien llame
+   a `groupModules` sin `t`; con `t` se resuelven `labelKey`/`hintKey` (i18n). */
 export const WMS_GROUPS = [
-  { id: 'in',  label: 'Entradas',   hint: 'Del aviso al rack' },
-  { id: 'inv', label: 'Inventario', hint: 'Qué hay y dónde está' },
-  { id: 'out', label: 'Salidas',    hint: 'Del ticket al embarque' },
-  { id: 'an',  label: 'Análisis',   hint: 'Lo que ya pasó' },
-  { id: 'sys', label: 'Sistema',    hint: 'Salud y catálogos' },
+  { id: 'in',  labelKey: 'wms_grp_in',  hintKey: 'wms_grp_in_hint',  label: 'Entradas',   hint: 'Del aviso al rack' },
+  { id: 'inv', labelKey: 'wms_grp_inv', hintKey: 'wms_grp_inv_hint', label: 'Inventario', hint: 'Qué hay y dónde está' },
+  { id: 'out', labelKey: 'wms_grp_out', hintKey: 'wms_grp_out_hint', label: 'Salidas',    hint: 'Del ticket al embarque' },
+  { id: 'an',  labelKey: 'wms_grp_an',  hintKey: 'wms_grp_an_hint',  label: 'Análisis',   hint: 'Lo que ya pasó' },
+  { id: 'sys', labelKey: 'wms_grp_sys', hintKey: 'wms_grp_sys_hint', label: 'Sistema',    hint: 'Salud y catálogos' },
 ];
 
 /* Los rótulos salen de i18n, así que la lista se construye con `t` en mano.
@@ -32,12 +34,8 @@ export const WMS_GROUPS = [
    el id del módulo: Putaway 2.0 tiene id 'transit' pero su contador sigue
    llegando como `putaway` (el lanzador del picker ya hacía ese mapeo a mano). */
 /* `t()` devuelve la propia llave cuando no hay traduccion, asi que un
-   `t('x') || 'Fallback'` NUNCA cae al fallback: la llave es truthy. Por eso
-   "Trabajo dirigido" se veia como `wms_mod_directed` en la barra. */
-const tr = (t, llave, respaldo) => {
-  const v = t(llave);
-  return !v || v === llave ? respaldo : v;
-};
+   `t('x') || 'Fallback'` NUNCA cae al fallback: la llave es truthy. Toda llave
+   wms_mod_* usada abajo DEBE existir en i18n/translations.js (es + en). */
 
 /* Nivel de admin efectivo del usuario — espejo de get_admin_level() del backend
    (deps.py): supersu = MAX (5); admin = su admin_level (default 1, tope 5);
@@ -56,12 +54,12 @@ export const adminLevelOf = (u) => {
 
 export const buildModules = (t) => [
   // ── Entradas ────────────────────────────────────────────────────────────
-  { id: 'asn', group: 'in', label: 'Entradas', icon: FileDown, color: 'text-orange-400',
-    desc: 'Material por entrar: ASN o BPO. Receiving recibe contra este número.' },
+  { id: 'asn', group: 'in', label: t('wms_mod_asn'), icon: FileDown, color: 'text-orange-400',
+    desc: t('wms_mod_asn_desc') },
   { id: 'receiving', group: 'in', label: t('wms_mod_receiving'), icon: Package, color: 'text-blue-400',
     desc: t('wms_mod_receiving_desc') },
-  { id: 'transit', group: 'in', label: 'Putaway 2.0', icon: Truck, color: 'text-amber-400',
-    desc: 'Carros de tránsito — cajas pendientes de ubicación física', badgeKey: 'putaway' },
+  { id: 'transit', group: 'in', label: t('wms_mod_transit'), icon: Truck, color: 'text-amber-400',
+    desc: t('wms_mod_transit_desc'), badgeKey: 'putaway' },
   // STANDBY — Putaway 1.0 oculto de la navegación. Reemplazado por Putaway 2.0
   // (id: 'transit'). El import + el case 'putaway' del switch se quedan vivos
   // en WMS.js por si hay que reactivarlo.
@@ -70,51 +68,51 @@ export const buildModules = (t) => [
   // ── Inventario ──────────────────────────────────────────────────────────
   { id: 'inventory', group: 'inv', label: t('wms_mod_inventory'), icon: BarChart3, color: 'text-emerald-400',
     desc: t('wms_mod_inventory_desc') },
-  { id: 'locations', group: 'inv', label: 'Locaciones', icon: MapPin, color: 'text-cyan-400',
-    desc: 'Mapa lógico y gestión de ubicaciones' },
-  { id: 'mover', group: 'inv', label: 'MOVER', icon: Move, color: 'text-teal-400',
-    desc: 'Mover material entre ubicaciones: toda la ubicación, una caja o unidades' },
-  { id: 'aging', group: 'inv', label: 'Antigüedad', icon: Clock, color: 'text-amber-400',
-    desc: 'Días en almacén / almacenaje' },
+  { id: 'locations', group: 'inv', label: t('wms_mod_locations'), icon: MapPin, color: 'text-cyan-400',
+    desc: t('wms_mod_locations_desc') },
+  { id: 'mover', group: 'inv', label: t('wms_mod_mover'), icon: Move, color: 'text-teal-400',
+    desc: t('wms_mod_mover_desc') },
+  { id: 'aging', group: 'inv', label: t('wms_mod_aging'), icon: Clock, color: 'text-amber-400',
+    desc: t('wms_mod_aging_desc') },
   { id: 'cycle_count', group: 'inv', label: t('wms_mod_cycle_count'), icon: ClipboardList, color: 'text-lime-400',
     desc: t('wms_mod_cycle_count_desc') },
   // Conciliación física: SOLO super usuario. Reconstruye el inventario de una
   // ubicación completa desde lo escaneado, así que un error borra saldo real.
   // El backend también rechaza (403) a cualquier otro rol.
-  { id: 'reconciliation', group: 'inv', label: 'Conciliación', icon: ClipboardCheck, color: 'text-emerald-400',
-    desc: 'Cajas por resolver y registro de ubicaciones conciliadas', supersuOnly: true },
+  { id: 'reconciliation', group: 'inv', label: t('wms_mod_reconciliation'), icon: ClipboardCheck, color: 'text-emerald-400',
+    desc: t('wms_mod_reconciliation_desc'), supersuOnly: true },
 
   // ── Salidas ─────────────────────────────────────────────────────────────
-  { id: 'directed', group: 'out', label: tr(t, 'wms_mod_directed', 'Trabajo Dirigido'), icon: ScanLine, color: 'text-yellow-400',
-    desc: tr(t, 'wms_mod_directed_desc', 'Instrucciones inteligentes para el piso') },
+  { id: 'directed', group: 'out', label: t('wms_mod_directed'), icon: ScanLine, color: 'text-yellow-400',
+    desc: t('wms_mod_directed_desc') },
   { id: 'picking', group: 'out', label: t('wms_mod_picking'), icon: ClipboardCheck, color: 'text-indigo-400',
     desc: t('wms_mod_picking_desc') },
-  { id: 'neck_cutting', group: 'out', label: 'Corte de Neck', icon: Scissors, color: 'text-pink-400',
-    desc: 'Material surtido en espera de corte' },
+  { id: 'neck_cutting', group: 'out', label: t('wms_mod_neck_cutting'), icon: Scissors, color: 'text-pink-400',
+    desc: t('wms_mod_neck_cutting_desc') },
   { id: 'finished', group: 'out', label: t('wms_mod_finished'), icon: CheckCircle, color: 'text-cyan-400',
     desc: t('wms_mod_finished_desc') },
-  { id: 'trazabilidad', group: 'out', label: 'Trazabilidad', icon: Boxes, color: 'text-violet-400',
-    desc: 'Dónde va el material surtido de cada orden, del surtido al embarque' },
+  { id: 'trazabilidad', group: 'out', label: t('wms_mod_trazabilidad'), icon: Boxes, color: 'text-violet-400',
+    desc: t('wms_mod_trazabilidad_desc') },
 
   // ── Análisis ────────────────────────────────────────────────────────────
-  { id: 'dashboard', group: 'an', label: 'Dashboard', icon: LayoutDashboard, color: 'text-primary',
-    desc: 'Visión general del inventario en tiempo real' },
+  { id: 'dashboard', group: 'an', label: t('wms_mod_dashboard'), icon: LayoutDashboard, color: 'text-primary',
+    desc: t('wms_mod_dashboard_desc') },
   // Reportes: material de supervisión (nivel 1+). El backend valida el nivel.
-  { id: 'reports', group: 'an', label: 'Reportes', icon: BarChart3, color: 'text-sky-400',
-    desc: 'Recibos, putaway y pick tickets: pendiente, productividad, historial y excepciones', adminOnly: true },
+  { id: 'reports', group: 'an', label: t('wms_mod_reports'), icon: BarChart3, color: 'text-sky-400',
+    desc: t('wms_mod_reports_desc'), adminOnly: true },
   { id: 'movements', group: 'an', label: t('wms_mod_movements'), icon: History, color: 'text-slate-400',
     desc: t('wms_mod_movements_desc') },
 
   // ── Sistema ─────────────────────────────────────────────────────────────
   // Auditoría: admin nivel 5 y supersu (el backend valida con require_admin_level(5)).
-  { id: 'audit', group: 'sys', label: 'Auditoría', icon: ShieldCheck, color: 'text-red-400',
-    desc: 'Salud del sistema, trazabilidad por caja/SKU y movimientos', minAdminLevel: 5 },
+  { id: 'audit', group: 'sys', label: t('wms_mod_audit'), icon: ShieldCheck, color: 'text-red-400',
+    desc: t('wms_mod_audit_desc'), minAdminLevel: 5 },
   // Incidencias del sistema: material no encontrado, duplicados bloqueados,
   // errores de recepción. SOLO super usuario (el backend responde 403 al resto).
-  { id: 'incidents', group: 'sys', label: 'Incidencias', icon: ShieldAlert, color: 'text-orange-400',
-    desc: 'Alertas del sistema: material no encontrado, duplicados bloqueados y errores de recepción', supersuOnly: true },
-  { id: 'home', group: 'sys', label: 'Configuración WMS', icon: Settings, color: 'text-primary',
-    desc: 'Catálogos editables para los dropdowns de Receiving / Picking' },
+  { id: 'incidents', group: 'sys', label: t('wms_mod_incidents'), icon: ShieldAlert, color: 'text-orange-400',
+    desc: t('wms_mod_incidents_desc'), supersuOnly: true },
+  { id: 'home', group: 'sys', label: t('wms_mod_home'), icon: Settings, color: 'text-primary',
+    desc: t('wms_mod_home_desc') },
 ];
 
 /* Filtro por rol y nivel — es LITERALMENTE el que corría dentro del sidebar.
@@ -159,9 +157,15 @@ export const filterModules = (modules, currentUser, moduleLevels = {}) => module
 
 /* Reparte los módulos ya filtrados en sus grupos. Un grupo que se queda sin
    módulos para ese rol NO se pinta — el rol `inventory`, por ejemplo, sólo ve
-   dos menús. */
-export const groupModules = (modules) => WMS_GROUPS
-  .map(g => ({ ...g, items: modules.filter(m => m.group === g.id) }))
+   dos menús. Con `t` (el traductor de useLang) `label`/`hint` salen de i18n;
+   sin él se conserva el respaldo en español de WMS_GROUPS. */
+export const groupModules = (modules, t) => WMS_GROUPS
+  .map(g => ({
+    ...g,
+    label: t ? t(g.labelKey) : g.label,
+    hint: t ? t(g.hintKey) : g.hint,
+    items: modules.filter(m => m.group === g.id),
+  }))
   .filter(g => g.items.length > 0);
 
 /* Contador de un módulo. Usa `badgeKey` cuando /badges no usa el mismo nombre. */

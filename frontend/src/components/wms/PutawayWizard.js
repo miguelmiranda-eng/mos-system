@@ -4,6 +4,7 @@ import {
   Truck, ScanLine, MapPin, ChevronRight, ChevronDown, ChevronLeft, Loader2,
   Package, Eye, EyeOff, CheckCircle2, X, Boxes, ArrowRight,
 } from "lucide-react";
+import { useLang } from "../../contexts/LanguageContext";
 import { fetcher, poster, cleanScan, logLoadError } from "./lib";
 import { ModuleToolbar } from "./ui";
 
@@ -18,6 +19,7 @@ const boxUnits = (b) => Number(b?.units ?? b?.qty ?? 0) || 0;
 //   3. A dedicated full-screen modal scans the boxes with a BIG counter
 //      (scan one-by-one, or "todo el carro").
 export function PutawayWizard() {
+  const { t } = useLang();
   const [carts, setCarts] = useState([]);       // [{name, boxes}]
   const [legacyCount, setLegacyCount] = useState(0);
   const [loadingCarts, setLoadingCarts] = useState(true);
@@ -98,7 +100,7 @@ export function PutawayWizard() {
     const code = cleanScan(cartScan);
     if (!code) return;
     const hit = carts.find(c => (c.name || "").toUpperCase() === code);
-    if (!hit) { toast.error(`Carro ${code} no existe`); return; }
+    if (!hit) { toast.error(t('wms_pw_cart_not_exists', { cart: code })); return; }
     setCartScan("");
     pickCart(hit.name);
   };
@@ -126,9 +128,9 @@ export function PutawayWizard() {
 
   const confirmDest = (raw) => {
     const dst = cleanScan(raw ?? destText);
-    if (!dst) { toast.error("Escanea o escribe la ubicación destino"); return; }
+    if (!dst) { toast.error(t('wms_pw_dest_req')); return; }
     const match = locOptions.find(l => (l.name || "").toUpperCase() === dst);
-    if (!match) { toast.error(`'${dst}' no existe en las ubicaciones activas`); return; }
+    if (!match) { toast.error(t('wms_pw_dest_not_active', { loc: dst })); return; }
     setLockedDest(match.name);
     setDestText(match.name);
     setShowDestDrop(false);
@@ -144,9 +146,9 @@ export function PutawayWizard() {
     const id = cleanScan(boxScan);
     if (!id) return;
     const box = cartBoxes.find(b => (b.box_id || "").toUpperCase() === id);
-    if (!box) { toast.error(`Caja ${id} no está en ${origin}`); setBoxScan(""); return; }
+    if (!box) { toast.error(t('wms_pw_box_not_in_cart', { box: id, cart: origin })); setBoxScan(""); return; }
     setSelected(prev => {
-      if (prev.has(box.box_id)) { toast.info(`${box.box_id} ya está en el lote`); return prev; }
+      if (prev.has(box.box_id)) { toast.info(t('wms_pw_box_already_in_batch', { box: box.box_id })); return prev; }
       return new Set(prev).add(box.box_id);
     });
     setBoxScan("");
@@ -161,13 +163,13 @@ export function PutawayWizard() {
   );
 
   const finish = async () => {
-    if (selected.size === 0) { toast.error("Escanea al menos una caja"); return; }
+    if (selected.size === 0) { toast.error(t('wms_pw_scan_min_one')); return; }
     setMoving(true);
     try {
       const res = await poster("/transit/relocate", { box_ids: Array.from(selected), to: lockedDest });
       if (res.ok) {
         const data = await res.json().catch(() => ({}));
-        toast.success(data.message || `${selected.size} cajas → ${lockedDest}`);
+        toast.success(data.message || t('wms_pw_moved_summary', { n: selected.size, dest: lockedDest }));
         setScanOpen(false);
         setSelected(new Set());
         setLockedDest("");
@@ -177,11 +179,11 @@ export function PutawayWizard() {
         loadCarts();
       } else {
         const err = await res.json().catch(() => ({}));
-        toast.error(err.detail || "Error al reubicar");
+        toast.error(err.detail || t('wms_pw_relocate_err'));
       }
     } catch (e) {
       logLoadError("relocate")(e);
-      toast.error("Error de conexión");
+      toast.error(t('wms_conn_error'));
     } finally { setMoving(false); }
   };
 
@@ -196,14 +198,14 @@ export function PutawayWizard() {
       {/* STEP 1 — choose origin cart */}
       {!origin ? (
         <div className="space-y-4">
-          <ModuleToolbar hint="Escanea el carro del que vas a tomar material" />
+          <ModuleToolbar hint={t('wms_pw_hint_scan_cart')} />
 
           <form onSubmit={onCartScan} className="flex items-center gap-2">
             <div className="relative flex-1">
               <ScanLine className="w-5 h-5 text-muted-foreground absolute left-3 top-1/2 -translate-y-1/2" />
               <input
                 autoFocus value={cartScan} onChange={e => setCartScan(e.target.value.toUpperCase())}
-                placeholder="Escanea o escribe el carro (CARRO 3)"
+                placeholder={t('wms_pw_cart_placeholder')}
                 data-testid="putaway-cart-scan"
                 className="w-full h-14 pl-11 pr-4 bg-card border border-input rounded-lg text-lg font-mono font-medium focus:outline-none focus:ring-2 focus:ring-ring/25 focus:border-ring"
               />
@@ -216,7 +218,7 @@ export function PutawayWizard() {
           ) : (
             <>
               <div className="text-xs font-medium text-muted-foreground">
-                Carros con material ({cartsWithStock.length})
+                {t('wms_pw_carts_with_stock', { n: cartsWithStock.length })}
               </div>
               <div className="grid grid-cols-2 gap-3">
                 {cartsWithStock.map(c => (
@@ -231,14 +233,14 @@ export function PutawayWizard() {
                   </button>
                 ))}
                 {cartsWithStock.length === 0 && (
-                  <div className="col-span-2 text-center py-10 text-muted-foreground text-sm">No hay carros con material.</div>
+                  <div className="col-span-2 text-center py-10 text-muted-foreground text-sm">{t('wms_pw_no_carts_with_stock')}</div>
                 )}
               </div>
 
               {legacyCount > 0 && (
                 <button onClick={() => pickCart(TRANSIT_LEGACY)}
                   className="w-full flex items-center justify-between gap-2 p-4 rounded-lg border border-border bg-card hover:bg-muted transition-colors">
-                  <span className="font-semibold text-sm">⏸ Temporal (legacy)</span>
+                  <span className="font-semibold text-sm">{t('wms_pw_legacy_temp')}</span>
                   <span className="text-sm font-mono tabular-nums font-medium">{legacyCount.toLocaleString()}</span>
                 </button>
               )}
@@ -247,7 +249,7 @@ export function PutawayWizard() {
               <button onClick={() => setShowAllCarts(v => !v)}
                 className="w-full flex items-center justify-center gap-2 py-3 rounded-md border border-dashed border-border text-muted-foreground text-xs font-medium hover:text-foreground transition-colors">
                 {showAllCarts ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
-                {showAllCarts ? "Ocultar" : "Ver todos los carros"}
+                {showAllCarts ? t('wms_hide') : t('wms_pw_show_all_carts')}
               </button>
               {showAllCarts && (
                 <div className="space-y-3">
@@ -263,20 +265,20 @@ export function PutawayWizard() {
         /* STEP 2 — cart chosen: summary, optional inventory, choose destination */
         <div className="space-y-4">
           <button onClick={resetToCarts} className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">
-            <ChevronLeft className="w-4 h-4" /> Cambiar carro
+            <ChevronLeft className="w-4 h-4" /> {t('wms_pw_change_cart')}
           </button>
 
           <div className="bg-card border border-border rounded-lg p-4 flex items-center justify-between">
             <div className="flex items-center gap-3 min-w-0">
               <Truck className="w-7 h-7 text-muted-foreground flex-shrink-0" />
               <div className="min-w-0">
-                <div className="text-xs font-medium text-muted-foreground">Carro origen</div>
+                <div className="text-xs font-medium text-muted-foreground">{t('wms_pw_origin_cart')}</div>
                 <div className="text-lg font-semibold truncate">{origin}</div>
               </div>
             </div>
             <div className="text-right flex-shrink-0">
               <div className="text-lg font-semibold tabular-nums leading-none">{loadingBoxes ? "…" : cartBoxes.length}</div>
-              <div className="text-xs text-muted-foreground">cajas · {cartTotalUnits.toLocaleString()} u</div>
+              <div className="text-xs text-muted-foreground">{t('wms_pw_boxes_units_short', { n: cartTotalUnits.toLocaleString() })}</div>
             </div>
           </div>
 
@@ -285,7 +287,7 @@ export function PutawayWizard() {
             className="w-full flex items-center justify-center gap-2 py-3 rounded-md border border-border text-muted-foreground text-xs font-medium hover:text-foreground transition-colors"
             data-testid="putaway-toggle-inventory">
             {showInventory ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-            {showInventory ? "Ocultar inventario" : "Mostrar inventario"}
+            {showInventory ? t('wms_pw_hide_inventory') : t('wms_pw_show_inventory')}
           </button>
           {showInventory && (
             <div className="space-y-2 max-h-72 overflow-y-auto">
@@ -295,17 +297,17 @@ export function PutawayWizard() {
                     <Package className="w-4 h-4 text-muted-foreground flex-shrink-0" />
                     <span className="font-mono text-sm font-medium truncate">{r.key}</span>
                   </div>
-                  <span className="text-xs font-mono text-muted-foreground flex-shrink-0">{r.boxes} cajas · {r.units} u</span>
+                  <span className="text-xs font-mono text-muted-foreground flex-shrink-0">{t('wms_pw_boxes_units_n', { boxes: r.boxes, units: r.units })}</span>
                 </div>
               ))}
-              {inventorySummary.length === 0 && <div className="text-center py-6 text-muted-foreground text-sm">Carro vacío.</div>}
+              {inventorySummary.length === 0 && <div className="text-center py-6 text-muted-foreground text-sm">{t('wms_pw_cart_empty')}</div>}
             </div>
           )}
 
           {/* Destination */}
           <div className="bg-card border border-border rounded-lg p-4 space-y-3 relative">
             <div className="text-xs font-medium text-muted-foreground flex items-center gap-2">
-              <MapPin className="w-4 h-4 text-muted-foreground" /> Ubicación destino
+              <MapPin className="w-4 h-4 text-muted-foreground" /> {t('wms_dest_location')}
             </div>
             <form onSubmit={(e) => { e.preventDefault(); confirmDest(); }} className="flex items-center gap-2">
               <div className="relative flex-1">
@@ -314,14 +316,14 @@ export function PutawayWizard() {
                   value={destText}
                   onChange={e => { setDestText(e.target.value.toUpperCase()); setShowDestDrop(true); }}
                   onFocus={() => setShowDestDrop(true)}
-                  placeholder="Escanea o escribe la ubicación"
+                  placeholder={t('wms_pw_dest_placeholder')}
                   data-testid="putaway-dest-input"
                   className="w-full h-14 pl-11 pr-4 bg-card border border-input rounded-lg text-lg font-mono font-medium focus:outline-none focus:ring-2 focus:ring-ring/25 focus:border-ring"
                 />
               </div>
               <button type="submit" disabled={cartBoxes.length === 0}
                 className="h-14 px-5 rounded-lg bg-primary text-primary-foreground font-semibold text-sm disabled:opacity-40 active:scale-95 transition-transform">
-                Ir
+                {t('wms_go')}
               </button>
             </form>
             {showDestDrop && destMatches.length > 0 && (
@@ -346,7 +348,7 @@ export function PutawayWizard() {
           {/* Modal header */}
           <div className="flex items-center justify-between px-4 py-3 border-b border-border">
             <button onClick={() => setScanOpen(false)} className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">
-              <ChevronLeft className="w-5 h-5" /> Volver
+              <ChevronLeft className="w-5 h-5" /> {t('wms_back')}
             </button>
             <div className="text-xs font-mono text-muted-foreground">
               {origin} <ArrowRight className="w-3 h-3 inline" /> <span className="font-semibold text-foreground">{lockedDest}</span>
@@ -357,7 +359,7 @@ export function PutawayWizard() {
           <div className="px-4 py-6 text-center bg-card border-b border-border">
             <div className="text-6xl font-semibold tracking-tight tabular-nums leading-none">{selected.size}</div>
             <div className="text-sm font-medium text-muted-foreground mt-1">
-              cajas · {selectedUnits.toLocaleString()} unidades
+              {t('wms_pw_boxes_units_long', { n: selectedUnits.toLocaleString() })}
             </div>
           </div>
 
@@ -369,7 +371,7 @@ export function PutawayWizard() {
                 <input
                   ref={scanInputRef} autoFocus value={boxScan}
                   onChange={e => setBoxScan(e.target.value.toUpperCase())}
-                  placeholder="Escanea la caja (BOX-…)"
+                  placeholder={t('wms_pw_box_placeholder')}
                   data-testid="putaway-box-scan"
                   className="w-full h-16 pl-12 pr-4 bg-card border border-input rounded-lg text-xl font-mono font-medium focus:outline-none focus:ring-2 focus:ring-ring/25 focus:border-ring"
                 />
@@ -378,7 +380,7 @@ export function PutawayWizard() {
             <button onClick={selectAll}
               className="w-full h-12 rounded-lg bg-card border border-border text-sm font-medium hover:bg-muted transition-colors flex items-center justify-center gap-2"
               data-testid="putaway-select-all">
-              <Boxes className="w-5 h-5" /> Todo el carro ({cartBoxes.length})
+              <Boxes className="w-5 h-5" /> {t('wms_pw_whole_cart', { n: cartBoxes.length })}
             </button>
           </div>
 
@@ -398,7 +400,7 @@ export function PutawayWizard() {
             ))}
             {selected.size === 0 && (
               <div className="text-center py-12">
-                <p className="text-sm text-muted-foreground">Escanea cajas o usa "Todo el carro"</p>
+                <p className="text-sm text-muted-foreground">{t('wms_pw_scan_or_all')}</p>
               </div>
             )}
           </div>
@@ -409,7 +411,7 @@ export function PutawayWizard() {
               className="w-full h-16 rounded-lg bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-40 font-semibold text-lg flex items-center justify-center gap-2 active:scale-[0.98] transition-transform"
               data-testid="putaway-finish">
               {moving ? <Loader2 className="w-6 h-6 animate-spin" /> : <CheckCircle2 className="w-6 h-6" />}
-              Terminar · {selected.size} → {lockedDest}
+              {t('wms_pw_finish_btn', { n: selected.size, dest: lockedDest })}
             </button>
           </div>
         </div>
@@ -420,6 +422,7 @@ export function PutawayWizard() {
 
 // A collapsible range group (CARRO 1-20, …) used in the "ver todos" panel.
 function RangeGroup({ range, items, onPick }) {
+  const { t } = useLang();
   const [open, setOpen] = useState(false);
   const withStock = items.filter(c => (c.boxes || 0) > 0).length;
   return (
@@ -427,7 +430,7 @@ function RangeGroup({ range, items, onPick }) {
       <button onClick={() => setOpen(v => !v)} className="w-full flex items-center justify-between px-4 py-3 bg-card">
         <span className="text-xs font-semibold">CARRO {range}</span>
         <span className="flex items-center gap-2 text-xs text-muted-foreground">
-          {withStock}/{items.length} con stock
+          {t('wms_pw_with_stock', { a: withStock, b: items.length })}
           {open ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
         </span>
       </button>

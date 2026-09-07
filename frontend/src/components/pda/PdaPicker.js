@@ -5,9 +5,13 @@ import { Toaster, toast } from "sonner";
 import {
   ScanLine, Package, Loader2, LogOut, RefreshCw, ChevronLeft, LayoutGrid,
   MapPin, CheckCircle2, AlertTriangle, Boxes, MessageSquare, Tag, Search, ClipboardCheck,
-  QrCode, X, Barcode,
+  QrCode, X, Barcode, Languages,
 } from "lucide-react";
 import { CommentsModal } from "../dashboard/CommentsModal";
+import { useLang } from "../../contexts/LanguageContext";
+// cleanScan se usaba en reportarCorrupto sin importarse (ReferenceError en
+// runtime al tocar "Reportar y continuar"); la definicion vive en wms/lib.
+import { cleanScan } from "../wms/lib";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api/wms`;
 const ORDERS_API = `${process.env.REACT_APP_BACKEND_URL}/api/orders`;
@@ -25,6 +29,11 @@ const norm = (s) => String(s || "").trim().toUpperCase();
 export default function PdaPicker() {
   const navigate = useNavigate();
   const { user, logout } = useAuth();
+  const { t, lang, toggleLang } = useLang();
+  // loadTickets es un useCallback sin deps (dispara la carga inicial): lee el
+  // traductor por ref para no re-cargar los tickets al cambiar de idioma.
+  const tRef = useRef(t);
+  useEffect(() => { tRef.current = t; }, [t]);
   const [tickets, setTickets] = useState([]);
   const [selected, setSelected] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -44,14 +53,14 @@ export default function PdaPicker() {
     try {
       const data = await fetcher("/operator/my-tickets");
       setTickets(Array.isArray(data) ? data : []);
-      setSelected(prev => prev ? (data.find(t => t.ticket_id === prev.ticket_id) || null) : null);
+      setSelected(prev => prev ? (data.find(tk => tk.ticket_id === prev.ticket_id) || null) : null);
     } catch {
-      toast.error("Error al cargar tickets");
+      toast.error(tRef.current('pda_tickets_load_err'));
     } finally { setLoading(false); }
   }, []);
   useEffect(() => { loadTickets(); }, [loadTickets]);
 
-  const pending = tickets.filter(t => t.picking_status !== "completed");
+  const pending = tickets.filter(tk => tk.picking_status !== "completed");
 
   // Comments: open the SAME CRM CommentsModal. Resolve the pick ticket's
   // order_number to the real CRM order (the modal keys off order_id).
@@ -60,8 +69,8 @@ export default function PdaPicker() {
     try {
       const r = await fetch(`${ORDERS_API}/${encodeURIComponent(orderNumber)}`, { credentials: "include" });
       if (r.ok) setCommentsOrder(await r.json());
-      else toast.error("No se encontró la orden");
-    } catch { toast.error("Error de conexión"); }
+      else toast.error(t('prod_pick_order_missing'));
+    } catch { toast.error(t('ceo_err_connection')); }
   };
 
   // Per-size immediate deduction: la material sale de inventario apenas el
@@ -87,7 +96,7 @@ export default function PdaPicker() {
       const res = await putter(`/pick-tickets/${ticketId}/pick-size`, { size, details });
       if (res.ok) {
         const data = await res.json().catch(() => ({}));
-        if (!opts.silent) toast.success(data.message || `Talla ${size} descontada`);
+        if (!opts.silent) toast.success(data.message || t('pda_size_deducted', { size }));
         if (navigator.vibrate && !opts.silent) navigator.vibrate(60);
         // skipRefresh: en un lote refrescamos una sola vez al final (el caller).
         if (!opts.skipRefresh) await refreshTickets();
@@ -95,15 +104,15 @@ export default function PdaPicker() {
       }
       const err = await res.json().catch(() => ({}));
       setErrorModal({
-        title: `NO se descontó la talla ${size}`,
-        message: err.detail || "El servidor rechazó el descuento. El inventario NO se movió — verifica el stock de esa talla antes de continuar.",
+        title: t('pda_size_not_deducted_title', { size }),
+        message: err.detail || t('pda_size_not_deducted_server'),
       });
       if (navigator.vibrate) navigator.vibrate([120, 60, 120]);
       return false;
     } catch {
       setErrorModal({
-        title: `NO se descontó la talla ${size}`,
-        message: "Sin conexión con el servidor. El inventario NO se movió — reintenta cuando vuelva la señal.",
+        title: t('pda_size_not_deducted_title', { size }),
+        message: t('pda_size_not_deducted_offline'),
       });
       if (navigator.vibrate) navigator.vibrate([120, 60, 120]);
       return false;
@@ -119,27 +128,27 @@ export default function PdaPicker() {
         // A partial "complete" no longer closes the ticket — it stays active for
         // an admin to reassign on restock (Case# 005). Reflect that honestly.
         if (isComplete && data.partial_closed) {
-          toast.success("Cerrado parcial — material descontado, el ticket queda activo");
+          toast.success(t('pda_partial_closed'));
           setSelected(null);
         } else if (isComplete) {
-          toast.success("Surtido completado");
+          toast.success(t('pda_pick_completed'));
           setSelected(null);
         } else {
-          toast.success("Progreso guardado");
+          toast.success(t('prod_pick_progress_saved'));
         }
         await loadTickets();
       } else {
         const err = await res.json().catch(() => ({}));
         setErrorModal({
-          title: "NO se guardó el surtido",
-          message: err.detail || "El servidor rechazó el guardado. El progreso y el descuento NO se aplicaron.",
+          title: t('pda_save_failed_title'),
+          message: err.detail || t('pda_save_failed_server'),
         });
         if (navigator.vibrate) navigator.vibrate([120, 60, 120]);
       }
     } catch {
       setErrorModal({
-        title: "NO se guardó el surtido",
-        message: "Sin conexión con el servidor. El progreso y el descuento NO se aplicaron — reintenta cuando vuelva la señal.",
+        title: t('pda_save_failed_title'),
+        message: t('pda_save_failed_offline'),
       });
       if (navigator.vibrate) navigator.vibrate([120, 60, 120]);
     }
@@ -164,7 +173,7 @@ export default function PdaPicker() {
               onClick={() => setErrorModal(null)}
               className="w-full py-4 rounded-xl bg-red-500 text-white text-base font-black uppercase tracking-widest active:bg-red-600"
             >
-              Entendido
+              {t('pda_understood')}
             </button>
           </div>
         </div>
@@ -181,28 +190,32 @@ export default function PdaPicker() {
           </div>
         )}
         <div className="flex-1 min-w-0 leading-tight">
-          <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">{locatorOpen ? "Buscar caja" : "Surtido PDA"}</div>
-          <div className="text-sm font-black truncate">{selected ? selected.order_number : locatorOpen ? "Localizar caja" : (user?.name || user?.email || "Picker")}</div>
+          <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">{locatorOpen ? t('pda_find_box') : t('pda_picking_title')}</div>
+          <div className="text-sm font-black truncate">{selected ? selected.order_number : locatorOpen ? t('pda_locate_box') : (user?.name || user?.email || "Picker")}</div>
         </div>
         {!selected && !locatorOpen && (
-          <span className="px-2.5 py-1 rounded-lg bg-blue-500/15 text-blue-300 text-xs font-black">{pending.length} pend.</span>
+          <span className="px-2.5 py-1 rounded-lg bg-blue-500/15 text-blue-300 text-xs font-black">{t('pda_pending_short', { n: pending.length })}</span>
         )}
         {selected && (
-          <button onClick={() => openComments(selected.order_number)} className="p-2 rounded-xl text-sky-300 active:bg-white/10" title="Comentarios"><MessageSquare className="w-5 h-5" /></button>
+          <button onClick={() => openComments(selected.order_number)} className="p-2 rounded-xl text-sky-300 active:bg-white/10" title={t('comments')}><MessageSquare className="w-5 h-5" /></button>
         )}
         {!selected && !locatorOpen && (
-          <button onClick={() => navigate('/pda-recon')} className="p-2 rounded-xl text-emerald-300 active:bg-white/10" title="Conciliación"><ClipboardCheck className="w-5 h-5" /></button>
+          <button onClick={() => navigate('/pda-recon')} className="p-2 rounded-xl text-emerald-300 active:bg-white/10" title={t('wms_recon')}><ClipboardCheck className="w-5 h-5" /></button>
         )}
         {!selected && !locatorOpen && (
-          <button onClick={() => setLocatorOpen(true)} className="p-2 rounded-xl text-emerald-300 active:bg-white/10" title="Localizar caja"><Search className="w-5 h-5" /></button>
+          <button onClick={() => setLocatorOpen(true)} className="p-2 rounded-xl text-emerald-300 active:bg-white/10" title={t('pda_locate_box')}><Search className="w-5 h-5" /></button>
         )}
         {!selected && !locatorOpen && (
-          <button onClick={() => navigate('/wms')} className="p-2 rounded-xl text-amber-300 active:bg-white/10" title="Menú (Picking / Putaway)"><LayoutGrid className="w-5 h-5" /></button>
+          <button onClick={() => navigate('/wms')} className="p-2 rounded-xl text-amber-300 active:bg-white/10" title={t('pda_menu_title')}><LayoutGrid className="w-5 h-5" /></button>
         )}
         {!locatorOpen && (
           <button onClick={loadTickets} className="p-2 rounded-xl active:bg-white/10"><RefreshCw className={`w-5 h-5 ${loading ? "animate-spin" : ""}`} /></button>
         )}
-        <button onClick={logout} className="p-2 rounded-xl text-red-400 active:bg-red-500/10"><LogOut className="w-5 h-5" /></button>
+        <button onClick={toggleLang} title={t('wms_lang_toggle')} data-testid="pda-lang-toggle"
+          className="p-2 rounded-xl text-slate-300 active:bg-white/10 text-[11px] font-black flex items-center gap-1">
+          <Languages className="w-5 h-5" />{lang === 'es' ? 'EN' : 'ES'}
+        </button>
+        <button onClick={logout} className="p-2 rounded-xl text-red-400 active:bg-red-500/10" title={t('logout')}><LogOut className="w-5 h-5" /></button>
       </header>
 
       {locatorOpen ? (
@@ -210,7 +223,7 @@ export default function PdaPicker() {
       ) : loading && tickets.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-32 gap-3 text-slate-400">
           <Loader2 className="w-9 h-9 animate-spin text-blue-400" />
-          <span className="text-xs font-bold uppercase tracking-widest">Cargando…</span>
+          <span className="text-xs font-bold uppercase tracking-widest">{t('comment_loading')}</span>
         </div>
       ) : selected ? (
         <PickScreen ticket={selected} onSave={handleSave} onPickSize={handlePickSize} onRefresh={refreshTickets} saving={saving} />
@@ -226,6 +239,7 @@ export default function PdaPicker() {
 // Box → location lookup for the floor (Case# 004). Scan a box / LPN and see
 // where it is, for which customer and what it holds. Read-only; no movement.
 function BoxLocator() {
+  const { t } = useLang();
   const [scan, setScan] = useState("");
   const [box, setBox] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -266,7 +280,7 @@ function BoxLocator() {
           onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); doSearch(e.currentTarget.value); } }}
           inputMode="text"
           autoComplete="off" autoCorrect="off" autoCapitalize="characters" spellCheck={false}
-          placeholder="Escanea o teclea el número de caja / LPN…"
+          placeholder={t('pda_scan_box_placeholder')}
           className="w-full h-14 pl-12 pr-3 bg-[#131a2b] border-2 border-emerald-500/40 rounded-2xl text-lg font-bold focus:outline-none focus:border-emerald-400"
         />
       </div>
@@ -274,14 +288,14 @@ function BoxLocator() {
       {loading && (
         <div className="flex flex-col items-center justify-center py-16 gap-2 text-slate-400">
           <Loader2 className="w-8 h-8 animate-spin text-emerald-400" />
-          <span className="text-xs font-bold uppercase tracking-widest">Buscando…</span>
+          <span className="text-xs font-bold uppercase tracking-widest">{t('pda_searching')}</span>
         </div>
       )}
 
       {!loading && box && (
         <div className="bg-[#131a2b] border border-white/10 rounded-2xl p-4 space-y-4">
           <div className="text-center">
-            <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">Ubicación</div>
+            <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">{t('location')}</div>
             <div className="inline-flex items-center gap-2 px-4 py-3 rounded-2xl bg-emerald-500/10 border border-emerald-500/30">
               <MapPin className="w-6 h-6 text-emerald-300" />
               <span className="text-3xl font-mono font-black text-emerald-300">{box.location || "—"}</span>
@@ -290,23 +304,23 @@ function BoxLocator() {
 
           <div className="grid grid-cols-2 gap-3 pt-1 border-t border-white/10">
             <div className="min-w-0">
-              <div className="text-[9px] font-black uppercase tracking-widest text-slate-400">Caja</div>
+              <div className="text-[9px] font-black uppercase tracking-widest text-slate-400">{t('pda_box')}</div>
               <div className="text-sm font-mono font-black truncate">{box.box_id}</div>
             </div>
             <div className="min-w-0 text-right">
-              <div className="text-[9px] font-black uppercase tracking-widest text-slate-400">Unidades</div>
+              <div className="text-[9px] font-black uppercase tracking-widest text-slate-400">{t('wms_label_units')}</div>
               <div className="text-sm font-black">{box.units ?? box.qty ?? 0}</div>
             </div>
             <div className="min-w-0">
-              <div className="text-[9px] font-black uppercase tracking-widest text-slate-400">Cliente</div>
+              <div className="text-[9px] font-black uppercase tracking-widest text-slate-400">{t('wms_label_customer')}</div>
               <div className="text-sm font-bold truncate">{box.customer || "—"}</div>
             </div>
             <div className="min-w-0 text-right">
-              <div className="text-[9px] font-black uppercase tracking-widest text-slate-400">Estado</div>
+              <div className="text-[9px] font-black uppercase tracking-widest text-slate-400">{t('status')}</div>
               <div className="text-sm font-bold truncate">{box.status || box.state || "—"}</div>
             </div>
             <div className="col-span-2 min-w-0">
-              <div className="text-[9px] font-black uppercase tracking-widest text-slate-400">Contenido</div>
+              <div className="text-[9px] font-black uppercase tracking-widest text-slate-400">{t('backup_col_content')}</div>
               <div className="text-base font-black flex items-center gap-2 flex-wrap mt-0.5">
                 <span className="px-2 py-0.5 rounded-md bg-blue-500/15 text-blue-300 font-mono">{box.style || box.sku}</span>
                 {box.color && <span className="px-2 py-0.5 rounded-md bg-white/5 text-slate-200 text-sm">{box.color}</span>}
@@ -321,14 +335,14 @@ function BoxLocator() {
       {!loading && searched && !box && (
         <div className="flex flex-col items-center justify-center py-16 gap-2 text-amber-400">
           <AlertTriangle className="w-10 h-10" />
-          <span className="text-sm font-black uppercase tracking-widest">Caja no encontrada</span>
+          <span className="text-sm font-black uppercase tracking-widest">{t('pda_box_not_found')}</span>
         </div>
       )}
 
       {!loading && !searched && (
         <div className="flex flex-col items-center justify-center py-16 gap-2 text-slate-500">
           <Search className="w-10 h-10 opacity-40" />
-          <span className="text-xs font-bold uppercase tracking-widest text-center">Escanea una caja para ver su ubicación</span>
+          <span className="text-xs font-bold uppercase tracking-widest text-center">{t('pda_scan_box_hint')}</span>
         </div>
       )}
     </div>
@@ -336,38 +350,39 @@ function BoxLocator() {
 }
 
 function TicketList({ tickets, onSelect, onComments }) {
+  const { t } = useLang();
   if (tickets.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-32 gap-3 text-slate-500">
         <CheckCircle2 className="w-12 h-12 opacity-40" />
-        <span className="text-sm font-black uppercase tracking-widest">Sin surtidos pendientes</span>
+        <span className="text-sm font-black uppercase tracking-widest">{t('pda_no_pending')}</span>
       </div>
     );
   }
   return (
     <div className="p-3 space-y-2.5">
-      {tickets.map(t => {
-        const sizes = t.sizes || {};
+      {tickets.map(tk => {
+        const sizes = tk.sizes || {};
         const totalQty = Object.values(sizes).reduce((s, v) => s + (parseInt(v) || 0), 0);
-        const picked = Object.values(t.picked_sizes || {}).reduce((s, v) => s + (parseInt(v?.total) || 0), 0);
+        const picked = Object.values(tk.picked_sizes || {}).reduce((s, v) => s + (parseInt(v?.total) || 0), 0);
         const pct = totalQty > 0 ? Math.round((picked / totalQty) * 100) : 0;
         return (
-          <div key={t.ticket_id} role="button" tabIndex={0} onClick={() => onSelect(t)}
+          <div key={tk.ticket_id} role="button" tabIndex={0} onClick={() => onSelect(tk)}
             className="w-full text-left bg-[#131a2b] border border-white/10 rounded-2xl p-4 active:scale-[0.99] transition-transform cursor-pointer">
             <div className="flex items-center justify-between gap-2">
-              <div className="text-2xl font-black tracking-tight">{t.order_number}</div>
+              <div className="text-2xl font-black tracking-tight">{tk.order_number}</div>
               <div className="flex items-center gap-1.5">
-                <span className="text-[11px] font-black uppercase tracking-wider text-slate-400">{totalQty} pz</span>
-                <button onClick={(e) => { e.stopPropagation(); onComments?.(t.order_number); }}
-                  className="p-2 -my-1 rounded-xl text-sky-300 active:bg-white/10" title="Comentarios">
+                <span className="text-[11px] font-black uppercase tracking-wider text-slate-400">{totalQty} {t('pieces')}</span>
+                <button onClick={(e) => { e.stopPropagation(); onComments?.(tk.order_number); }}
+                  className="p-2 -my-1 rounded-xl text-sky-300 active:bg-white/10" title={t('comments')}>
                   <MessageSquare className="w-5 h-5" />
                 </button>
               </div>
             </div>
             <div className="flex items-center gap-2 mt-1.5 flex-wrap">
-              <span className="px-2 py-0.5 rounded-md bg-blue-500/15 text-blue-300 text-xs font-mono font-black">{t.style}</span>
-              {t.color && <span className="px-2 py-0.5 rounded-md bg-white/5 text-slate-300 text-xs font-bold">{t.color}</span>}
-              {t.customer && <span className="text-[11px] text-slate-500 truncate">{t.customer}</span>}
+              <span className="px-2 py-0.5 rounded-md bg-blue-500/15 text-blue-300 text-xs font-mono font-black">{tk.style}</span>
+              {tk.color && <span className="px-2 py-0.5 rounded-md bg-white/5 text-slate-300 text-xs font-bold">{tk.color}</span>}
+              {tk.customer && <span className="text-[11px] text-slate-500 truncate">{tk.customer}</span>}
             </div>
             <div className="mt-2.5 h-2 bg-white/10 rounded-full overflow-hidden">
               <div className={`h-full ${pct >= 100 ? "bg-emerald-500" : pct > 0 ? "bg-amber-500" : "bg-slate-600"}`} style={{ width: `${pct}%` }} />
@@ -388,6 +403,7 @@ function TicketList({ tickets, onSelect, onComments }) {
 //   binding   → cuestionario (solo si LPN externo desconocido)
 //   quantity  → captura cuántas piezas de la caja identificada
 function PickScreen({ ticket, onSave, onPickSize, onRefresh, saving }) {
+  const { t } = useLang();
   const [pickedSizes, setPickedSizes] = useState({});
   const [committed, setCommitted] = useState(() => new Set());
   const [committing, setCommitting] = useState(false);
@@ -465,7 +481,7 @@ function PickScreen({ ticket, onSave, onPickSize, onRefresh, saving }) {
   }, [stage]);
 
   const updateBlankStatus = async (val) => {
-    if (!orderId) { toast.error("Orden aún no carga"); return; }
+    if (!orderId) { toast.error(t('pda_order_not_loaded')); return; }
     const prev = blankStatus;
     setBlankStatus(val); setSavingStatus(true);
     try {
@@ -473,9 +489,9 @@ function PickScreen({ ticket, onSave, onPickSize, onRefresh, saving }) {
         method: "PUT", headers: { "Content-Type": "application/json" },
         credentials: "include", body: JSON.stringify({ blank_status: val }),
       });
-      if (r.ok) toast.success("Blank status actualizado");
-      else { setBlankStatus(prev); toast.error("No se pudo actualizar"); }
-    } catch { setBlankStatus(prev); toast.error("Error de conexión"); }
+      if (r.ok) toast.success(t('prod_pick_blank_updated'));
+      else { setBlankStatus(prev); toast.error(t('paint_update_err')); }
+    } catch { setBlankStatus(prev); toast.error(t('ceo_err_connection')); }
     finally { setSavingStatus(false); }
   };
 
@@ -579,7 +595,7 @@ function PickScreen({ ticket, onSave, onPickSize, onRefresh, saving }) {
     setCart([]); setBoxScan("");
     setStage('boxes');
     loadLocationBoxes(hit.location);
-    toast.success(`✓ Ubicación ${hit.location} · ${hit.available} pz del ticket aquí`);
+    toast.success(t('pda_loc_entered', { location: hit.location, n: hit.available }));
     if (navigator.vibrate) navigator.vibrate(60);
   };
 
@@ -590,7 +606,7 @@ function PickScreen({ ticket, onSave, onPickSize, onRefresh, saving }) {
     if (!code) return;
     const hit = allLocs().find(l => norm(l.location) === code);
     if (!hit) {
-      toast.error(`Ubicación "${code}" no tiene material de este ticket`);
+      toast.error(t('pda_loc_no_material', { code }));
       if (navigator.vibrate) navigator.vibrate([60, 40, 60]);
       return;
     }
@@ -609,7 +625,7 @@ function PickScreen({ ticket, onSave, onPickSize, onRefresh, saving }) {
         body: JSON.stringify({ lpn, location: activeLocation.location }),
       });
       const data = await r.json();
-      if (!r.ok) { toast.error(data.detail || "Error al escanear"); return; }
+      if (!r.ok) { toast.error(data.detail || t('pda_scan_err')); return; }
       if (data.status === "matched") {
         // Caja de la carga inicial: se avisa ANTES de capturar cantidad y se
         // pide la ubicación para la cola de auditoría. El surtido no se detiene:
@@ -622,7 +638,7 @@ function PickScreen({ ticket, onSave, onPickSize, onRefresh, saving }) {
         }
         openBoxForQty(data.box, lpn);
       } else if (data.status === "wrong_ticket") {
-        toast.error(data.message || "La caja no es de este ticket");
+        toast.error(data.message || t('pda_box_wrong_ticket'));
         if (navigator.vibrate) navigator.vibrate([60, 40, 60]);
       } else if (data.status === "needs_binding") {
         // LPN externo / código no-BOX → el picker NO liga cajas. Antes aquí se
@@ -632,7 +648,7 @@ function PickScreen({ ticket, onSave, onPickSize, onRefresh, saving }) {
         setStage('unidentified');
         if (navigator.vibrate) navigator.vibrate([120, 60, 120, 60, 120]);
       }
-    } catch (e) { toast.error("Error de conexión al escanear"); }
+    } catch (e) { toast.error(t('pda_scan_conn_err')); }
   };
 
 
@@ -642,17 +658,17 @@ function PickScreen({ ticket, onSave, onPickSize, onRefresh, saving }) {
   const openBoxForQty = (box, lpn) => {
     const bsize = String(box.size || "").toUpperCase();
     if (!bsize || !activeSizes.includes(bsize)) {
-      toast.error(`La caja es talla ${bsize || "?"}, que no pide este ticket`);
+      toast.error(t('pda_box_size_not_needed', { size: bsize || "?" }));
       if (navigator.vibrate) navigator.vibrate([60, 40, 60]);
       return;
     }
     if (remainingForSize(bsize) <= 0) {
-      toast.error(`La talla ${bsize} ya está completa`);
+      toast.error(t('pda_size_complete', { size: bsize }));
       if (navigator.vibrate) navigator.vibrate([60, 40, 60]);
       return;
     }
     if (cart.some(it => it.box_id === box.box_id)) {
-      toast.error("Esa caja ya está en la lista");
+      toast.error(t('pda_box_already_listed'));
       if (navigator.vibrate) navigator.vibrate([60, 40, 60]);
       return;
     }
@@ -662,7 +678,7 @@ function PickScreen({ ticket, onSave, onPickSize, onRefresh, saving }) {
     });
     setTakeQty(Math.min(box.units, roomForBox(bsize)));
     setStage('quantity');
-    toast.success(`✓ Caja ${box.box_id} · talla ${bsize} · ${box.units} pz`);
+    toast.success(t('pda_box_opened', { box: box.box_id, size: bsize, n: box.units }));
     if (navigator.vibrate) navigator.vibrate(60);
   };
 
@@ -674,7 +690,7 @@ function PickScreen({ ticket, onSave, onPickSize, onRefresh, saving }) {
     if (!pend) return;
     if (!saltar) {
       const loc = cleanScan(corruptoLoc);
-      if (!loc) { toast.error("Escanea la ubicación"); return; }
+      if (!loc) { toast.error(t('pda_scan_location')); return; }
       setCorruptoEnviando(true);
       try {
         const r = await fetch(`${API}/quarantine/report`, {
@@ -683,9 +699,9 @@ function PickScreen({ ticket, onSave, onPickSize, onRefresh, saving }) {
           body: JSON.stringify({ location: loc, box_id: pend.box?.box_id }),
         });
         const d = await r.json().catch(() => ({}));
-        if (r.ok) toast.success(`${loc} anotada para auditoría (${d.unidades_import || 0} pz por revisar)`);
-        else toast.error(d.detail || "No se pudo reportar");
-      } catch { toast.error("Error de conexión al reportar"); }
+        if (r.ok) toast.success(t('pda_audit_noted', { location: loc, n: d.unidades_import || 0 }));
+        else toast.error(d.detail || t('pda_report_err'));
+      } catch { toast.error(t('pda_report_conn_err')); }
       finally { setCorruptoEnviando(false); }
     }
     setCorrupto(null);
@@ -697,10 +713,10 @@ function PickScreen({ ticket, onSave, onPickSize, onRefresh, saving }) {
   const addToCart = () => {
     const qty = parseInt(takeQty) || 0;
     const sz = activeBox.size;
-    if (qty <= 0) { toast.error("Ingresa una cantidad"); return; }
-    if (qty > activeBox.units) { toast.error(`La caja solo tiene ${activeBox.units} pz`); return; }
+    if (qty <= 0) { toast.error(t('pda_enter_qty')); return; }
+    if (qty > activeBox.units) { toast.error(t('pda_box_only_has', { n: activeBox.units })); return; }
     const room = roomForBox(sz);
-    if (qty > room) { toast.error(`Máximo ${room} pz más (talla ${sz} / ubic ${activeLocation.location})`); return; }
+    if (qty > room) { toast.error(t('pda_max_more', { n: room, size: sz, location: activeLocation.location })); return; }
     setCart(prev => [...prev, {
       box_id: activeBox.box_id, lpn: activeBox.lpn, boxUnits: activeBox.units, qty, size: sz,
     }]);
@@ -709,8 +725,8 @@ function PickScreen({ ticket, onSave, onPickSize, onRefresh, saving }) {
     if (navigator.vibrate) navigator.vibrate(40);
     const faltaSz = Math.max(0, remainingOf(sz) - (cartQtyForSize(sz) + qty));
     toast.success(faltaSz > 0
-      ? `Caja agregada (talla ${sz}, ${qty} pz). Faltan ${faltaSz} de ${sz}.`
-      : `Caja agregada. Talla ${sz} completa ✓`);
+      ? t('pda_box_added_remaining', { size: sz, qty, remaining: faltaSz })
+      : t('pda_box_added_complete', { size: sz }));
   };
   const removeFromCart = (idx) => setCart(prev => prev.filter((_, i) => i !== idx));
 
@@ -721,7 +737,7 @@ function PickScreen({ ticket, onSave, onPickSize, onRefresh, saving }) {
   // servidor descuenta solo el delta vs. su deducted_map (robusto). Un solo
   // refresh al final. Snapshot para no depender de estados que cambian a mitad.
   const commitCart = async () => {
-    if (!cart.length) { toast.error("No hay cajas escaneadas"); return; }
+    if (!cart.length) { toast.error(t('pda_no_scanned_boxes')); return; }
     const items = [...cart];
     const loc = activeLocation.location;
     setCommitting(true);
@@ -765,10 +781,10 @@ function PickScreen({ ticket, onSave, onPickSize, onRefresh, saving }) {
     setCart([]);
     setCommitting(false);
     if (failed) {
-      toast.error(`Se descontaron ${done.length} caja(s) (${pickedNow} pz). La caja ${failed.box_id} (talla ${failed.size}) falló — revisa el aviso y re-escanea las que faltaron.`);
+      toast.error(t('pda_commit_partial', { count: done.length, pcs: pickedNow, box: failed.box_id, size: failed.size }));
     } else if (pickedNow > 0) {
       const resumen = Object.entries(doneBySize).map(([sz, q]) => `${sz}:${q}`).join(" · ");
-      toast.success(`✓ ${done.length} caja(s) · ${pickedNow} pz (${resumen})`);
+      toast.success(t('pda_commit_ok', { count: done.length, pcs: pickedNow, summary: resumen }));
       if (navigator.vibrate) navigator.vibrate(60);
       Object.keys(doneBySize).forEach(sz => {
         const doneTotal = (parseInt(pickedSizes[sz]?.total) || 0) + doneBySize[sz];
@@ -792,8 +808,8 @@ function PickScreen({ ticket, onSave, onPickSize, onRefresh, saving }) {
             <span className="ml-auto text-xs font-black text-slate-400">{ticket.customer}</span>
           </div>
           <div className="mt-2 flex items-center justify-between">
-            <span className="text-xs font-black uppercase tracking-widest text-slate-400">Descontado</span>
-            <span className={`text-sm font-black ${isComplete ? "text-emerald-400" : "text-amber-400"}`}>{totalCommitted} / {totalRequired} pz</span>
+            <span className="text-xs font-black uppercase tracking-widest text-slate-400">{t('pda_deducted')}</span>
+            <span className={`text-sm font-black ${isComplete ? "text-emerald-400" : "text-amber-400"}`}>{totalCommitted} / {totalRequired} {t('pieces')}</span>
           </div>
           <div className="mt-1.5 h-2.5 bg-white/10 rounded-full overflow-hidden">
             <div className={`h-full ${isComplete ? "bg-emerald-500" : totalCommitted > 0 ? "bg-amber-500" : "bg-slate-600"}`}
@@ -811,7 +827,7 @@ function PickScreen({ ticket, onSave, onPickSize, onRefresh, saving }) {
               <select value={blankStatus} onChange={(e) => updateBlankStatus(e.target.value)}
                 disabled={savingStatus || !orderId}
                 className="w-full h-12 bg-black/30 border border-white/10 rounded-xl px-3 text-base font-bold focus:outline-none focus:border-blue-400 disabled:opacity-50">
-                <option value="">— Sin status —</option>
+                <option value="">{t('pda_no_status')}</option>
                 {blankOptions.map(s => <option key={s} value={s}>{s}</option>)}
                 {blankStatus && !blankOptions.includes(blankStatus) && (
                   <option value={blankStatus}>{blankStatus}</option>
@@ -829,10 +845,10 @@ function PickScreen({ ticket, onSave, onPickSize, onRefresh, saving }) {
               surtes todas las tallas que estén ahí en un solo lote. */}
           <button onClick={goToLocations}
             className="w-full h-16 rounded-2xl bg-blue-600 active:bg-blue-700 text-white text-base font-black uppercase tracking-widest flex items-center justify-center gap-2 mb-1">
-            <ScanLine className="w-6 h-6" /> Escanear ubicación
+            <ScanLine className="w-6 h-6" /> {t('pda_scan_location_btn')}
           </button>
           <div className="text-[11px] font-black uppercase tracking-widest text-slate-500 px-1 mb-1">
-            Progreso por talla · ubicaciones a dónde ir
+            {t('pda_progress_by_size')}
           </div>
           {activeSizes.map(sz => {
             const req = parseInt(sizes[sz]) || 0;
@@ -853,8 +869,8 @@ function PickScreen({ ticket, onSave, onPickSize, onRefresh, saving }) {
                     <div className="text-2xl font-black">{sz}</div>
                     <div className="text-[11px] text-slate-400">
                       {isDone
-                        ? `Completo · ${done} descontado`
-                        : `Requerido ${req} · descontado ${done} · faltan ${remain}`}
+                        ? t('pda_size_done', { n: done })
+                        : t('pda_size_progress', { req, done, remain })}
                     </div>
                   </div>
                   <div className={`min-w-[64px] px-3 py-2 rounded-xl text-center text-xl font-mono font-black ${
@@ -866,7 +882,7 @@ function PickScreen({ ticket, onSave, onPickSize, onRefresh, saving }) {
                   <div className="mt-2 pt-2 border-t border-white/10 flex flex-wrap gap-1.5">
                     {locs.length === 0 ? (
                       <span className="text-[10px] text-amber-400 font-bold flex items-center gap-1">
-                        <AlertTriangle className="w-3 h-3" /> Sin ubicación con stock
+                        <AlertTriangle className="w-3 h-3" /> {t('pda_no_loc_stock')}
                       </span>
                     ) : locs.slice(0, 6).map((l, i) => (
                       <button key={i}
@@ -891,11 +907,11 @@ function PickScreen({ ticket, onSave, onPickSize, onRefresh, saving }) {
         <div className="px-3 space-y-3">
           <button onClick={backToSizes}
             className="text-xs font-black uppercase tracking-widest text-slate-400 active:text-slate-200 flex items-center gap-1">
-            <ChevronLeft className="w-4 h-4" /> Volver
+            <ChevronLeft className="w-4 h-4" /> {t('dash_back')}
           </button>
           <div className="bg-blue-500/10 border border-blue-500/30 rounded-2xl p-3">
-            <div className="text-[10px] font-black uppercase tracking-widest text-blue-300">Escanea la ubicación del material</div>
-            <div className="text-xs text-slate-300 mt-1">Faltan <b className="text-amber-300">{Math.max(0, totalRequired - totalCommitted)} pz</b> del ticket en total</div>
+            <div className="text-[10px] font-black uppercase tracking-widest text-blue-300">{t('pda_scan_material_loc')}</div>
+            <div className="text-xs text-slate-300 mt-1">{t('pda_missing_word')} <b className="text-amber-300">{Math.max(0, totalRequired - totalCommitted)} {t('pieces')}</b> {t('pda_missing_total_after')}</div>
           </div>
 
           <div className="relative">
@@ -909,23 +925,23 @@ function PickScreen({ ticket, onSave, onPickSize, onRefresh, saving }) {
                 }
               }}
               inputMode="text" autoComplete="off" autoCorrect="off" autoCapitalize="characters" spellCheck={false}
-              placeholder="Escanea o teclea la ubicación…"
+              placeholder={t('pda_scan_loc_placeholder')}
               className="w-full h-14 pl-12 pr-3 bg-[#131a2b] border-2 border-blue-500/40 rounded-2xl text-lg font-bold focus:outline-none focus:border-blue-400" />
           </div>
           <button onClick={() => handleLocationScan(locScan)} disabled={!locScan.trim()}
             className="w-full h-11 rounded-xl bg-blue-600 active:bg-blue-700 text-white text-xs font-black uppercase tracking-widest disabled:opacity-40 -mt-1">
-            Confirmar ubicación
+            {t('pda_confirm_location')}
           </button>
 
           <div>
             <div className="text-[10px] font-black uppercase tracking-widest text-slate-500 px-1 mb-1">
-              Ubicaciones con material del ticket · toca para entrar
+              {t('pda_locs_with_material')}
             </div>
             <div className="space-y-1.5">
               {allLocs().length === 0 ? (
                 <div className="flex items-center gap-2 text-amber-400 py-4 justify-center">
                   <AlertTriangle className="w-5 h-5 shrink-0" />
-                  <span className="text-xs font-bold">Sin stock para este ticket</span>
+                  <span className="text-xs font-bold">{t('pda_no_stock_ticket')}</span>
                 </div>
               ) : allLocs().map((l, i) => (
                 <button key={i} onClick={() => enterLocation(l)}
@@ -938,13 +954,13 @@ function PickScreen({ ticket, onSave, onPickSize, onRefresh, saving }) {
                     </div>
                     {l.sinVerificar && (
                       <div className="text-[10px] font-black uppercase tracking-wider text-amber-400 flex items-center gap-1 mt-0.5">
-                        <AlertTriangle className="w-3 h-3 shrink-0" /> Sin cajas registradas — verifica en piso
+                        <AlertTriangle className="w-3 h-3 shrink-0" /> {t('pda_no_boxes_verify')}
                       </div>
                     )}
                   </div>
                   <div className="text-right shrink-0">
                     <div className={`text-xl font-mono font-black ${l.sinVerificar ? 'text-amber-400' : 'text-emerald-400'}`}>{l.available}</div>
-                    <div className="text-[9px] uppercase text-slate-500 font-black tracking-widest">pz</div>
+                    <div className="text-[9px] uppercase text-slate-500 font-black tracking-widest">{t('pieces')}</div>
                   </div>
                 </button>
               ))}
@@ -958,18 +974,18 @@ function PickScreen({ ticket, onSave, onPickSize, onRefresh, saving }) {
         <div className="px-3 space-y-3">
           <button onClick={backToLocations}
             className="text-xs font-black uppercase tracking-widest text-slate-400 active:text-slate-200 flex items-center gap-1">
-            <ChevronLeft className="w-4 h-4" /> Volver a ubicaciones
+            <ChevronLeft className="w-4 h-4" /> {t('pda_back_to_locations')}
           </button>
           <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-2xl p-3">
             <div className="flex items-center gap-3">
               <CheckCircle2 className="w-6 h-6 text-emerald-400 shrink-0" />
               <div className="flex-1 min-w-0">
-                <div className="text-[10px] font-black uppercase tracking-widest text-emerald-300">Ubicación</div>
+                <div className="text-[10px] font-black uppercase tracking-widest text-emerald-300">{t('location')}</div>
                 <div className="font-mono font-black text-emerald-100 text-xl">{activeLocation.location}</div>
               </div>
               <div className="text-right shrink-0">
                 <div className="text-lg font-mono font-black text-emerald-300">{activeLocation.available}</div>
-                <div className="text-[9px] uppercase text-emerald-400/70 font-black">pz del ticket</div>
+                <div className="text-[9px] uppercase text-emerald-400/70 font-black">{t('pda_pcs_of_ticket')}</div>
               </div>
             </div>
             {/* Progreso por talla presente en esta ubicación */}
@@ -979,7 +995,7 @@ function PickScreen({ ticket, onSave, onPickSize, onRefresh, saving }) {
                 return (
                   <span key={sz} className={`px-2 py-0.5 rounded-lg text-[10px] font-black tabular-nums ${
                     falta > 0 ? "bg-amber-500/15 text-amber-300" : "bg-emerald-500/20 text-emerald-300"}`}>
-                    {sz}: {falta > 0 ? `faltan ${falta}` : "✓"}
+                    {sz}: {falta > 0 ? t('pda_missing_n', { n: falta }) : "✓"}
                   </span>
                 );
               })}
@@ -990,11 +1006,11 @@ function PickScreen({ ticket, onSave, onPickSize, onRefresh, saving }) {
               código no está en el sistema, el picker se detiene y avisa. */}
           <div className="rounded-2xl border border-white/10 bg-black/20 overflow-hidden">
             <div className="px-3 py-2 border-b border-white/10 text-[10px] font-black uppercase tracking-widest text-slate-400 flex items-center gap-1">
-              <Boxes className="w-3.5 h-3.5" /> Cajas en esta ubicación {locBoxesLoading ? "…" : `(${locBoxes.length})`}
+              <Boxes className="w-3.5 h-3.5" /> {t('pda_boxes_here')} {locBoxesLoading ? "…" : `(${locBoxes.length})`}
             </div>
             {locBoxes.length === 0 ? (
               <div className="px-3 py-3 text-center text-[11px] text-slate-500">
-                {locBoxesLoading ? "Cargando…" : "Sin cajas registradas — escanea igual"}
+                {locBoxesLoading ? t('comment_loading') : t('pda_no_boxes_scan_anyway')}
               </div>
             ) : (
               <div className="max-h-44 overflow-auto divide-y divide-white/5">
@@ -1015,7 +1031,7 @@ function PickScreen({ ticket, onSave, onPickSize, onRefresh, saving }) {
 
           <div>
             <div className="text-[10px] font-black uppercase tracking-widest text-slate-500 px-1 mb-1 flex items-center gap-1">
-              <QrCode className="w-3.5 h-3.5" /> Escanea la caja
+              <QrCode className="w-3.5 h-3.5" /> {t('pda_scan_box')}
             </div>
             <div className="relative">
               <Barcode className="absolute left-3 top-1/2 -translate-y-1/2 w-6 h-6 text-blue-400" />
@@ -1028,15 +1044,15 @@ function PickScreen({ ticket, onSave, onPickSize, onRefresh, saving }) {
                   }
                 }}
                 inputMode="text" autoComplete="off" autoCorrect="off" autoCapitalize="characters" spellCheck={false}
-                placeholder="BOX-000000 o LPN de proveedor…"
+                placeholder={t('pda_box_scan_placeholder')}
                 className="w-full h-16 pl-12 pr-3 bg-[#131a2b] border-2 border-blue-500/60 rounded-2xl text-lg font-mono font-black focus:outline-none focus:border-blue-400" />
             </div>
             <button onClick={() => handleBoxScan(boxScan)} disabled={!boxScan.trim()}
               className="w-full h-11 mt-2 rounded-xl bg-blue-600 active:bg-blue-700 text-white text-xs font-black uppercase tracking-widest disabled:opacity-40">
-              Identificar caja
+              {t('pda_identify_box')}
             </button>
             <div className="mt-2 text-[10px] text-slate-500 px-1 leading-relaxed">
-              Si es una caja BOX- registrada se identifica al instante. Si no está en el sistema, avisa a tu supervisor.
+              {t('pda_identify_hint')}
             </div>
           </div>
 
@@ -1044,17 +1060,17 @@ function PickScreen({ ticket, onSave, onPickSize, onRefresh, saving }) {
           <div className="rounded-2xl border border-white/10 bg-black/20 overflow-hidden">
             <div className="flex items-center justify-between px-3 py-2 border-b border-white/10">
               <div className="text-[10px] font-black uppercase tracking-widest text-slate-400 flex items-center gap-1">
-                <Boxes className="w-3.5 h-3.5" /> Cajas escaneadas ({cart.length})
+                <Boxes className="w-3.5 h-3.5" /> {t('pda_scanned_boxes_n', { n: cart.length })}
               </div>
               <div className="text-[11px] font-black">
                 <span className="text-emerald-300 tabular-nums">{cartQty}</span>
-                <span className="text-slate-500"> · faltan </span>
+                <span className="text-slate-500"> · {t('pda_missing_label')} </span>
                 <span className="text-amber-300 tabular-nums">{Math.max(0, totalRequired - totalCommitted - cartQty)}</span>
               </div>
             </div>
             {cart.length === 0 ? (
               <div className="px-3 py-4 text-center text-[11px] text-slate-500">
-                Aún no escaneas cajas. Escanea una arriba…
+                {t('pda_cart_empty')}
               </div>
             ) : (
               <div className="divide-y divide-white/5">
@@ -1086,7 +1102,7 @@ function PickScreen({ ticket, onSave, onPickSize, onRefresh, saving }) {
           <button onClick={commitCart} disabled={committing || cart.length === 0}
             className="w-full h-16 rounded-2xl bg-emerald-600 active:bg-emerald-700 text-white text-base font-black uppercase tracking-widest flex items-center justify-center gap-2 disabled:opacity-40">
             {committing ? <Loader2 className="w-5 h-5 animate-spin" /> : <CheckCircle2 className="w-6 h-6" />}
-            {committing ? "Guardando…" : `Guardar / Descontar (${cart.length} · ${cartQty} pz)`}
+            {committing ? t('pda_saving') : t('pda_save_deduct', { count: cart.length, pcs: cartQty })}
           </button>
         </div>
       )}
@@ -1097,21 +1113,20 @@ function PickScreen({ ticket, onSave, onPickSize, onRefresh, saving }) {
           <div className="bg-red-500/15 border-2 border-red-500/50 rounded-2xl p-4 text-center">
             <AlertTriangle className="w-12 h-12 text-red-400 mx-auto mb-2" />
             <div className="text-lg font-black uppercase tracking-widest text-red-300 leading-tight">
-              Esta caja no está identificada
+              {t('pda_box_unidentified')}
             </div>
             <div className="text-base font-black uppercase tracking-wide text-red-200 mt-1">
-              Avisa a tu supervisor
+              {t('pda_notify_supervisor')}
             </div>
-            <div className="text-[10px] font-black uppercase tracking-widest text-red-400/70 mt-3">Código escaneado</div>
+            <div className="text-[10px] font-black uppercase tracking-widest text-red-400/70 mt-3">{t('pda_scanned_code')}</div>
             <div className="font-mono font-black text-red-100 text-base break-all">{unidentifiedLpn}</div>
           </div>
           <div className="rounded-xl border border-white/10 bg-black/20 p-3 text-[11px] text-slate-400 leading-relaxed">
-            No la descuentes ni la muevas. El supervisor tiene que registrar esta
-            caja antes de que se pueda surtir.
+            {t('pda_unidentified_hint')}
           </div>
           <button onClick={backToBoxes}
             className="w-full h-14 rounded-2xl bg-white/5 active:bg-white/10 border border-white/10 text-slate-200 text-sm font-black uppercase tracking-widest flex items-center justify-center gap-2">
-            <ChevronLeft className="w-4 h-4" /> Volver a cajas
+            <ChevronLeft className="w-4 h-4" /> {t('pda_back_to_boxes')}
           </button>
         </div>
       )}
@@ -1125,13 +1140,12 @@ function PickScreen({ ticket, onSave, onPickSize, onRefresh, saving }) {
             <div className="bg-amber-500/15 border-2 border-amber-500/50 rounded-2xl p-4 text-center">
               <AlertTriangle className="w-12 h-12 text-amber-400 mx-auto mb-2" />
               <div className="text-lg font-black uppercase tracking-widest text-amber-300 leading-tight">
-                Inventario no confiable
+                {t('pda_untrusted_inventory')}
               </div>
               <div className="text-[11px] text-amber-100/80 mt-2 leading-relaxed">
-                Esta caja viene de la carga inicial. Su número, sus piezas y su lote
-                pueden no coincidir con el cartón físico.
+                {t('pda_untrusted_hint')}
               </div>
-              <div className="text-[10px] font-black uppercase tracking-widest text-amber-400/70 mt-3">Caja</div>
+              <div className="text-[10px] font-black uppercase tracking-widest text-amber-400/70 mt-3">{t('pda_box')}</div>
               <div className="font-mono font-black text-amber-100 text-base break-all">
                 {corrupto.box?.box_id}
               </div>
@@ -1139,28 +1153,27 @@ function PickScreen({ ticket, onSave, onPickSize, onRefresh, saving }) {
 
             <div className="rounded-2xl border border-white/10 bg-black/40 p-3 space-y-2">
               <div className="text-[11px] font-black uppercase tracking-widest text-slate-300">
-                Escanea la ubicación
+                {t('pda_scan_location')}
               </div>
               <div className="text-[11px] text-slate-400 leading-relaxed">
-                Para que el equipo de conteo sepa cuál auditar. Puedes seguir
-                surtiendo normalmente.
+                {t('pda_untrusted_loc_hint')}
               </div>
               <input
                 autoFocus value={corruptoLoc}
                 onChange={e => setCorruptoLoc(e.target.value)}
                 onKeyDown={e => { if (e.key === 'Enter') reportarCorrupto(false); }}
-                placeholder="Escanea o teclea la ubicación"
+                placeholder={t('pda_scan_loc_placeholder')}
                 data-testid="pda-corrupto-loc"
                 className="w-full h-14 px-3 rounded-xl bg-black/40 border border-white/15 text-center font-mono font-black text-lg text-amber-100 uppercase tracking-widest outline-none focus:border-amber-400/60" />
               <button onClick={() => reportarCorrupto(false)} disabled={corruptoEnviando}
                 data-testid="pda-corrupto-report"
                 className="w-full h-14 rounded-2xl bg-amber-500 active:bg-amber-600 text-black text-sm font-black uppercase tracking-widest disabled:opacity-50">
-                {corruptoEnviando ? 'Enviando…' : 'Reportar y continuar'}
+                {corruptoEnviando ? t('rs_sending') : t('pda_report_continue')}
               </button>
               <button onClick={() => reportarCorrupto(true)} disabled={corruptoEnviando}
                 data-testid="pda-corrupto-skip"
                 className="w-full h-11 rounded-2xl bg-white/5 active:bg-white/10 border border-white/10 text-slate-400 text-xs font-black uppercase tracking-widest disabled:opacity-50">
-                Continuar sin reportar
+                {t('pda_continue_no_report')}
               </button>
             </div>
           </div>
@@ -1172,13 +1185,13 @@ function PickScreen({ ticket, onSave, onPickSize, onRefresh, saving }) {
         <div className="px-3 space-y-3">
           <button onClick={backToBoxes}
             className="text-xs font-black uppercase tracking-widest text-slate-400 active:text-slate-200 flex items-center gap-1">
-            <ChevronLeft className="w-4 h-4" /> Volver a caja
+            <ChevronLeft className="w-4 h-4" /> {t('pda_back_to_box')}
           </button>
           <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-2xl p-3 space-y-1">
             <div className="flex items-center gap-2">
               <Barcode className="w-5 h-5 text-emerald-400" />
               <div className="flex-1">
-                <div className="text-[10px] font-black uppercase tracking-widest text-emerald-300">Caja identificada</div>
+                <div className="text-[10px] font-black uppercase tracking-widest text-emerald-300">{t('pda_box_identified')}</div>
                 <div className="font-mono font-black text-emerald-100 text-lg">{activeBox.box_id}</div>
                 {activeBox.lpn && activeBox.lpn !== activeBox.box_id && (
                   <div className="text-[10px] text-emerald-400/60 font-mono">LPN: {activeBox.lpn}</div>
@@ -1186,17 +1199,17 @@ function PickScreen({ ticket, onSave, onPickSize, onRefresh, saving }) {
               </div>
               <div className="text-right">
                 <div className="text-2xl font-mono font-black text-emerald-300">{activeBox.units}</div>
-                <div className="text-[9px] uppercase text-emerald-400/70 font-black">pz en caja</div>
+                <div className="text-[9px] uppercase text-emerald-400/70 font-black">{t('pda_pcs_in_box')}</div>
               </div>
             </div>
             <div className="text-[10px] text-slate-400 pt-2 border-t border-emerald-500/20">
-              Talla <b className="text-emerald-300">{activeBox.size}</b> · Ubic. <b className="text-blue-300 font-mono">{activeLocation.location}</b> · Faltan <b className="text-amber-300">{remainingForSize(activeBox.size)} pz</b> de {activeBox.size}
+              {t('wms_label_size')} <b className="text-emerald-300">{activeBox.size}</b> · {t('pda_loc_abbr')} <b className="text-blue-300 font-mono">{activeLocation.location}</b> · {t('pda_missing_word')} <b className="text-amber-300">{remainingForSize(activeBox.size)} {t('pieces')}</b> {t('pda_of_size', { size: activeBox.size })}
             </div>
           </div>
 
           <div>
             <div className="text-[10px] font-black uppercase tracking-widest text-slate-500 px-1 mb-1">
-              ¿Cuántas piezas vas a tomar de esta caja?
+              {t('pda_how_many')}
             </div>
             <div className="flex items-center gap-2">
               <button onClick={() => setTakeQty(Math.max(0, (parseInt(takeQty) || 0) - 1))}
@@ -1210,14 +1223,14 @@ function PickScreen({ ticket, onSave, onPickSize, onRefresh, saving }) {
                 className="w-16 h-16 rounded-2xl bg-white/5 active:bg-white/10 text-3xl font-black">＋</button>
             </div>
             <div className="mt-2 text-[10px] text-slate-500 px-1">
-              Máximo = mínimo entre {activeBox.units} (caja) y {roomForBox(activeBox.size)} (falta / disponible)
+              {t('pda_max_hint', { units: activeBox.units, room: roomForBox(activeBox.size) })}
             </div>
           </div>
 
           <button onClick={addToCart} disabled={(parseInt(takeQty) || 0) <= 0}
             className="w-full h-16 rounded-2xl bg-blue-600 active:bg-blue-700 text-white text-base font-black uppercase tracking-widest flex items-center justify-center gap-2 disabled:opacity-40">
             <Boxes className="w-6 h-6" />
-            Agregar a la lista ({parseInt(takeQty) || 0} pz)
+            {t('pda_add_to_list', { n: parseInt(takeQty) || 0 })}
           </button>
         </div>
       )}
@@ -1230,7 +1243,7 @@ function PickScreen({ ticket, onSave, onPickSize, onRefresh, saving }) {
             className={`w-full h-14 rounded-2xl text-sm font-black uppercase tracking-widest flex items-center justify-center gap-2 disabled:opacity-50 ${
               isComplete ? "bg-emerald-600 active:bg-emerald-700" : "bg-amber-600 active:bg-amber-700"} text-white`}>
             {saving ? <Loader2 className="w-5 h-5 animate-spin" /> : <CheckCircle2 className="w-5 h-5" />}
-            {isComplete ? "Completar surtido" : "Cerrar parcial"}
+            {isComplete ? t('pda_complete_pick') : t('pda_close_partial')}
           </button>
         </div>
       )}

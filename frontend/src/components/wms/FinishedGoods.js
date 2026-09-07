@@ -25,14 +25,14 @@ export const FinishedGoodsModule = () => {
     try {
       const res = await putter(`/finished-goods/${editingBox.box_id}`, editingBox);
       if (res.ok) {
-        toast.success(t('box_updated_success') || 'Caja actualizada correctamente');
+        toast.success(t('wms_box_updated'));
         setEditingBox(null);
         load();
       } else {
         const err = await res.json();
-        toast.error(err.detail || 'Error al actualizar');
+        toast.error(err.detail || t('wms_update_err'));
       }
-    } catch { toast.error('Error de conexión'); }
+    } catch { toast.error(t('wms_conn_err')); }
     finally { setSaving(false); }
   };
 
@@ -41,7 +41,7 @@ export const FinishedGoodsModule = () => {
       <div className="flex items-center justify-between gap-4 mb-4">
         <div className="flex items-center bg-muted p-1 rounded-lg">
           {[
-            { id: 'ALL', label: t('all') || 'Todos' },
+            { id: 'ALL', label: t('all') },
             { id: 'REGULAR', label: 'Regular' },
             { id: 'BPO', label: 'Back Order (B.O.)' },
           ].map(tab => (
@@ -91,7 +91,7 @@ export const FinishedGoodsModule = () => {
             ))}
           </tbody>
         </table>
-        {boxes.length === 0 && <div className="text-center text-muted-foreground text-sm py-8">{t('no_finished_goods')}</div>}
+        {boxes.length === 0 && <div className="text-center text-muted-foreground text-sm py-8">{t('wms_no_finished')}</div>}
       </div>
 
       {editingBox && (
@@ -100,7 +100,7 @@ export const FinishedGoodsModule = () => {
             <div className="flex items-center justify-between">
               <h3 className="font-semibold text-sm flex items-center gap-2">
                 <Edit3 className="w-4 h-4" />
-                {t('wms_edit_box') || 'Editar Caja'} {editingBox.box_id}
+                {t('wms_edit_box')} {editingBox.box_id}
               </h3>
               <button onClick={() => setEditingBox(null)} className="p-1 hover:bg-secondary rounded-lg transition-all"><X className="w-5 h-5" /></button>
             </div>
@@ -111,15 +111,15 @@ export const FinishedGoodsModule = () => {
                 <input value={editingBox.sku} onChange={e => setEditingBox(p => ({ ...p, sku: e.target.value }))} className={cls.input} />
               </div>
               <div>
-                <label className="text-xs font-medium text-muted-foreground block mb-1">{t('color')}</label>
+                <label className="text-xs font-medium text-muted-foreground block mb-1">{t('wms_label_color')}</label>
                 <input value={editingBox.color} onChange={e => setEditingBox(p => ({ ...p, color: e.target.value }))} className={cls.input} />
               </div>
               <div>
-                <label className="text-xs font-medium text-muted-foreground block mb-1">{t('size')}</label>
+                <label className="text-xs font-medium text-muted-foreground block mb-1">{t('wms_label_size')}</label>
                 <input value={editingBox.size} onChange={e => setEditingBox(p => ({ ...p, size: e.target.value }))} className={cls.input} />
               </div>
               <div>
-                <label className="text-xs font-medium text-muted-foreground block mb-1">{t('units')}</label>
+                <label className="text-xs font-medium text-muted-foreground block mb-1">{t('wms_label_units')}</label>
                 <input type="number" value={editingBox.units} onChange={e => setEditingBox(p => ({ ...p, units: parseInt(e.target.value) || 0 }))} className={`${cls.input} tabular-nums`} />
               </div>
               <div className="col-span-2">
@@ -142,10 +142,10 @@ export const FinishedGoodsModule = () => {
                 disabled={saving}
               >
                 {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <ClipboardCheck className="w-4 h-4" />}
-                {t('save') || 'Guardar'}
+                {t('save')}
               </Btn>
               <Btn onClick={() => setEditingBox(null)} className="flex-1">
-                {t('cancel') || 'Cancelar'}
+                {t('cancel')}
               </Btn>
             </div>
           </div>

@@ -9,14 +9,15 @@ import { Btn, cls } from "./ui";
 const SECTIONS = [
   // Receiving identity catalogs — locked dropdowns; only lead/supervisor may edit.
   // Rediseño 2026-07: paleta neutra — el color ya no distingue catálogos.
-  { type: 'customers', label: 'Clientes', desc: 'Valores para "customer" en Receiving', icon: Users, color: 'text-muted-foreground', bg: 'bg-muted', border: 'border-border' },
-  { type: 'manufacturers', label: 'Fabricantes', desc: 'Valores para "manufacturer" en Receiving', icon: Factory, color: 'text-muted-foreground', bg: 'bg-muted', border: 'border-border' },
-  { type: 'styles', label: 'Estilos', desc: 'Valores para "style" en Receiving', icon: Shirt, color: 'text-muted-foreground', bg: 'bg-muted', border: 'border-border' },
-  { type: 'colors', label: 'Colores', desc: 'Valores para "color" en Receiving', icon: Palette, color: 'text-muted-foreground', bg: 'bg-muted', border: 'border-border' },
-  { type: 'sizes', label: 'Tallas', desc: 'Tallas adicionales para el desplegable de "size" en Receiving', icon: Ruler, color: 'text-muted-foreground', bg: 'bg-muted', border: 'border-border' },
-  { type: 'descriptions', label: 'Descripciones', desc: 'Valores para el campo "description" en Receiving', icon: Tag, color: 'text-muted-foreground', bg: 'bg-muted', border: 'border-border' },
-  { type: 'countries', label: 'Países de origen', desc: 'Valores para "country_of_origin" en Receiving', icon: MapPin, color: 'text-muted-foreground', bg: 'bg-muted', border: 'border-border' },
-  { type: 'fabrics', label: 'Contenido / Fabric', desc: 'Valores para "fabric_content" en Receiving', icon: Layers, color: 'text-muted-foreground', bg: 'bg-muted', border: 'border-border' },
+  // labelKey/descKey se traducen en el render con t() (constante fuera del componente).
+  { type: 'customers', labelKey: 'wms_cat_customers', descKey: 'wms_cat_customers_desc', icon: Users, color: 'text-muted-foreground', bg: 'bg-muted', border: 'border-border' },
+  { type: 'manufacturers', labelKey: 'wms_cat_manufacturers', descKey: 'wms_cat_manufacturers_desc', icon: Factory, color: 'text-muted-foreground', bg: 'bg-muted', border: 'border-border' },
+  { type: 'styles', labelKey: 'wms_cat_styles', descKey: 'wms_cat_styles_desc', icon: Shirt, color: 'text-muted-foreground', bg: 'bg-muted', border: 'border-border' },
+  { type: 'colors', labelKey: 'wms_cat_colors', descKey: 'wms_cat_colors_desc', icon: Palette, color: 'text-muted-foreground', bg: 'bg-muted', border: 'border-border' },
+  { type: 'sizes', labelKey: 'wms_cat_sizes', descKey: 'wms_cat_sizes_desc', icon: Ruler, color: 'text-muted-foreground', bg: 'bg-muted', border: 'border-border' },
+  { type: 'descriptions', labelKey: 'wms_cat_descriptions', descKey: 'wms_cat_descriptions_desc', icon: Tag, color: 'text-muted-foreground', bg: 'bg-muted', border: 'border-border' },
+  { type: 'countries', labelKey: 'wms_cat_countries', descKey: 'wms_cat_countries_desc', icon: MapPin, color: 'text-muted-foreground', bg: 'bg-muted', border: 'border-border' },
+  { type: 'fabrics', labelKey: 'wms_cat_fabrics', descKey: 'wms_cat_fabrics_desc', icon: Layers, color: 'text-muted-foreground', bg: 'bg-muted', border: 'border-border' },
 ];
 
 // Tipos por-cliente: el selector de cliente aparece en su tarjeta y los valores
@@ -80,9 +81,9 @@ export const HomeModule = () => {
     setSavingAccess(true);
     try {
       const res = await putter('/module-access', { levels: nextLevels });
-      if (res.ok) { const d = await res.json(); setModuleAccess(a => ({ ...a, levels: d.levels || nextLevels })); toast.success('Acceso actualizado'); }
-      else { const e = await res.json().catch(() => ({})); toast.error(e.detail || 'Error guardando acceso'); loadModuleAccess(); }
-    } catch { toast.error('Error de conexión'); loadModuleAccess(); }
+      if (res.ok) { const d = await res.json(); setModuleAccess(a => ({ ...a, levels: d.levels || nextLevels })); toast.success(t('wms_access_updated')); }
+      else { const e = await res.json().catch(() => ({})); toast.error(e.detail || t('wms_access_save_err')); loadModuleAccess(); }
+    } catch { toast.error(t('wms_conn_err')); loadModuleAccess(); }
     finally { setSavingAccess(false); }
   };
 
@@ -120,9 +121,9 @@ export const HomeModule = () => {
       setSources(p => ({ ...p, [type]: data }));
     } catch (err) {
       logLoadError(`sources ${type}`)(err);
-      toast.error(`No se pudieron cargar fuentes de ${type}`);
+      toast.error(t('wms_cat_sources_err', { type }));
     } finally { setSourcesLoading(p => ({ ...p, [type]: false })); }
-  }, [styleCustomer]);
+  }, [styleCustomer, t]);
 
   // Autoload one-shot. Styles necesita cliente antes; colores/fabricantes cargan
   // su vista global de una vez (y se re-scopean al elegir cliente).
@@ -138,17 +139,17 @@ export const HomeModule = () => {
   // (estilos, colores, fabricantes) para que se scopeen a ese cliente + globales.
   useEffect(() => {
     if (!styleCustomer) return;
-    SCOPED_TYPES.forEach(t => {
-      loadSources(t);
-      if (showSimilar[t]) loadSimilar(t);
+    SCOPED_TYPES.forEach(ty => {
+      loadSources(ty);
+      if (showSimilar[ty]) loadSimilar(ty);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [styleCustomer]);
 
   const handleAdd = async (type) => {
     const value = drafts[type]?.trim();
-    if (!value) { toast.error('Escribe un valor'); return; }
-    if (type === 'styles' && !styleCustomer) { toast.error('Selecciona un cliente primero'); return; }
+    if (!value) { toast.error(t('wms_cat_enter_value')); return; }
+    if (type === 'styles' && !styleCustomer) { toast.error(t('wms_cat_select_customer_first')); return; }
     setSaving(type);
     try {
       // Tipos por-cliente adjuntan el cliente seleccionado; si está vacío (permitido
@@ -156,7 +157,7 @@ export const HomeModule = () => {
       const body = SCOPED_TYPES.includes(type) ? { type, value, customer: styleCustomer } : { type, value };
       const res = await poster('/catalogs', body);
       if (res.ok) {
-        toast.success(`Agregado a ${SECTIONS.find(s => s.type === type)?.label}`);
+        toast.success(t('wms_cat_added_to', { name: t(SECTIONS.find(s => s.type === type)?.labelKey) }));
         setDrafts(prev => ({ ...prev, [type]: '' }));
         if (type === 'sizes') refreshWmsSizes();    // live-refresh size selectors
         if (type === 'colors') refreshWmsColors();  // live-refresh color selectors
@@ -165,26 +166,26 @@ export const HomeModule = () => {
         if (sources[type]) loadSources(type); // refresh in_catalog flags
       } else {
         const err = await res.json().catch(() => ({}));
-        toast.error(err.detail || 'Error al agregar');
+        toast.error(err.detail || t('wms_cat_add_err'));
       }
     } catch (err) {
       logLoadError('add catalog')(err);
-      toast.error('Error de conexión');
+      toast.error(t('wms_conn_err'));
     } finally { setSaving(null); }
   };
 
   const handleDelete = async (catalog_id, value, type) => {
-    if (!window.confirm(`¿Quitar "${value}" del catálogo?\n(No afecta registros existentes en inventario)`)) return;
+    if (!window.confirm(t('wms_cat_remove_confirm', { value }))) return;
     setDeleting(catalog_id);
     try {
       await deleter(`/catalogs/${catalog_id}`);
-      toast.success('Quitado del catálogo');
+      toast.success(t('wms_cat_removed'));
       refreshWmsSizes();  // in case a size was removed
       load();
       if (type && sources[type]) loadSources(type);
     } catch (err) {
       logLoadError('delete catalog')(err);
-      toast.error('Error al quitar');
+      toast.error(t('wms_cat_remove_err'));
     } finally { setDeleting(null); }
   };
 
@@ -194,15 +195,15 @@ export const HomeModule = () => {
     try {
       const res = await poster('/catalogs', { type, value });
       if (res.ok) {
-        toast.success(`"${value}" agregado al catálogo`);
+        toast.success(t('wms_cat_promoted', { value }));
         await Promise.all([load(), loadSources(type)]);
       } else {
         const err = await res.json().catch(() => ({}));
-        toast.error(err.detail || 'Error');
+        toast.error(err.detail || t('error'));
       }
     } catch (err) {
       logLoadError('promote')(err);
-      toast.error('Error de conexión');
+      toast.error(t('wms_conn_err'));
     } finally { setActioning(null); }
   };
 
@@ -211,35 +212,35 @@ export const HomeModule = () => {
     if (!renameModal) return;
     const { type, oldValue, newValue } = renameModal;
     const newClean = (newValue || '').trim();
-    if (!newClean) { toast.error('Escribe el valor nuevo'); return; }
+    if (!newClean) { toast.error(t('wms_cat_enter_new_value')); return; }
     if (newClean.toUpperCase() === oldValue.toUpperCase()) {
-      toast.error('Debe ser distinto al original'); return;
+      toast.error(t('wms_cat_must_differ')); return;
     }
     setActioning(`rename:${type}:${oldValue}`);
     try {
       const res = await poster(`/catalogs/${type}/rename`, { old: oldValue, new: newClean });
       if (res.ok) {
         const data = await res.json();
-        const bits = [`${data.modified} fila(s) renombradas de "${oldValue}" a "${data.new}"`];
-        if (data.catalog_removed) bits.push(`${data.catalog_removed} quitado(s) del catálogo`);
-        if (data.catalog_added) bits.push(`${data.catalog_added} agregado(s) al catálogo`);
+        const bits = [t('wms_cat_renamed_rows', { n: data.modified, old: oldValue, new: data.new })];
+        if (data.catalog_removed) bits.push(t('wms_cat_n_removed', { n: data.catalog_removed }));
+        if (data.catalog_added) bits.push(t('wms_cat_n_added', { n: data.catalog_added }));
         toast.success(bits.join(' · '));
         setRenameModal(null);
         load();
         loadSources(type);
       } else {
         const err = await res.json().catch(() => ({}));
-        toast.error(err.detail || 'Error al renombrar');
+        toast.error(err.detail || t('wms_cat_rename_err'));
       }
     } catch (err) {
       logLoadError('rename catalog value')(err);
-      toast.error('Error de conexión');
+      toast.error(t('wms_conn_err'));
     } finally { setActioning(null); }
   };
 
   // Wipe a value across inventory + receiving (sets to empty string).
   const bulkClearValue = async (type, value) => {
-    if (!window.confirm(`¿Vaciar el valor "${value}" en todas las filas de ${type}?\nLas filas quedarán con el campo vacío.`)) return;
+    if (!window.confirm(t('wms_cat_clear_confirm', { value, type }))) return;
     setActioning(`clear:${type}:${value}`);
     try {
       const res = await fetch(`${API}/catalogs/${type}/sources`, {
@@ -250,15 +251,15 @@ export const HomeModule = () => {
       });
       if (res.ok) {
         const data = await res.json();
-        toast.success(`${data.modified} fila(s) limpiadas`);
+        toast.success(t('wms_cat_rows_cleared', { n: data.modified }));
         loadSources(type);
       } else {
         const err = await res.json().catch(() => ({}));
-        toast.error(err.detail || 'Error');
+        toast.error(err.detail || t('error'));
       }
     } catch (err) {
       logLoadError('clear catalog value')(err);
-      toast.error('Error de conexión');
+      toast.error(t('wms_conn_err'));
     } finally { setActioning(null); }
   };
 
@@ -272,9 +273,9 @@ export const HomeModule = () => {
       setSimilar(p => ({ ...p, [type]: data }));
     } catch (err) {
       logLoadError(`similar ${type}`)(err);
-      toast.error('No se pudieron detectar typos');
+      toast.error(t('wms_cat_typos_err'));
     } finally { setSimilarLoading(p => ({ ...p, [type]: false })); }
-  }, [styleCustomer]);
+  }, [styleCustomer, t]);
 
   const toggleSimilar = (type) => {
     const open = !!showSimilar[type];
@@ -284,13 +285,7 @@ export const HomeModule = () => {
 
   // Fusiona `drop` → `keep` en una sola llamada al rename endpoint.
   const mergePair = async (type, drop, keep) => {
-    if (!window.confirm(
-      `¿Fusionar "${drop}" → "${keep}"?\n\n` +
-      `1) Renombra en TODAS las filas: inventario, cajas, tickets, UPCs, receiving.\n` +
-      `2) Quita "${drop}" del catálogo curado (si estaba).\n` +
-      `3) Agrega "${keep}" al catálogo curado (si no estaba).\n\n` +
-      `El sistema queda 100% alineado — nada quedará huérfano.`
-    )) return;
+    if (!window.confirm(t('wms_cat_merge_confirm', { drop, keep }))) return;
     setActioning(`merge:${type}:${drop}`);
     try {
       const res = await poster(`/catalogs/${type}/rename`, { old: drop, new: keep });
@@ -299,20 +294,20 @@ export const HomeModule = () => {
         // El backend ahora tambien sincroniza el catalogo curado: quita `drop`
         // y agrega `keep` si no estaba. Reflejamos eso en el toast + recargamos
         // load() para que la lista curada de la UI (arriba) se actualice.
-        const bits = [`${data.modified} fila(s) fusionadas: "${drop}" → "${data.new}"`];
-        if (data.catalog_removed) bits.push(`${data.catalog_removed} quitado(s) del catálogo`);
-        if (data.catalog_added) bits.push(`${data.catalog_added} agregado(s) al catálogo`);
+        const bits = [t('wms_cat_merged_rows', { n: data.modified, drop, keep: data.new })];
+        if (data.catalog_removed) bits.push(t('wms_cat_n_removed', { n: data.catalog_removed }));
+        if (data.catalog_added) bits.push(t('wms_cat_n_added', { n: data.catalog_added }));
         toast.success(bits.join(' · '));
         load();
         loadSimilar(type);
         if (sources[type]) loadSources(type);
       } else {
         const err = await res.json().catch(() => ({}));
-        toast.error(err.detail || 'Error al fusionar');
+        toast.error(err.detail || t('wms_cat_merge_err'));
       }
     } catch (err) {
       logLoadError('merge')(err);
-      toast.error('Error de conexión');
+      toast.error(t('wms_conn_err'));
     } finally { setActioning(null); }
   };
 
@@ -342,17 +337,15 @@ export const HomeModule = () => {
           <button onClick={() => setShowAccess(s => !s)}
             className="w-full flex items-center justify-between px-5 py-4 hover:bg-muted/40 transition-colors">
             <span className="flex items-center gap-2 text-sm font-semibold text-foreground">
-              <Lock className="w-4 h-4 text-primary" /> Acceso por módulo del WMS
+              <Lock className="w-4 h-4 text-primary" /> {t('users_wms_module_access')}
             </span>
             {showAccess ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
           </button>
           {showAccess && (
             <div className="px-5 pb-5 space-y-3">
               <p className="text-xs text-muted-foreground -mt-1">
-                Define qué nivel abre cada módulo del WMS en el menú. «Todos» = cualquier
-                usuario; 1–5 = nivel de admin mínimo; «Solo supersu» lo reserva al super
-                usuario. Los marcados <span className="text-primary font-semibold">backend</span>{' '}
-                además se validan en el servidor (el resto controla solo el menú).
+                {t('users_wms_module_access_help_1')} <span className="text-primary font-semibold">backend</span>{' '}
+                {t('users_wms_module_access_help_2')}
               </p>
               {(moduleAccess.order || Object.keys(moduleAccess.defaults || {})).map(id => {
                 const soloLevel = moduleAccess.supersu_only_level || 6;
@@ -370,9 +363,9 @@ export const HomeModule = () => {
                       disabled={savingAccess}
                       className="w-48 px-3 py-2 bg-card border border-input rounded-md text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring/25 disabled:opacity-50"
                     >
-                      <option value="0">Todos</option>
-                      {[1, 2, 3, 4, 5].map(n => <option key={n} value={String(n)}>Admin nivel {n}+</option>)}
-                      <option value={String(soloLevel)}>Solo supersu</option>
+                      <option value="0">{t('all_boards')}</option>
+                      {[1, 2, 3, 4, 5].map(n => <option key={n} value={String(n)}>{t('users_admin_level_plus', { n })}</option>)}
+                      <option value={String(soloLevel)}>{t('users_supersu_only')}</option>
                     </select>
                   </div>
                 );
@@ -387,11 +380,11 @@ export const HomeModule = () => {
       <UpcCatalog isManager={isManager} />
 
       <div className="bg-card border border-border rounded-lg p-5">
-        <h2 className="text-sm font-semibold text-foreground mb-1">Catálogos maestros</h2>
+        <h2 className="text-sm font-semibold text-foreground mb-1">{t('wms_cat_master_title')}</h2>
         <p className="text-xs text-muted-foreground">
-          Una sola lista por catálogo: cada valor muestra su uso real en inventario y un badge
-          <b> En cat.</b> si ya está curado (los curados son los únicos que aparecen en Receiving / Agregar Manual).
-          Desde aquí puedes <b>promover</b>, <b>quitar del catálogo</b>, <b>renombrar</b> en todas las filas o <b>vaciar</b> basura.
+          {t('wms_cat_master_help_1')}
+          <b> {t('wms_cat_in_cat')}</b> {t('wms_cat_master_help_2')}
+          {' '}{t('wms_cat_help_from_here')} <b>{t('wms_cat_help_promote')}</b>, <b>{t('wms_cat_help_remove')}</b>, <b>{t('wms_cat_help_rename')}</b> {t('wms_cat_help_rename_tail')} <b>{t('wms_cat_help_clear')}</b> {t('wms_cat_help_clear_tail')}
         </p>
       </div>
 
@@ -414,8 +407,8 @@ export const HomeModule = () => {
                   <Icon className={`w-5 h-5 ${section.color}`} />
                 </div>
                 <div className="flex-1 min-w-0">
-                  <h3 className="text-sm font-semibold">{section.label}</h3>
-                  <p className="text-xs text-muted-foreground leading-tight">{section.desc}</p>
+                  <h3 className="text-sm font-semibold">{t(section.labelKey)}</h3>
+                  <p className="text-xs text-muted-foreground leading-tight">{t(section.descKey)}</p>
                 </div>
                 <span className="text-xs font-medium tabular-nums bg-muted px-2 py-1 rounded-md text-muted-foreground">
                   {srcLoading ? '…' : totalCount}
@@ -428,7 +421,7 @@ export const HomeModule = () => {
               {isScoped && (
                 <div className="p-3 border-b border-border/60">
                   <label className="text-xs font-medium text-muted-foreground block mb-1">
-                    Cliente{isStyles ? '' : ' (opcional — vacío = global)'}
+                    {t('wms_label_customer')}{isStyles ? '' : ` ${t('wms_cat_optional_global')}`}
                   </label>
                   <select
                     value={styleCustomer}
@@ -436,7 +429,7 @@ export const HomeModule = () => {
                     className="w-full px-3 py-2 bg-card border border-input rounded-md text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring/25"
                     data-testid="style-customer-select"
                   >
-                    <option value="">{isStyles ? '— Selecciona cliente —' : '— Global (todos los clientes) —'}</option>
+                    <option value="">{isStyles ? t('wms_cat_select_customer_opt') : t('wms_cat_global_opt')}</option>
                     {customers.map(c => <option key={c} value={c}>{c}</option>)}
                   </select>
                 </div>
@@ -450,7 +443,7 @@ export const HomeModule = () => {
                     value={drafts[section.type]}
                     onChange={e => setDrafts(p => ({ ...p, [section.type]: e.target.value }))}
                     onKeyDown={e => { if (e.key === 'Enter') handleAdd(section.type); }}
-                    placeholder={isStyles && !styleCustomer ? 'Selecciona un cliente…' : 'Nuevo valor…'}
+                    placeholder={isStyles && !styleCustomer ? t('samples_select_client') : t('wms_cat_new_value_ph')}
                     disabled={isStyles && !styleCustomer}
                     className={`flex-1 ${cls.input} disabled:opacity-50`}
                     data-testid={`cat-input-${section.type}`}
@@ -461,12 +454,12 @@ export const HomeModule = () => {
                     data-testid={`cat-add-${section.type}`}
                   >
                     {saving === section.type ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}
-                    Agregar
+                    {t('add')}
                   </Btn>
                 </div>
               ) : (
                 <div className="p-3 border-b border-border/60 flex items-center gap-2 text-xs font-medium text-muted-foreground">
-                  <Lock className="w-3 h-3" /> Solo líder/supervisor puede editar
+                  <Lock className="w-3 h-3" /> {t('wms_cat_manager_only')}
                 </div>
               )}
 
@@ -487,7 +480,7 @@ export const HomeModule = () => {
                     >
                       <span className="flex items-center gap-2">
                         <Wand2 className="w-3.5 h-3.5" />
-                        Detectar typos
+                        {t('wms_cat_detect_typos')}
                         {simData && (
                           <span className={`px-1.5 py-0.5 rounded text-xs tabular-nums ${
                             nPairs > 0 ? 'bg-amber-500/15 text-amber-700 dark:text-amber-300' : 'bg-muted text-muted-foreground'
@@ -505,17 +498,17 @@ export const HomeModule = () => {
                           </div>
                         ) : !simData ? (
                           <div className="text-center py-6 text-xs text-muted-foreground">
-                            Cargando…
+                            {t('loading')}
                           </div>
                         ) : nPairs === 0 ? (
                           <div className="text-center py-6 text-xs font-medium text-emerald-600 dark:text-emerald-400">
-                            Sin typos detectados
+                            {t('wms_cat_no_typos')}
                           </div>
                         ) : (
                           <>
                             <div className="px-3 py-2 text-xs font-medium text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-500/10 border-b border-amber-200/70 dark:border-amber-500/20 flex items-center gap-1.5">
                               <AlertTriangle className="w-3 h-3" />
-                              Distancia ≤ 2. Revisa: algunos pueden ser colores distintos.
+                              {t('wms_cat_typos_hint')}
                             </div>
                             <ul className="divide-y divide-border/60">
                               {simData.pairs.map((p, i) => {
@@ -544,13 +537,13 @@ export const HomeModule = () => {
                                         className="text-xs font-medium border bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100 dark:bg-emerald-500/10 dark:text-emerald-300 dark:border-emerald-500/25 dark:hover:bg-emerald-500/20 px-2 py-1 rounded-md flex items-center gap-1 transition-colors disabled:opacity-40"
                                       >
                                         {isBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
-                                        Fusionar "{drop}" → "{keep}"
+                                        {t('wms_cat_merge_btn', { drop, keep })}
                                       </button>
                                       <button
                                         onClick={() => mergePair(section.type, keep, drop)}
                                         disabled={!!actioning}
                                         className="text-xs font-medium text-muted-foreground hover:text-foreground px-2 py-1 rounded"
-                                        title="Invertir dirección de la fusión"
+                                        title={t('wms_cat_merge_invert')}
                                       >
                                         ⇄
                                       </button>
@@ -565,9 +558,9 @@ export const HomeModule = () => {
                                           }));
                                         }}
                                         className="ml-auto text-xs font-medium text-muted-foreground/60 hover:text-muted-foreground"
-                                        title="Ignorar este par (solo en esta sesión)"
+                                        title={t('wms_cat_ignore_pair_title')}
                                       >
-                                        Ignorar
+                                        {t('wms_cat_ignore')}
                                       </button>
                                     </div>
                                   </li>
@@ -591,7 +584,7 @@ export const HomeModule = () => {
                       type="text"
                       value={sourceSearch[section.type]}
                       onChange={e => setSourceSearch(p => ({ ...p, [section.type]: e.target.value }))}
-                      placeholder="Filtrar valores…"
+                      placeholder={t('wms_cat_filter_values_ph')}
                       className="w-full pl-9 pr-3 py-1.5 bg-card border border-input rounded-md text-xs placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-ring/25 transition-colors"
                       data-testid={`sources-search-${section.type}`}
                     />
@@ -605,11 +598,11 @@ export const HomeModule = () => {
                     </div>
                   ) : isStyles && !styleCustomer ? (
                     <div className="text-center py-8 text-sm text-muted-foreground">
-                      Selecciona un cliente
+                      {t('wms_cat_select_customer')}
                     </div>
                   ) : filteredSources.length === 0 ? (
                     <div className="text-center py-6 text-sm text-muted-foreground">
-                      Sin valores
+                      {t('wms_cat_no_values')}
                     </div>
                   ) : (
                     <ul className="divide-y divide-border/60">
@@ -626,13 +619,13 @@ export const HomeModule = () => {
                               className={`text-xs font-medium tabular-nums px-1.5 py-0.5 rounded ${
                                 it.count > 0 ? 'text-muted-foreground bg-muted/60' : 'text-muted-foreground/50 bg-transparent'
                               }`}
-                              title={it.count > 0 ? `Aparece en ${it.count} fila(s)` : 'Curado sin uso en inventario'}
+                              title={it.count > 0 ? t('wms_cat_appears_in_rows', { n: it.count }) : t('wms_cat_curated_unused')}
                             >
                               {it.count > 0 ? it.count.toLocaleString() : '—'}
                             </span>
                             {it.in_catalog && (
                               <span className={`text-xs font-medium ${section.color} ${section.bg} border border-border px-1.5 py-0.5 rounded-md whitespace-nowrap`}>
-                                En cat.
+                                {t('wms_cat_in_cat')}
                               </span>
                             )}
                             {isManager && !it.in_catalog && (
@@ -640,7 +633,7 @@ export const HomeModule = () => {
                                 onClick={() => promoteToCatalog(section.type, it.value)}
                                 disabled={!!actioning}
                                 className="p-1 text-muted-foreground hover:text-primary hover:bg-primary/10 rounded opacity-50 group-hover:opacity-100 transition-all disabled:opacity-30"
-                                title="Promover al catálogo"
+                                title={t('wms_cat_promote_title')}
                               >
                                 {isPromoting ? <Loader2 className="w-3 h-3 animate-spin" /> : <ArrowUpToLine className="w-3 h-3" />}
                               </button>
@@ -650,7 +643,7 @@ export const HomeModule = () => {
                                 onClick={() => handleDelete(it.catalog_id, it.value, section.type)}
                                 disabled={!!actioning || isRemovingCat}
                                 className="p-1 text-muted-foreground hover:text-amber-600 dark:hover:text-amber-400 hover:bg-amber-500/10 rounded opacity-50 group-hover:opacity-100 transition-all disabled:opacity-30"
-                                title="Quitar del catálogo (no afecta inventario)"
+                                title={t('wms_cat_remove_title')}
                               >
                                 {isRemovingCat ? <Loader2 className="w-3 h-3 animate-spin" /> : <X className="w-3 h-3" />}
                               </button>
@@ -660,7 +653,7 @@ export const HomeModule = () => {
                                 onClick={() => setRenameModal({ type: section.type, oldValue: it.value, newValue: it.value })}
                                 disabled={!!actioning}
                                 className="p-1 text-muted-foreground hover:text-amber-600 dark:hover:text-amber-400 hover:bg-amber-500/10 rounded opacity-50 group-hover:opacity-100 transition-all disabled:opacity-30"
-                                title="Renombrar en todas las filas"
+                                title={t('wms_cat_rename_title')}
                               >
                                 <Edit2 className="w-3 h-3" />
                               </button>
@@ -670,7 +663,7 @@ export const HomeModule = () => {
                                 onClick={() => bulkClearValue(section.type, it.value)}
                                 disabled={!!actioning}
                                 className="p-1 text-muted-foreground hover:text-red-600 dark:hover:text-red-400 hover:bg-red-500/10 rounded opacity-50 group-hover:opacity-100 transition-all disabled:opacity-30"
-                                title="Vaciar valor (afecta inventario)"
+                                title={t('wms_cat_clear_title')}
                               >
                                 {isClearing ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}
                               </button>
@@ -704,8 +697,8 @@ export const HomeModule = () => {
                     <Edit2 className="w-5 h-5 text-muted-foreground" />
                   </div>
                   <div className="min-w-0">
-                    <h3 className="font-semibold text-sm truncate">Renombrar en {section?.label}</h3>
-                    <p className="text-xs text-muted-foreground truncate">Afecta TODAS las filas con este valor</p>
+                    <h3 className="font-semibold text-sm truncate">{t('wms_cat_rename_in', { name: t(section?.labelKey) })}</h3>
+                    <p className="text-xs text-muted-foreground truncate">{t('wms_cat_rename_affects')}</p>
                   </div>
                 </div>
                 <button onClick={() => setRenameModal(null)} className="p-2 hover:bg-secondary rounded-lg" disabled={actioning?.startsWith('rename:')}>
@@ -715,26 +708,26 @@ export const HomeModule = () => {
 
               <div className="p-5 space-y-4">
                 <div>
-                  <label className="text-xs font-medium text-muted-foreground block mb-1">Valor actual</label>
+                  <label className="text-xs font-medium text-muted-foreground block mb-1">{t('wms_cat_current_value')}</label>
                   <div className="px-3 py-2 border rounded-md text-sm font-mono font-medium bg-red-50 border-red-200 text-red-700 dark:bg-red-500/10 dark:border-red-500/25 dark:text-red-300">
                     {renameModal.oldValue}
                   </div>
                 </div>
                 <div>
-                  <label className="text-xs font-medium text-muted-foreground block mb-1">Cambiar a</label>
+                  <label className="text-xs font-medium text-muted-foreground block mb-1">{t('wms_cat_change_to')}</label>
                   <input
                     type="text"
                     value={renameModal.newValue}
                     onChange={e => setRenameModal(p => ({ ...p, newValue: e.target.value.toUpperCase() }))}
                     onKeyDown={e => { if (e.key === 'Enter') submitRename(); }}
-                    placeholder="ej: BANGLADESH"
+                    placeholder={t('wms_cat_rename_ph')}
                     className={`${cls.input} font-mono`}
                     autoFocus
                     data-testid="rename-input"
                   />
                   {suggestions.length > 0 && (
                     <div className="mt-2 flex flex-wrap gap-1">
-                      <span className="text-xs font-medium text-muted-foreground/70 self-center mr-1">Sugerencias:</span>
+                      <span className="text-xs font-medium text-muted-foreground/70 self-center mr-1">{t('wms_cat_suggestions')}</span>
                       {suggestions.map(s => (
                         <button
                           key={s}
@@ -751,7 +744,7 @@ export const HomeModule = () => {
 
               <div className="flex items-center justify-end gap-2 p-5 border-t border-border/20">
                 <Btn variant="ghost" onClick={() => setRenameModal(null)} disabled={actioning?.startsWith('rename:')}>
-                  Cancelar
+                  {t('cancel')}
                 </Btn>
                 <Btn
                   variant="primary"
@@ -760,7 +753,7 @@ export const HomeModule = () => {
                   data-testid="rename-submit"
                 >
                   {actioning?.startsWith('rename:') ? <Loader2 className="w-4 h-4 animate-spin" /> : <Edit2 className="w-4 h-4" />}
-                  Aplicar
+                  {t('dash_apply')}
                 </Btn>
               </div>
             </div>

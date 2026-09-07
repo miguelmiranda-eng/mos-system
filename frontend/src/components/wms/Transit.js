@@ -6,6 +6,7 @@ import {
 } from "lucide-react";
 import { fetcher, poster, putter, logLoadError, cleanScan } from "./lib";
 import { useAuth } from "../../App";
+import { useLang } from "../../contexts/LanguageContext";
 import { PutawayWizard } from "./PutawayWizard";
 import { SoftAlert, Btn, ModuleToolbar } from "./ui";
 
@@ -24,6 +25,7 @@ const TRANSIT_LEGACY = "UBICACION TEMPORAL";
  *   - Move them. The backend re-balances inventory and logs a movement.
  */
 export const TransitModule = () => {
+  const { t } = useLang();
   const { user } = useAuth();
   const isAdmin = ['admin', 'supersu'].includes(user?.role);
 
@@ -114,7 +116,7 @@ export const TransitModule = () => {
       setCreateDone(i + 1);
     }
     setCreating(false);
-    toast.success(`Carros creados: ${created}${skipped ? ` · ${skipped} omitidos (ya existían)` : ''}`);
+    toast.success(t('wms_carts_created', { n: created }) + (skipped ? t('wms_carts_skipped_suffix', { n: skipped }) : ''));
     setShowCreateCarts(false);
     loadInfo();
   };
@@ -131,9 +133,9 @@ export const TransitModule = () => {
       setBoxes(Array.isArray(data.boxes) ? data.boxes : []);
     } catch (err) {
       logLoadError("transit boxes")(err);
-      toast.error("No se pudieron cargar las cajas de Putaway 2.0");
+      toast.error(t("wms_transit_load_err"));
     } finally { setLoading(false); }
-  }, [customerFilter, search, activeCart, transitName]);
+  }, [customerFilter, search, activeCart, transitName, t]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -212,7 +214,7 @@ export const TransitModule = () => {
     if (!editBox) return;
     const units = parseInt(editDraft.units);
     if (Number.isNaN(units) || units < 0) {
-      toast.error('Unidades debe ser un entero >= 0');
+      toast.error(t('wms_units_int_err'));
       return;
     }
     setEditSaving(true);
@@ -228,24 +230,24 @@ export const TransitModule = () => {
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        toast.error(err.detail || 'No se pudo guardar');
+        toast.error(err.detail || t('wms_save_err'));
         return;
       }
-      toast.success(`Caja ${editBox.box_id} actualizada`);
+      toast.success(t('wms_box_updated_id', { box: editBox.box_id }));
       closeEdit();
       load();
       loadInfo();
     } catch {
-      toast.error('Error de conexión');
+      toast.error(t('wms_err_connection'));
     } finally { setEditSaving(false); }
   };
 
   // Step 1 — lock the destination location before any box is scanned.
   const confirmLocation = () => {
     const dst = cleanScan(destination);
-    if (!dst) { toast.error("Escribe o escanea la ubicación destino"); return; }
+    if (!dst) { toast.error(t("wms_dest_scan_req")); return; }
     const match = locOptions.find(l => (l.name || "").toUpperCase() === dst);
-    if (!match) { toast.error(`'${dst}' no existe en las ubicaciones activas`); return; }
+    if (!match) { toast.error(t('wms_dest_not_active', { dest: dst })); return; }
     setLockedLocation(match.name);
     setDestination(match.name);
     setShowLocDrop(false);
@@ -269,12 +271,12 @@ export const TransitModule = () => {
     if (!id) return;
     const box = boxes.find(b => (b.box_id || "").toUpperCase() === id);
     if (!box) {
-      toast.error(`Caja ${id} no está en los carros de tránsito (usa la pestaña "Todos")`);
+      toast.error(t("wms_box_not_in_transit", { box: id }));
       setBoxScan("");
       return;
     }
     setSelected(prev => {
-      if (prev.has(box.box_id)) { toast.info(`La caja ${box.box_id} ya está en el lote`); return prev; }
+      if (prev.has(box.box_id)) { toast.info(t("wms_box_already_in_batch", { box: box.box_id })); return prev; }
       const next = new Set(prev);
       next.add(box.box_id);
       return next;
@@ -284,24 +286,24 @@ export const TransitModule = () => {
 
   // "Terminar" — raise the warning before committing the move.
   const handleFinish = () => {
-    if (!lockedLocation) { toast.error("Primero selecciona una ubicación destino"); return; }
-    if (selected.size === 0) { toast.error("Escanea o selecciona al menos una caja"); return; }
+    if (!lockedLocation) { toast.error(t("wms_select_dest_first")); return; }
+    if (selected.size === 0) { toast.error(t("wms_scan_select_box_req")); return; }
     setShowWarning(true);
   };
 
   const handleRelocate = async () => {
     const dst = (lockedLocation || "").trim().toUpperCase();
-    if (!dst) { toast.error("Primero selecciona una ubicación destino"); return; }
-    if (selected.size === 0) { toast.error("Selecciona al menos una caja"); return; }
+    if (!dst) { toast.error(t("wms_select_dest_first")); return; }
+    if (selected.size === 0) { toast.error(t("wms_select_box_err")); return; }
     // Validate destination exists in active list (avoid a backend 404 surprise).
     const exists = locOptions.some(l => (l.name || "").toUpperCase() === dst);
-    if (!exists) { toast.error(`'${dst}' no existe en las ubicaciones activas`); return; }
+    if (!exists) { toast.error(t('wms_dest_not_active', { dest: dst })); return; }
     setMoving(true);
     try {
       const res = await poster("/transit/relocate", { box_ids: Array.from(selected), to: dst });
       if (res.ok) {
         const data = await res.json();
-        toast.success(data.message || "Cajas reubicadas");
+        toast.success(data.message || t("wms_boxes_relocated"));
         setShowWarning(false);
         setSelected(new Set());
         setLockedLocation("");
@@ -311,11 +313,11 @@ export const TransitModule = () => {
         loadInfo();
       } else {
         const err = await res.json().catch(() => ({}));
-        toast.error(err.detail || "Error al reubicar");
+        toast.error(err.detail || t("wms_relocate_err"));
       }
     } catch (err) {
       logLoadError("transit relocate")(err);
-      toast.error("Error de conexión");
+      toast.error(t("wms_err_connection"));
     } finally { setMoving(false); }
   };
 
@@ -337,11 +339,11 @@ export const TransitModule = () => {
                 data-testid="putaway2-create-carts"
               >
                 <Plus className="w-3.5 h-3.5"
-      /> Crear carros
+      /> {t("wms_create_carts")}
               </Btn>
             )}
             <div className="text-xs font-mono text-muted-foreground tabular-nums">
-              {boxes.length} cajas · {boxes.reduce((s, b) => s + (Number(b.units) || Number(b.qty) || 0), 0).toLocaleString()} unidades
+              {boxes.length} {t("wms_boxes_lc")} · {boxes.reduce((s, b) => s + (Number(b.units) || Number(b.qty) || 0), 0).toLocaleString()} {t("wms_units_lc")}
             </div>
           </div>
         }
@@ -353,16 +355,14 @@ export const TransitModule = () => {
           <div className="bg-card border border-border rounded-lg shadow-xl w-full max-w-sm p-5" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-3">
               <h3 className="font-semibold text-sm flex items-center gap-2">
-                <Truck className="w-4 h-4 text-muted-foreground" /> Crear carros
+                <Truck className="w-4 h-4 text-muted-foreground" /> {t("wms_create_carts")}
               </h3>
               {!creating && <button onClick={() => setShowCreateCarts(false)} className="p-1 hover:bg-secondary rounded-lg"><X className="w-5 h-5" /></button>}
             </div>
             <p className="text-xs text-muted-foreground mb-3">
-              Se crearán carros con los números disponibles más bajos (rellenando huecos, máx. 50 a la vez).
-              Los que ya existan se omiten. Funcionan como ubicaciones de tránsito: reciben material,
-              descuentan inventario al surtir y aparecen en las tareas de surtido.
+              {t("wms_create_carts_desc")}
             </p>
-            <label className="text-xs font-medium text-muted-foreground block mb-1">¿Cuántos carros? (máx. 50)</label>
+            <label className="text-xs font-medium text-muted-foreground block mb-1">{t("wms_how_many_carts")}</label>
             <input
               type="number" min="1" max="50" value={cartQty}
               onChange={e => setCartQty(e.target.value)}
@@ -373,7 +373,7 @@ export const TransitModule = () => {
             {creating && (
               <div className="mb-3">
                 <div className="flex justify-between text-xs font-medium text-muted-foreground mb-1">
-                  <span>Creando…</span>
+                  <span>{t("wms_creating")}</span>
                   <span className="font-mono">{createDone} / {Math.max(1, Math.min(50, parseInt(cartQty) || 0))}</span>
                 </div>
                 <div className="w-full h-3 bg-muted rounded-full overflow-hidden">
@@ -383,7 +383,7 @@ export const TransitModule = () => {
               </div>
             )}
             <div className="flex justify-end gap-2">
-              {!creating && <Btn variant="ghost" onClick={() => setShowCreateCarts(false)}>Cancelar</Btn>}
+              {!creating && <Btn variant="ghost" onClick={() => setShowCreateCarts(false)}>{t("cancel")}</Btn>}
               <Btn
                 variant="primary"
                 onClick={handleCreateCarts}
@@ -391,7 +391,7 @@ export const TransitModule = () => {
                 data-testid="create-carts-confirm"
               >
                 {creating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-                {creating ? 'Creando…' : 'Crear'}
+                {creating ? t('wms_creating') : t('wms_create')}
               </Btn>
             </div>
           </div>
@@ -413,7 +413,7 @@ export const TransitModule = () => {
                   : "bg-card text-muted-foreground border-border hover:bg-muted hover:text-foreground"
               }`}
             >
-              Todos
+              {t("wms_all_m")}
               <span className="text-[10px] opacity-80 font-mono">
                 {(cartInfo.reduce((s, c) => s + (c.boxes || 0), 0) + legacyCount).toLocaleString()}
               </span>
@@ -447,9 +447,9 @@ export const TransitModule = () => {
                       ? "bg-primary text-primary-foreground border-primary"
                       : "bg-card text-muted-foreground border-border hover:bg-muted hover:text-foreground"
                   }`}
-                  title="Cajas recibidas antes de los carros — siguen aquí hasta que las reubiques."
+                  title={t("wms_legacy_title")}
                 >
-                  ⏸ Temporal (legacy)
+                  ⏸ {t("wms_legacy_tab")}
                   <span className="text-[10px] opacity-80 font-mono">{legacyCount.toLocaleString()}</span>
                 </button>
               )}
@@ -459,19 +459,19 @@ export const TransitModule = () => {
             <select
               value={activeCart && activeCart !== TRANSIT_LEGACY ? activeCart : ""}
               onChange={e => setActiveCart(e.target.value)}
-              title="Ir a cualquier carro"
+              title={t("wms_go_any_cart")}
               className="flex-shrink-0 px-3 py-1.5 rounded-md text-xs font-medium border border-dashed border-border bg-card text-muted-foreground hover:text-foreground transition-colors cursor-pointer focus:outline-none focus:border-ring"
             >
-              <option value="">Ir a carro…</option>
+              <option value="">{t("wms_go_cart")}</option>
               {cartInfo.map(c => (
                 <option key={c.name} value={c.name}>
-                  {c.name}{c.boxes ? ` · ${c.boxes} cajas` : " · vacío"}
+                  {c.name}{c.boxes ? ` · ${c.boxes} ${t("wms_boxes_lc")}` : ` · ${t("wms_empty_lc")}`}
                 </option>
               ))}
             </select>
 
             <span className="flex-shrink-0 text-xs font-mono text-muted-foreground/60">
-              {withStock}/{cartInfo.length} carros con stock
+              {t("wms_carts_with_stock", { a: withStock, b: cartInfo.length })}
             </span>
           </div>
         )
@@ -485,7 +485,7 @@ export const TransitModule = () => {
             type="text"
             value={search}
             onChange={e => setSearch(e.target.value)}
-            placeholder="Buscar LPN / estilo / color / SKU / descripción…"
+            placeholder={t("wms_transit_search_ph")}
             className="w-full pl-9 pr-9 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:border-primary/40"
           />
           {search && (
@@ -498,7 +498,7 @@ export const TransitModule = () => {
           type="text"
           value={customerFilter}
           onChange={e => setCustomerFilter(e.target.value)}
-          placeholder="Filtrar por cliente…"
+          placeholder={t("wms_filter_customer_ph")}
           className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:border-primary/40"
         />
       </div>
@@ -511,7 +511,7 @@ export const TransitModule = () => {
             <div className="flex items-center gap-2">
               <span className="flex items-center justify-center w-6 h-6 rounded-full bg-primary text-primary-foreground text-xs font-semibold">1</span>
               <span className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
-                <MapPin className="w-4 h-4" /> Escanea o selecciona la ubicación destino
+                <MapPin className="w-4 h-4" /> {t("wms_scan_select_dest")}
               </span>
             </div>
             <div className="flex flex-wrap items-center gap-3">
@@ -524,7 +524,7 @@ export const TransitModule = () => {
                   onChange={e => { setDestination(e.target.value.toUpperCase()); setShowLocDrop(true); }}
                   onFocus={() => setShowLocDrop(true)}
                   onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); confirmLocation(); } }}
-                  placeholder="Ubicación destino (ej. RP10-A26) — Enter para confirmar"
+                  placeholder={t("wms_dest_loc_enter_ph")}
                   className="w-full pl-9 pr-3 py-2 bg-background border border-input rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-ring/25 focus:border-ring transition-colors"
                   data-testid="putaway2-loc-scan"
                 />
@@ -549,7 +549,7 @@ export const TransitModule = () => {
                 disabled={!destination.trim()}
                 data-testid="putaway2-loc-confirm"
               >
-                <MapPin className="w-4 h-4" /> Confirmar ubicación
+                <MapPin className="w-4 h-4" /> {t("wms_confirm_location")}
               </Btn>
             </div>
           </div>
@@ -560,7 +560,7 @@ export const TransitModule = () => {
               <div className="flex items-center gap-3">
                 <CheckCircle2 className="w-5 h-5 text-emerald-600 dark:text-emerald-400 shrink-0" />
                 <div>
-                  <div className="text-xs font-medium text-muted-foreground">Ubicación destino</div>
+                  <div className="text-xs font-medium text-muted-foreground">{t("wms_dest_loc")}</div>
                   <div className="font-mono font-semibold text-emerald-600 dark:text-emerald-400 text-lg flex items-center gap-2">
                     <MapPin className="w-4 h-4" /> {lockedLocation}
                   </div>
@@ -571,14 +571,14 @@ export const TransitModule = () => {
                 disabled={moving}
                 className="text-xs font-medium text-primary hover:underline disabled:opacity-50"
               >
-                Cambiar ubicación
+                {t("wms_change_location")}
               </button>
             </div>
 
             <div className="flex items-center gap-2">
               <span className="flex items-center justify-center w-6 h-6 rounded-full bg-primary text-primary-foreground text-xs font-semibold">2</span>
               <span className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
-                <ScanLine className="w-4 h-4" /> Escanea las cajas para esta ubicación
+                <ScanLine className="w-4 h-4" /> {t("wms_scan_boxes_for_loc")}
               </span>
             </div>
 
@@ -590,14 +590,14 @@ export const TransitModule = () => {
                   type="text"
                   value={boxScan}
                   onChange={e => setBoxScan(e.target.value.toUpperCase())}
-                  placeholder="Escanea LPN de la caja (Enter)"
+                  placeholder={t("wms_scan_box_lpn_ph")}
                   autoComplete="off"
                   className="w-full pl-9 pr-3 py-2 bg-background border border-input rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-ring/25 focus:border-ring transition-colors"
                   data-testid="putaway2-box-scan"
                 />
               </form>
               <div className="text-xs font-medium text-muted-foreground tabular-nums">
-                {selected.size} caja(s) · {totalSelectedUnits.toLocaleString()} und
+                {t("wms_boxes_units_sel", { n: selected.size, units: totalSelectedUnits.toLocaleString() })}
               </div>
               <Btn
                 variant="primary"
@@ -606,7 +606,7 @@ export const TransitModule = () => {
                 data-testid="putaway2-finish"
               >
                 {moving ? <Loader2 className="w-4 h-4 animate-spin" /> : <ClipboardCheck className="w-4 h-4" />}
-                Terminar ({selected.size})
+                {t("wms_finish_n", { n: selected.size })}
               </Btn>
               {selected.size > 0 && (
                 <Btn
@@ -614,12 +614,12 @@ export const TransitModule = () => {
                   onClick={() => setSelected(new Set())}
                   disabled={moving}
                 >
-                  Limpiar
+                  {t("clear")}
                 </Btn>
               )}
             </div>
             <p className="text-xs text-muted-foreground/70">
-              También puedes hacer clic en las filas de abajo para agregar o quitar cajas del lote.
+              {t("wms_click_rows_hint")}
             </p>
           </div>
         )}
@@ -632,19 +632,19 @@ export const TransitModule = () => {
             <thead className="sticky top-0 z-10 bg-muted/50 border-b border-border">
               <tr>
                 <th className="w-10 p-3">
-                  <button onClick={toggleAll} className="text-muted-foreground hover:text-foreground" title="Seleccionar todo">
+                  <button onClick={toggleAll} className="text-muted-foreground hover:text-foreground" title={t("select_all")}>
                     {allSelected ? <CheckSquare className="w-4 h-4 text-primary" /> : someSelected ? <CheckSquare className="w-4 h-4 text-primary/50" /> : <Square className="w-4 h-4" />}
                   </button>
                 </th>
                 <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">LPN</th>
                 {!activeCart && (
-                  <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">Carro</th>
+                  <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">{t("wms_cart_col")}</th>
                 )}
-                <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">Cliente</th>
-                <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">Estilo / SKU</th>
-                <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">Color · Talla</th>
-                <th className="px-3 py-2.5 text-right text-xs font-semibold text-muted-foreground">Unidades</th>
-                <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">Recibida</th>
+                <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">{t("wms_label_customer")}</th>
+                <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">{t("wms_style_sku")}</th>
+                <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">{t("wms_color_size_col")}</th>
+                <th className="px-3 py-2.5 text-right text-xs font-semibold text-muted-foreground">{t("wms_label_units")}</th>
+                <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">{t("wms_received_f")}</th>
                 <th className="p-3 w-10"></th>
               </tr>
             </thead>
@@ -659,10 +659,10 @@ export const TransitModule = () => {
                 <tr>
                   <td colSpan={activeCart ? 8 : 9} className="py-16 text-center">
                     <p className="text-sm font-semibold text-foreground/80">
-                      {activeCart ? `${activeCart} vacío` : "Sin cajas en Putaway 2.0"}
+                      {activeCart ? `${activeCart} ${t("wms_empty_lc")}` : t("wms_no_transit_boxes")}
                     </p>
                     <p className="text-sm text-muted-foreground mt-1 max-w-md mx-auto">
-                      Cuando recibas mercancía con el botón "Recibir a Carro" en Receiving, las cajas aparecerán aquí esperando una ubicación física.
+                      {t("wms_no_transit_hint")}
                     </p>
                   </td>
                 </tr>
@@ -703,7 +703,7 @@ export const TransitModule = () => {
                         <button
                           onClick={() => openEdit(b)}
                           className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-                          title="Editar caja"
+                          title={t("wms_edit_box")}
                           data-testid={`transit-edit-${b.box_id}`}
                         >
                           <Edit3 className="w-3.5 h-3.5" />
@@ -725,7 +725,7 @@ export const TransitModule = () => {
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2 text-amber-600 dark:text-amber-400">
                 <AlertTriangle className="w-5 h-5" />
-                <h3 className="font-semibold text-sm">Confirmar ubicación</h3>
+                <h3 className="font-semibold text-sm">{t("wms_confirm_location")}</h3>
               </div>
               <button onClick={() => setShowWarning(false)} className="p-1 hover:bg-secondary rounded-lg transition-all" disabled={moving}>
                 <X className="w-5 h-5" />
@@ -733,13 +733,13 @@ export const TransitModule = () => {
             </div>
 
             <SoftAlert tone="warning">
-              Estás por ubicar <span className="font-semibold">{selected.size} caja(s)</span> ({totalSelectedUnits.toLocaleString()} unidades)
-              en <span className="font-semibold">{lockedLocation}</span>. Verifica que el material físico coincide antes de continuar — esta acción mueve el inventario.
+              {t("wms_about_to_locate")} <span className="font-semibold">{t("wms_boxes_n", { n: selected.size })}</span> ({totalSelectedUnits.toLocaleString()} {t("wms_units_lc")})
+              {t("wms_in_lc")} <span className="font-semibold">{lockedLocation}</span>. {t("wms_verify_material")}
             </SoftAlert>
 
             <div className="bg-muted/30 rounded-lg p-4 space-y-2 border border-border/60">
               <div className="flex items-center justify-between">
-                <div className="text-xs font-medium text-muted-foreground">Ubicación destino</div>
+                <div className="text-xs font-medium text-muted-foreground">{t("wms_dest_loc")}</div>
                 <div className="font-mono font-semibold">{lockedLocation}</div>
               </div>
               <div className="border-t border-border/60 pt-2 max-h-[160px] overflow-auto custom-scrollbar space-y-1.5 font-mono">
@@ -761,14 +761,14 @@ export const TransitModule = () => {
                 data-testid="putaway2-confirm"
               >
                 {moving ? <Loader2 className="w-4 h-4 animate-spin" /> : <ArrowRightLeft className="w-4 h-4" />}
-                Confirmar y ubicar
+                {t("wms_confirm_and_locate")}
               </Btn>
               <Btn
                 onClick={() => setShowWarning(false)}
                 disabled={moving}
                 className="flex-1"
               >
-                Cancelar
+                {t("cancel")}
               </Btn>
             </div>
           </div>
@@ -781,7 +781,7 @@ export const TransitModule = () => {
           <div className="bg-card border border-border rounded-lg w-full max-w-2xl max-h-[85vh] flex flex-col shadow-xl animate-in zoom-in-95 duration-150">
             <div className="flex items-center justify-between p-5 border-b border-border/20">
               <div className="min-w-0">
-                <h3 className="font-semibold text-sm">Editar caja</h3>
+                <h3 className="font-semibold text-sm">{t("wms_edit_box")}</h3>
                 <p className="text-xs text-muted-foreground font-mono truncate">
                   {editBox.box_id} · {editBox.style} · {editBox.color} / {editBox.size}
                 </p>
@@ -793,41 +793,41 @@ export const TransitModule = () => {
 
             <div className="flex-1 overflow-auto custom-scrollbar p-5 space-y-3">
               <p className="text-xs text-muted-foreground">
-                Los campos <span className="font-mono font-medium">style / sku / color / size / ubicación</span> no se editan aquí: usa el botón "Mover" para relocate, o elimina y vuelve a recibir si cambia el producto.
+                {t("wms_edit_box_note_1")} <span className="font-mono font-medium">style / sku / color / size / location</span> {t("wms_edit_box_note_2")}
               </p>
 
               <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                 <div>
-                  <label className="text-xs font-medium text-muted-foreground block mb-1">Cliente</label>
+                  <label className="text-xs font-medium text-muted-foreground block mb-1">{t("wms_label_customer")}</label>
                   <input value={editDraft.customer} onChange={e => setDraft('customer', e.target.value)} className="w-full px-3 py-2 bg-background border border-border rounded text-sm" />
                 </div>
                 <div>
-                  <label className="text-xs font-medium text-muted-foreground block mb-1">Fabricante</label>
+                  <label className="text-xs font-medium text-muted-foreground block mb-1">{t("manufacturer")}</label>
                   <input value={editDraft.manufacturer} onChange={e => setDraft('manufacturer', e.target.value)} className="w-full px-3 py-2 bg-background border border-border rounded text-sm" />
                 </div>
                 <div>
-                  <label className="text-xs font-medium text-muted-foreground block mb-1">Lote</label>
+                  <label className="text-xs font-medium text-muted-foreground block mb-1">{t("wms_lot_label")}</label>
                   <input value={editDraft.lot_number} onChange={e => setDraft('lot_number', e.target.value)} className="w-full px-3 py-2 bg-background border border-border rounded text-sm font-mono" />
                 </div>
               </div>
 
               <div>
-                <label className="text-xs font-medium text-muted-foreground block mb-1">Descripción</label>
+                <label className="text-xs font-medium text-muted-foreground block mb-1">{t("description")}</label>
                 <input value={editDraft.description} onChange={e => setDraft('description', e.target.value)} className="w-full px-3 py-2 bg-background border border-border rounded text-sm" />
               </div>
 
               <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                 <div>
-                  <label className="text-xs font-medium text-muted-foreground block mb-1">País de origen</label>
+                  <label className="text-xs font-medium text-muted-foreground block mb-1">{t("wms_label_coo")}</label>
                   <input value={editDraft.country_of_origin} onChange={e => setDraft('country_of_origin', e.target.value.toUpperCase())} className="w-full px-3 py-2 bg-background border border-border rounded text-sm font-mono" />
                 </div>
                 <div>
-                  <label className="text-xs font-medium text-muted-foreground block mb-1">Fabric / Contenido</label>
+                  <label className="text-xs font-medium text-muted-foreground block mb-1">{t("wms_fabric_content_col")}</label>
                   <input value={editDraft.fabric_content} onChange={e => setDraft('fabric_content', e.target.value)} className="w-full px-3 py-2 bg-background border border-border rounded text-sm" />
                 </div>
                 <div>
                   <label className="text-xs font-medium text-amber-600 dark:text-amber-400 block mb-1">
-                    Unidades <span title="Si cambias las unidades, el inventario se rebalancea automáticamente.">⚠</span>
+                    {t("wms_label_units")} <span title={t("wms_units_rebalance_title")}>⚠</span>
                   </label>
                   <input
                     type="number"
@@ -837,7 +837,7 @@ export const TransitModule = () => {
                     className="w-full px-3 py-2 bg-background border border-amber-500/40 rounded text-sm font-mono font-medium tabular-nums text-right"
                   />
                   <p className="text-xs text-muted-foreground mt-1">
-                    Actual: {editBox.units ?? editBox.qty ?? 0}
+                    {t("wms_current_label")} {editBox.units ?? editBox.qty ?? 0}
                     {Number(editDraft.units) !== (editBox.units ?? editBox.qty ?? 0) && (
                       <span className="text-amber-600 dark:text-amber-400 font-medium ml-1">
                         → {editDraft.units} ({Number(editDraft.units) - (editBox.units ?? editBox.qty ?? 0) >= 0 ? '+' : ''}{Number(editDraft.units) - (editBox.units ?? editBox.qty ?? 0)})
@@ -857,13 +857,13 @@ export const TransitModule = () => {
                 data-testid="transit-edit-save"
               >
                 {editSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-                Guardar
+                {t("save")}
               </Btn>
               <Btn
                 onClick={closeEdit}
                 disabled={editSaving}
               >
-                Cancelar
+                {t("cancel")}
               </Btn>
             </div>
           </div>

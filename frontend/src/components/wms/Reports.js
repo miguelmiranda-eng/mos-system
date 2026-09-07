@@ -1,9 +1,10 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import {
   Loader2, RefreshCw, Download, AlertTriangle, Clock, Users, History, PackageX,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { toast } from "sonner";
+import { useLang } from "../../contexts/LanguageContext";
 import { fetcher } from "./lib";
 import { Card, StatCard, SoftAlert, Btn, Chip, Th, EmptyState, TableShell, tableCls, cls } from "./ui";
 
@@ -11,11 +12,12 @@ import { Card, StatCard, SoftAlert, Btn, Chip, Th, EmptyState, TableShell, table
 // respondiendo a una pregunta distinta — pendiente hoy, productividad,
 // historial y excepciones. Todo se puede bajar a Excel.
 
+// Etiquetas por labelKey: se traducen en el render (constante de módulo, sin hooks).
 const TABS = [
-  { id: "pendientes", label: "Pendiente hoy", icon: Clock },
-  { id: "productividad", label: "Productividad", icon: Users },
-  { id: "historial", label: "Historial", icon: History },
-  { id: "excepciones", label: "Excepciones", icon: AlertTriangle },
+  { id: "pendientes", labelKey: "wms_rep_tab_pending", icon: Clock },
+  { id: "productividad", labelKey: "wms_rep_tab_productivity", icon: Users },
+  { id: "historial", labelKey: "wms_rep_tab_history", icon: History },
+  { id: "excepciones", labelKey: "wms_rep_tab_exceptions", icon: AlertTriangle },
 ];
 
 const hoy = () => new Date().toISOString().slice(0, 10);
@@ -38,7 +40,8 @@ const diasDesde = (iso) => {
   return isNaN(d) ? null : Math.floor((Date.now() - d.getTime()) / 86400000);
 };
 
-const bajar = (hojas, nombre) => {
+// `tr` = traductor (se recibe como argumento: esta función vive fuera del componente).
+const bajar = (hojas, nombre, tr) => {
   const wb = XLSX.utils.book_new();
   let algo = false;
   for (const [titulo, filas] of hojas) {
@@ -46,12 +49,16 @@ const bajar = (hojas, nombre) => {
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(filas), titulo.slice(0, 31));
     algo = true;
   }
-  if (!algo) { toast.error("No hay datos para exportar"); return; }
+  if (!algo) { toast.error(tr("wms_rep_no_export_data")); return; }
   XLSX.writeFile(wb, `${nombre}_${hoy()}.xlsx`);
-  toast.success("Exportado a Excel");
+  toast.success(tr("wms_rep_exported"));
 };
 
 export const ReportsModule = () => {
+  const { t } = useLang();
+  // La carga no debe re-correr al cambiar idioma: el traductor va por ref.
+  const tRef = useRef(t);
+  useEffect(() => { tRef.current = t; }, [t]);
   const [tab, setTab] = useState("pendientes");
   const [desde, setDesde] = useState(haceDias(30));
   const [hasta, setHasta] = useState(hoy());
@@ -76,7 +83,7 @@ export const ReportsModule = () => {
       setData(prev => ({ ...prev, [tab]: datos }));
     } catch (res) {
       const e = await res?.json?.().catch(() => ({})) || {};
-      toast.error(e.detail || "No se pudo cargar el reporte (¿permiso de supervisor?)");
+      toast.error(e.detail || tRef.current("wms_rep_load_err"));
     } finally { setLoading(false); }
   }, [tab, desde, hasta, customer, orden, operador]);
 
@@ -93,19 +100,19 @@ export const ReportsModule = () => {
                Style: b.style || "", Color: b.color || "", Talla: b.size || "",
                Unidades: b.units, Ubicacion: b.location || "", Recibida: fmt(b.created_at),
              }))],
-             ["Tickets abiertos", (d.picking?.tickets || []).map(t => ({
-               Ticket: t.ticket_id, Orden: t.order_number || "", Cliente: t.customer || "",
-               Style: t.style || "", Cantidad: t.total_pick_qty || 0, Estado: t.status || "",
-               Asignado: t.assigned_to_name || "(sin asignar)", Creado: fmt(t.created_at),
-               "Vence": fmt(t.sla_deadline),
-             }))]], "wms_pendiente");
+             ["Tickets abiertos", (d.picking?.tickets || []).map(tk => ({
+               Ticket: tk.ticket_id, Orden: tk.order_number || "", Cliente: tk.customer || "",
+               Style: tk.style || "", Cantidad: tk.total_pick_qty || 0, Estado: tk.status || "",
+               Asignado: tk.assigned_to_name || "(sin asignar)", Creado: fmt(tk.created_at),
+               "Vence": fmt(tk.sla_deadline),
+             }))]], "wms_pendiente", t);
     } else if (tab === "productividad") {
       bajar([["Por operador", (d.operadores || []).map(o => ({
                Operador: o.operador, Recibos: o.recibos, "Unidades recibidas": o.unidades_recibidas,
                "Putaway (eventos)": o.putaway_eventos, "Putaway (cajas)": o.putaway_cajas,
                "Tickets surtidos": o.tickets, "Unidades surtidas": o.unidades_surtidas,
              }))],
-             ["Por dia", d.por_dia]], "wms_productividad");
+             ["Por dia", d.por_dia]], "wms_productividad", t);
     } else if (tab === "historial") {
       bajar([["Recibos", (d.recibos || []).map(r => ({
                Fecha: fmt(r.created_at), Recibo: r.receiving_id, Cliente: r.customer || "",
@@ -114,26 +121,26 @@ export const ReportsModule = () => {
                ASN: r.asn_reference || "", Pais: r.country_of_origin || "",
                Ubicacion: r.inv_location || "", "Recibido por": r.received_by_name || "",
              }))],
-             ["Tickets", (d.tickets || []).map(t => ({
-               Creado: fmt(t.created_at), Ticket: t.ticket_id, Orden: t.order_number || "",
-               Cliente: t.customer || "", Style: t.style || "", Color: t.color || "",
-               Cantidad: t.total_pick_qty || 0, Estado: t.status || "",
-               Destino: t.destination || "", Picker: t.assigned_to_name || "",
-               Completado: t.completed_at ? fmt(t.completed_at) : "",
-             }))]], "wms_historial");
+             ["Tickets", (d.tickets || []).map(tk => ({
+               Creado: fmt(tk.created_at), Ticket: tk.ticket_id, Orden: tk.order_number || "",
+               Cliente: tk.customer || "", Style: tk.style || "", Color: tk.color || "",
+               Cantidad: tk.total_pick_qty || 0, Estado: tk.status || "",
+               Destino: tk.destination || "", Picker: tk.assigned_to_name || "",
+               Completado: tk.completed_at ? fmt(tk.completed_at) : "",
+             }))]], "wms_historial", t);
     } else {
       bajar([["Recibos forzados", (d.recibos_forzados || []).map(r => ({
                Fecha: fmt(r.created_at), Recibo: r.receiving_id, Excepcion: r.excepcion || "",
                Cliente: r.customer || "", Style: r.style || "", Unidades: r.total_units || 0,
                ASN: r.asn_reference || "", "Recibido por": r.received_by_name || "",
              }))],
-             ["Tickets fuera de SLA", (d.tickets_fuera_sla || []).map(t => ({
-               Ticket: t.ticket_id, Situacion: t.situacion || "", Orden: t.order_number || "",
-               Cliente: t.customer || "", Cantidad: t.total_pick_qty || 0,
-               Picker: t.assigned_to_name || "(sin asignar)", Creado: fmt(t.created_at),
-               Vencia: fmt(t.sla_deadline), Completado: t.completed_at ? fmt(t.completed_at) : "",
+             ["Tickets fuera de SLA", (d.tickets_fuera_sla || []).map(tk => ({
+               Ticket: tk.ticket_id, Situacion: tk.situacion || "", Orden: tk.order_number || "",
+               Cliente: tk.customer || "", Cantidad: tk.total_pick_qty || 0,
+               Picker: tk.assigned_to_name || "(sin asignar)", Creado: fmt(tk.created_at),
+               Vencia: fmt(tk.sla_deadline), Completado: tk.completed_at ? fmt(tk.completed_at) : "",
              }))],
-             ["Por persona", d.por_persona]], "wms_excepciones");
+             ["Por persona", d.por_persona]], "wms_excepciones", t);
     }
   };
 
@@ -143,48 +150,48 @@ export const ReportsModule = () => {
     <div className="space-y-5">
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
-          <h2 className="text-2xl font-bold tracking-tight">Reportes</h2>
-          <p className="text-sm text-muted-foreground mt-0.5">Recibos, putaway y pick tickets</p>
+          <h2 className="text-2xl font-bold tracking-tight">{t("wms_rep_title")}</h2>
+          <p className="text-sm text-muted-foreground mt-0.5">{t("wms_rep_subtitle")}</p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           {filtrosFecha && (
             <>
               <input type="date" value={desde} onChange={e => setDesde(e.target.value)}
-                className={`${cls.input} w-auto`} aria-label="Desde" />
-              <span className="text-sm text-muted-foreground">a</span>
+                className={`${cls.input} w-auto`} aria-label={t("wms_from")} />
+              <span className="text-sm text-muted-foreground">{t("wms_rep_date_sep")}</span>
               <input type="date" value={hasta} onChange={e => setHasta(e.target.value)}
-                className={`${cls.input} w-auto`} aria-label="Hasta" />
+                className={`${cls.input} w-auto`} aria-label={t("wms_to")} />
             </>
           )}
           {tab === "historial" && (
             <>
-              <input placeholder="Cliente…" value={customer} onChange={e => setCustomer(e.target.value)}
+              <input placeholder={t("wms_rep_customer_ph")} value={customer} onChange={e => setCustomer(e.target.value)}
                 className={`${cls.input} w-32`} />
-              <input placeholder="Orden…" value={orden} onChange={e => setOrden(e.target.value)}
+              <input placeholder={t("wms_rep_order_ph")} value={orden} onChange={e => setOrden(e.target.value)}
                 className={`${cls.input} w-32`} />
             </>
           )}
           {tab === "productividad" && (
-            <input placeholder="Operador…" value={operador} onChange={e => setOperador(e.target.value)}
+            <input placeholder={t("wms_rep_operator_ph")} value={operador} onChange={e => setOperador(e.target.value)}
               className={`${cls.input} w-36`} />
           )}
           <Btn onClick={load} disabled={loading}>
-            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />} Actualizar
+            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />} {t("wms_refresh")}
           </Btn>
           <Btn variant="primary" onClick={exportar} disabled={!d}>
-            <Download className="w-4 h-4" /> Exportar Excel
+            <Download className="w-4 h-4" /> {t("export_excel")}
           </Btn>
         </div>
       </div>
 
       <div className="flex gap-1 border-b border-border">
-        {TABS.map(t => {
-          const Icon = t.icon;
+        {TABS.map(tb => {
+          const Icon = tb.icon;
           return (
-            <button key={t.id} onClick={() => setTab(t.id)}
+            <button key={tb.id} onClick={() => setTab(tb.id)}
               className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors ${
-                tab === t.id ? "border-primary text-foreground" : "border-transparent text-muted-foreground hover:text-foreground"}`}>
-              <Icon className="w-4 h-4" /> {t.label}
+                tab === tb.id ? "border-primary text-foreground" : "border-transparent text-muted-foreground hover:text-foreground"}`}>
+              <Icon className="w-4 h-4" /> {t(tb.labelKey)}
             </button>
           );
         })}
@@ -196,40 +203,40 @@ export const ReportsModule = () => {
       {tab === "pendientes" && d && (
         <div className="space-y-4">
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-            <StatCard label="Cajas por guardar" value={num(d.putaway?.cajas)}
-              sub={`${num(d.putaway?.unidades)} unidades`} />
-            <StatCard label="Tickets abiertos" value={num(d.picking?.abiertos)} />
-            <StatCard label="Tickets vencidos" value={num(d.picking?.vencidos)}
-              sub={d.picking?.vencidos ? "fuera de plazo" : "ninguno"} />
-            <StatCard label="Recibido hoy" value={num(d.recibos_hoy?.unidades)}
-              sub={`${num(d.recibos_hoy?.recibos)} recibos`} />
+            <StatCard label={t("wms_rep_boxes_to_putaway")} value={num(d.putaway?.cajas)}
+              sub={t("wms_rep_units_n", { n: num(d.putaway?.unidades) })} />
+            <StatCard label={t("wms_rep_open_tickets")} value={num(d.picking?.abiertos)} />
+            <StatCard label={t("wms_rep_overdue_tickets")} value={num(d.picking?.vencidos)}
+              sub={d.picking?.vencidos ? t("wms_rep_overdue_sub") : t("wms_rep_none_sub")} />
+            <StatCard label={t("wms_rep_received_today")} value={num(d.recibos_hoy?.unidades)}
+              sub={t("wms_rep_receipts_n", { n: num(d.recibos_hoy?.recibos) })} />
           </div>
 
           {d.picking?.vencidos > 0 && (
-            <SoftAlert tone="danger" title={`${d.picking.vencidos} ticket(s) fuera de plazo`}>
-              Ya pasaron su fecha compromiso y siguen sin completarse.
+            <SoftAlert tone="danger" title={t("wms_rep_overdue_alert_title", { n: d.picking.vencidos })}>
+              {t("wms_rep_overdue_alert_body")}
             </SoftAlert>
           )}
 
           <Card className="overflow-hidden">
             <div className="px-4 py-3 border-b border-border flex items-center gap-2">
               <PackageX className="w-4 h-4 text-muted-foreground" />
-              <span className="text-sm font-semibold">Putaway pendiente por antigüedad</span>
-              <span className="text-xs text-muted-foreground">— una caja recibida y no guardada es inventario que el piso no encuentra</span>
+              <span className="text-sm font-semibold">{t("wms_rep_putaway_by_age")}</span>
+              <span className="text-xs text-muted-foreground">{t("wms_rep_putaway_by_age_hint")}</span>
             </div>
             <TableShell>
               <thead className={tableCls.thead}>
-                <tr><Th>Antigüedad</Th><Th right>Cajas</Th><Th right>Unidades</Th></tr>
+                <tr><Th>{t("wms_rep_age")}</Th><Th right>{t("wms_boxes")}</Th><Th right>{t("wms_label_units")}</Th></tr>
               </thead>
               <tbody>
-                {(d.putaway?.por_antiguedad || []).map(t => (
-                  <tr key={t.tramo} className={tableCls.row}>
+                {(d.putaway?.por_antiguedad || []).map(tm => (
+                  <tr key={tm.tramo} className={tableCls.row}>
                     <td className={cls.td}>
-                      {t.tramo}
-                      {t.tramo === "más de 7 días" && t.cajas > 0 && <Chip tone="danger" className="ml-2">atención</Chip>}
+                      {tm.tramo}
+                      {tm.tramo === "más de 7 días" && tm.cajas > 0 && <Chip tone="danger" className="ml-2">{t("wms_rep_attention")}</Chip>}
                     </td>
-                    <td className={`${cls.td} text-right tabular-nums font-semibold`}>{num(t.cajas)}</td>
-                    <td className={`${cls.td} text-right tabular-nums`}>{num(t.unidades)}</td>
+                    <td className={`${cls.td} text-right tabular-nums font-semibold`}>{num(tm.cajas)}</td>
+                    <td className={`${cls.td} text-right tabular-nums`}>{num(tm.unidades)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -237,13 +244,13 @@ export const ReportsModule = () => {
           </Card>
 
           <Card className="overflow-hidden">
-            <div className="px-4 py-3 border-b border-border text-sm font-semibold">Las más viejas sin guardar</div>
+            <div className="px-4 py-3 border-b border-border text-sm font-semibold">{t("wms_rep_oldest_unstored")}</div>
             {!d.putaway?.mas_viejas?.length ? (
-              <EmptyState art="done" title="Nada pendiente" hint="Todas las cajas recibidas están guardadas." />
+              <EmptyState art="done" title={t("wms_rep_nothing_pending")} hint={t("wms_rep_all_stored")} />
             ) : (
               <TableShell maxH="max-h-[40vh]">
                 <thead className={tableCls.thead}>
-                  <tr><Th>Caja</Th><Th right>Días</Th><Th>Cliente</Th><Th>Material</Th><Th right>Unidades</Th><Th>Recibida</Th></tr>
+                  <tr><Th>{t("wms_box")}</Th><Th right>{t("wms_rep_days")}</Th><Th>{t("client")}</Th><Th>{t("wms_rep_material")}</Th><Th right>{t("wms_label_units")}</Th><Th>{t("wms_rep_received")}</Th></tr>
                 </thead>
                 <tbody>
                   {d.putaway.mas_viejas.map(b => {
@@ -268,30 +275,30 @@ export const ReportsModule = () => {
 
           <Card className="overflow-hidden">
             <div className="px-4 py-3 border-b border-border text-sm font-semibold">
-              Tickets abiertos {d.picking?.sin_asignar ? `— ${d.picking.sin_asignar} sin asignar` : ""}
+              {t("wms_rep_open_tickets")} {d.picking?.sin_asignar ? t("wms_rep_unassigned_n", { n: d.picking.sin_asignar }) : ""}
             </div>
             {!d.picking?.tickets?.length ? (
-              <EmptyState art="done" title="Sin tickets abiertos" hint="Todo lo pedido está surtido." />
+              <EmptyState art="done" title={t("wms_rep_no_open_tickets")} hint={t("wms_rep_all_picked")} />
             ) : (
               <TableShell maxH="max-h-[45vh]">
                 <thead className={tableCls.thead}>
-                  <tr><Th>Ticket</Th><Th>Orden</Th><Th>Cliente</Th><Th right>Cantidad</Th><Th>Picker</Th><Th>Vence</Th></tr>
+                  <tr><Th>{t("wms_rep_ticket")}</Th><Th>{t("order")}</Th><Th>{t("client")}</Th><Th right>{t("quantity")}</Th><Th>{t("wms_rep_picker")}</Th><Th>{t("wms_rep_due")}</Th></tr>
                 </thead>
                 <tbody>
-                  {d.picking.tickets.map(t => {
-                    const vencido = t.sla_deadline && t.sla_deadline < (d.generado || "");
+                  {d.picking.tickets.map(tk => {
+                    const vencido = tk.sla_deadline && tk.sla_deadline < (d.generado || "");
                     return (
-                      <tr key={t.ticket_id} className={tableCls.row}>
-                        <td className={`${cls.td} font-mono`}>{t.ticket_id}</td>
-                        <td className={cls.td}>{t.order_number || "—"}</td>
-                        <td className={cls.td}>{t.customer || "—"}</td>
-                        <td className={`${cls.td} text-right tabular-nums`}>{num(t.total_pick_qty)}</td>
+                      <tr key={tk.ticket_id} className={tableCls.row}>
+                        <td className={`${cls.td} font-mono`}>{tk.ticket_id}</td>
+                        <td className={cls.td}>{tk.order_number || "—"}</td>
+                        <td className={cls.td}>{tk.customer || "—"}</td>
+                        <td className={`${cls.td} text-right tabular-nums`}>{num(tk.total_pick_qty)}</td>
                         <td className={cls.td}>
-                          {t.assigned_to_name || <Chip tone="warning">sin asignar</Chip>}
+                          {tk.assigned_to_name || <Chip tone="warning">{t("wms_rep_unassigned_chip")}</Chip>}
                         </td>
                         <td className={cls.td}>
-                          {vencido ? <Chip tone="danger">venció {fmtDia(t.sla_deadline)}</Chip>
-                                   : <span className="text-xs text-muted-foreground">{fmt(t.sla_deadline)}</span>}
+                          {vencido ? <Chip tone="danger">{t("wms_rep_overdue_on", { date: fmtDia(tk.sla_deadline) })}</Chip>
+                                   : <span className="text-xs text-muted-foreground">{fmt(tk.sla_deadline)}</span>}
                         </td>
                       </tr>
                     );
@@ -307,17 +314,17 @@ export const ReportsModule = () => {
       {tab === "productividad" && d && (
         <div className="space-y-4">
           <Card className="overflow-hidden">
-            <div className="px-4 py-3 border-b border-border text-sm font-semibold">Por operador</div>
+            <div className="px-4 py-3 border-b border-border text-sm font-semibold">{t("wms_rep_by_operator")}</div>
             {!d.operadores?.length ? (
-              <EmptyState art="clipboard" title="Sin actividad en el periodo" hint="Prueba con otro rango de fechas." />
+              <EmptyState art="clipboard" title={t("wms_rep_no_activity")} hint={t("wms_rep_try_other_range")} />
             ) : (
               <TableShell maxH="max-h-[55vh]">
                 <thead className={tableCls.thead}>
                   <tr>
-                    <Th>Operador</Th>
-                    <Th right>Recibos</Th><Th right>Unid. recibidas</Th>
-                    <Th right>Putaway (cajas)</Th>
-                    <Th right>Tickets</Th><Th right>Unid. surtidas</Th>
+                    <Th>{t("wms_rep_operator")}</Th>
+                    <Th right>{t("wms_rep_receipts")}</Th><Th right>{t("wms_rep_units_received_short")}</Th>
+                    <Th right>{t("wms_rep_putaway_boxes")}</Th>
+                    <Th right>{t("wms_rep_tickets")}</Th><Th right>{t("wms_rep_units_picked_short")}</Th>
                   </tr>
                 </thead>
                 <tbody>
@@ -338,10 +345,10 @@ export const ReportsModule = () => {
 
           {d.por_dia?.length > 0 && (
             <Card className="overflow-hidden">
-              <div className="px-4 py-3 border-b border-border text-sm font-semibold">Por día</div>
+              <div className="px-4 py-3 border-b border-border text-sm font-semibold">{t("wms_rep_by_day")}</div>
               <TableShell maxH="max-h-[40vh]">
                 <thead className={tableCls.thead}>
-                  <tr><Th>Día</Th><Th right>Recibos</Th><Th right>Tickets completados</Th></tr>
+                  <tr><Th>{t("wms_rep_day")}</Th><Th right>{t("wms_rep_receipts")}</Th><Th right>{t("wms_rep_tickets_completed")}</Th></tr>
                 </thead>
                 <tbody>
                   {d.por_dia.map(x => (
@@ -362,20 +369,20 @@ export const ReportsModule = () => {
       {tab === "historial" && d && (
         <div className="space-y-4">
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-            <StatCard label="Recibos" value={num(d.totales?.recibos)} />
-            <StatCard label="Unidades recibidas" value={num(d.totales?.unidades_recibidas)} />
-            <StatCard label="Tickets" value={num(d.totales?.tickets)} />
-            <StatCard label="Unidades surtidas" value={num(d.totales?.unidades_surtidas)} sub="sólo completados" />
+            <StatCard label={t("wms_rep_receipts")} value={num(d.totales?.recibos)} />
+            <StatCard label={t("wms_rep_units_received")} value={num(d.totales?.unidades_recibidas)} />
+            <StatCard label={t("wms_rep_tickets")} value={num(d.totales?.tickets)} />
+            <StatCard label={t("wms_rep_units_picked")} value={num(d.totales?.unidades_surtidas)} sub={t("wms_rep_only_completed")} />
           </div>
 
           <Card className="overflow-hidden">
             <div className="px-4 py-3 border-b border-border text-sm font-semibold">
-              Entradas — recibos {d.recibos?.length ? `(${d.recibos.length})` : ""}
+              {t("wms_rep_inbound_receipts")} {d.recibos?.length ? `(${d.recibos.length})` : ""}
             </div>
-            {!d.recibos?.length ? <EmptyState art={false} title="Sin recibos en el periodo" /> : (
+            {!d.recibos?.length ? <EmptyState art={false} title={t("wms_rep_no_receipts_period")} /> : (
               <TableShell maxH="max-h-[45vh]">
                 <thead className={tableCls.thead}>
-                  <tr><Th>Fecha</Th><Th>Cliente</Th><Th>Material</Th><Th right>Unidades</Th><Th>ASN</Th><Th>Recibió</Th></tr>
+                  <tr><Th>{t("date")}</Th><Th>{t("client")}</Th><Th>{t("wms_rep_material")}</Th><Th right>{t("wms_label_units")}</Th><Th>ASN</Th><Th>{t("wms_rep_received_by")}</Th></tr>
                 </thead>
                 <tbody>
                   {d.recibos.map(r => (
@@ -395,25 +402,25 @@ export const ReportsModule = () => {
 
           <Card className="overflow-hidden">
             <div className="px-4 py-3 border-b border-border text-sm font-semibold">
-              Salidas — pick tickets {d.tickets?.length ? `(${d.tickets.length})` : ""}
+              {t("wms_rep_outbound_tickets")} {d.tickets?.length ? `(${d.tickets.length})` : ""}
             </div>
-            {!d.tickets?.length ? <EmptyState art={false} title="Sin tickets en el periodo" /> : (
+            {!d.tickets?.length ? <EmptyState art={false} title={t("wms_rep_no_tickets_period")} /> : (
               <TableShell maxH="max-h-[45vh]">
                 <thead className={tableCls.thead}>
-                  <tr><Th>Creado</Th><Th>Ticket</Th><Th>Orden</Th><Th>Cliente</Th><Th right>Cantidad</Th><Th>Estado</Th><Th>Picker</Th></tr>
+                  <tr><Th>{t("wms_rep_created")}</Th><Th>{t("wms_rep_ticket")}</Th><Th>{t("order")}</Th><Th>{t("client")}</Th><Th right>{t("quantity")}</Th><Th>{t("status")}</Th><Th>{t("wms_rep_picker")}</Th></tr>
                 </thead>
                 <tbody>
-                  {d.tickets.map(t => (
-                    <tr key={t.ticket_id} className={tableCls.row}>
-                      <td className={`${cls.td} text-xs text-muted-foreground`}>{fmt(t.created_at)}</td>
-                      <td className={`${cls.td} font-mono`}>{t.ticket_id}</td>
-                      <td className={cls.td}>{t.order_number || "—"}</td>
-                      <td className={cls.td}>{t.customer || "—"}</td>
-                      <td className={`${cls.td} text-right tabular-nums`}>{num(t.total_pick_qty)}</td>
+                  {d.tickets.map(tk => (
+                    <tr key={tk.ticket_id} className={tableCls.row}>
+                      <td className={`${cls.td} text-xs text-muted-foreground`}>{fmt(tk.created_at)}</td>
+                      <td className={`${cls.td} font-mono`}>{tk.ticket_id}</td>
+                      <td className={cls.td}>{tk.order_number || "—"}</td>
+                      <td className={cls.td}>{tk.customer || "—"}</td>
+                      <td className={`${cls.td} text-right tabular-nums`}>{num(tk.total_pick_qty)}</td>
                       <td className={cls.td}>
-                        {t.status === "completed" ? <Chip tone="success">completado</Chip> : <Chip>{t.status || "—"}</Chip>}
+                        {tk.status === "completed" ? <Chip tone="success">{t("wms_rep_completed_chip")}</Chip> : <Chip>{tk.status || "—"}</Chip>}
                       </td>
-                      <td className={cls.td}>{t.assigned_to_name || "—"}</td>
+                      <td className={cls.td}>{tk.assigned_to_name || "—"}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -427,24 +434,23 @@ export const ReportsModule = () => {
       {tab === "excepciones" && d && (
         <div className="space-y-4">
           <div className="grid grid-cols-2 gap-3">
-            <StatCard label="Recibos forzados" value={num(d.totales?.recibos_forzados)}
-              sub="duplicados, sin UPC o fuera de tolerancia" />
-            <StatCard label="Tickets fuera de plazo" value={num(d.totales?.tickets_fuera_sla)} />
+            <StatCard label={t("wms_rep_forced_receipts")} value={num(d.totales?.recibos_forzados)}
+              sub={t("wms_rep_forced_sub")} />
+            <StatCard label={t("wms_rep_tickets_past_due")} value={num(d.totales?.tickets_fuera_sla)} />
           </div>
 
           {(d.totales?.recibos_forzados > 0 || d.totales?.tickets_fuera_sla > 0) && (
-            <SoftAlert tone="warning" title="Cada excepción se autorizó por una razón">
-              El punto no es una en particular, sino si se están volviendo costumbre en la misma
-              persona, cliente o turno.
+            <SoftAlert tone="warning" title={t("wms_rep_exc_alert_title")}>
+              {t("wms_rep_exc_alert_body")}
             </SoftAlert>
           )}
 
           <Card className="overflow-hidden">
-            <div className="px-4 py-3 border-b border-border text-sm font-semibold">Recibos forzados</div>
-            {!d.recibos_forzados?.length ? <EmptyState art={false} title="Ninguno en el periodo" /> : (
+            <div className="px-4 py-3 border-b border-border text-sm font-semibold">{t("wms_rep_forced_receipts")}</div>
+            {!d.recibos_forzados?.length ? <EmptyState art={false} title={t("wms_rep_none_in_period")} /> : (
               <TableShell maxH="max-h-[40vh]">
                 <thead className={tableCls.thead}>
-                  <tr><Th>Fecha</Th><Th>Excepción</Th><Th>Cliente</Th><Th>Material</Th><Th right>Unidades</Th><Th>Recibió</Th></tr>
+                  <tr><Th>{t("date")}</Th><Th>{t("wms_rep_exception")}</Th><Th>{t("client")}</Th><Th>{t("wms_rep_material")}</Th><Th right>{t("wms_label_units")}</Th><Th>{t("wms_rep_received_by")}</Th></tr>
                 </thead>
                 <tbody>
                   {d.recibos_forzados.map(r => (
@@ -463,24 +469,24 @@ export const ReportsModule = () => {
           </Card>
 
           <Card className="overflow-hidden">
-            <div className="px-4 py-3 border-b border-border text-sm font-semibold">Tickets fuera de plazo</div>
-            {!d.tickets_fuera_sla?.length ? <EmptyState art={false} title="Ninguno en el periodo" /> : (
+            <div className="px-4 py-3 border-b border-border text-sm font-semibold">{t("wms_rep_tickets_past_due")}</div>
+            {!d.tickets_fuera_sla?.length ? <EmptyState art={false} title={t("wms_rep_none_in_period")} /> : (
               <TableShell maxH="max-h-[40vh]">
                 <thead className={tableCls.thead}>
-                  <tr><Th>Ticket</Th><Th>Situación</Th><Th>Orden</Th><Th>Cliente</Th><Th right>Cantidad</Th><Th>Picker</Th><Th>Vencía</Th></tr>
+                  <tr><Th>{t("wms_rep_ticket")}</Th><Th>{t("wms_rep_situation")}</Th><Th>{t("order")}</Th><Th>{t("client")}</Th><Th right>{t("quantity")}</Th><Th>{t("wms_rep_picker")}</Th><Th>{t("wms_rep_was_due")}</Th></tr>
                 </thead>
                 <tbody>
-                  {d.tickets_fuera_sla.map(t => (
-                    <tr key={t.ticket_id} className={tableCls.row}>
-                      <td className={`${cls.td} font-mono`}>{t.ticket_id}</td>
+                  {d.tickets_fuera_sla.map(tk => (
+                    <tr key={tk.ticket_id} className={tableCls.row}>
+                      <td className={`${cls.td} font-mono`}>{tk.ticket_id}</td>
                       <td className={cls.td}>
-                        <Chip tone={t.situacion === "completado tarde" ? "warning" : "danger"}>{t.situacion}</Chip>
+                        <Chip tone={tk.situacion === "completado tarde" ? "warning" : "danger"}>{tk.situacion}</Chip>
                       </td>
-                      <td className={cls.td}>{t.order_number || "—"}</td>
-                      <td className={cls.td}>{t.customer || "—"}</td>
-                      <td className={`${cls.td} text-right tabular-nums`}>{num(t.total_pick_qty)}</td>
-                      <td className={cls.td}>{t.assigned_to_name || "(sin asignar)"}</td>
-                      <td className={`${cls.td} text-xs text-muted-foreground`}>{fmt(t.sla_deadline)}</td>
+                      <td className={cls.td}>{tk.order_number || "—"}</td>
+                      <td className={cls.td}>{tk.customer || "—"}</td>
+                      <td className={`${cls.td} text-right tabular-nums`}>{num(tk.total_pick_qty)}</td>
+                      <td className={cls.td}>{tk.assigned_to_name || `(${t("wms_rep_unassigned_chip")})`}</td>
+                      <td className={`${cls.td} text-xs text-muted-foreground`}>{fmt(tk.sla_deadline)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -490,10 +496,10 @@ export const ReportsModule = () => {
 
           {d.por_persona?.length > 0 && (
             <Card className="overflow-hidden">
-              <div className="px-4 py-3 border-b border-border text-sm font-semibold">Concentración por persona</div>
+              <div className="px-4 py-3 border-b border-border text-sm font-semibold">{t("wms_rep_by_person")}</div>
               <TableShell maxH="max-h-[35vh]">
                 <thead className={tableCls.thead}>
-                  <tr><Th>Persona</Th><Th right>Recibos forzados</Th><Th right>Tickets tarde</Th></tr>
+                  <tr><Th>{t("wms_rep_person")}</Th><Th right>{t("wms_rep_forced_receipts")}</Th><Th right>{t("wms_rep_late_tickets")}</Th></tr>
                 </thead>
                 <tbody>
                   {d.por_persona.map(p => (

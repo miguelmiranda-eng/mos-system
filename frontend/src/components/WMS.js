@@ -37,7 +37,7 @@ import { TrazabilidadModule } from "./wms/Trazabilidad";
 import { ReconciliationModule } from "./wms/Reconciliation";
 import IncidentsModule from "./wms/Incidents";
 import ReportsModule from "./wms/Reports";
-import { TopNav } from "./wms/TopNav";
+import { TopNav, LangToggle } from "./wms/TopNav";
 import { buildModules, filterModules, groupModules, badgeOf } from "./wms/modules";
 
 // Re-export useWms so external consumers keep the same import path
@@ -234,15 +234,16 @@ export default function WMS() {
     const espera = sawBusyRef.current
       ? 250
       : Math.max(250, 700 - (Date.now() - switchStartRef.current));
-    const t = setTimeout(() => setModuleSwitching(false), espera);
-    return () => clearTimeout(t);
+    const timer = setTimeout(() => setModuleSwitching(false), espera);
+    return () => clearTimeout(timer);
   }, [moduleSwitching, httpBusyRaw]);
 
   // La lista y su reparto en grupos viven en wms/modules.js — la barra
   // superior, el sidebar y (fase 2) la paleta ⌘K consumen la misma fuente.
   const MODULES = useMemo(() => buildModules(t), [t]);
   const visibleModules = useMemo(() => filterModules(MODULES, currentUser, moduleLevels), [MODULES, currentUser, moduleLevels]);
-  const navGroups = useMemo(() => groupModules(visibleModules), [visibleModules]);
+  // `t` va en groupModules para que los 5 grupos del menú salgan en el idioma activo.
+  const navGroups = useMemo(() => groupModules(visibleModules, t), [visibleModules, t]);
 
   // Bandera de la fase 1: la barra superior es el default; para volver al
   // sidebar basta `localStorage.setItem('mos_wms_nav', 'side')` y recargar.
@@ -344,6 +345,7 @@ export default function WMS() {
             <Warehouse className="w-5 h-5 text-primary" /> MOS <span className="text-primary not-italic ml-0.5">WMS</span>
           </span>
           <div className="flex items-center gap-2">
+            <LangToggle />
             <button onClick={handleLogout} title={t('logout')}
               className="flex items-center gap-2 px-3 py-2 rounded-xl bg-destructive/10 hover:bg-destructive/20 text-destructive/80 hover:text-destructive transition-all border border-destructive/20">
               <LogOut className="w-4 h-4" /> <span className="text-xs font-medium">{t('wms_exit')}</span>
@@ -554,6 +556,7 @@ export default function WMS() {
         </nav>
 
         <div className="p-3 border-t border-border/40 space-y-2">
+          <LangToggle className="w-full justify-center" />
           {canPush && pushOn !== null && (
             <button
               onClick={togglePush}

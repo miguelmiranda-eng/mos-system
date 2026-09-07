@@ -159,7 +159,7 @@ export const useWmsCatalogs = () => {
     _loadCatalogs().then(sync);
     return () => { alive = false; _catSubs.delete(sync); };
   }, []);
-  const vals = (t) => (cat[t] || []).map(x => String(x?.value ?? x ?? '').trim()).filter(Boolean);
+  const vals = (type) => (cat[type] || []).map(x => String(x?.value ?? x ?? '').trim()).filter(Boolean);
   return {
     customers: vals('customers'), colors: vals('colors'), styles: vals('styles'),
     sizes: vals('sizes'), descriptions: vals('descriptions'),

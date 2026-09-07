@@ -10,11 +10,13 @@ import { CalendarDays, Factory, CheckCircle, Archive } from 'lucide-react';
  * Lo que se guarda en la base es solo la pertenencia (qué tablero va en qué
  * sector). El nombre y el icono viven aquí: son cosa de la interfaz, no datos.
  */
+// `labelKey` es la clave del diccionario i18n (se traduce al render con t());
+// `label` queda como respaldo en español para quien no tenga el traductor a mano.
 export const SECTOR_META = [
-  { id: 'programacion', label: 'Programación', icon: CalendarDays },
-  { id: 'produccion',   label: 'Producción',   icon: Factory },
-  { id: 'completados',  label: 'Completados',  icon: CheckCircle },
-  { id: 'old',          label: 'Old',          icon: Archive },
+  { id: 'programacion', label: 'Programación', labelKey: 'sector_programacion', icon: CalendarDays },
+  { id: 'produccion',   label: 'Producción',   labelKey: 'sector_produccion',   icon: Factory },
+  { id: 'completados',  label: 'Completados',  labelKey: 'sector_completados',  icon: CheckCircle },
+  { id: 'old',          label: 'Old',          labelKey: 'sector_old',          icon: Archive },
 ];
 
 // Reparto inicial. Se usa mientras no haya nada guardado, y es lo que restaura

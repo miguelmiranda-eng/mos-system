@@ -29,10 +29,10 @@ export const DirectedWorkModule = () => {
         if (res.task.task_type === 'cross_dock') setDest('Produccion');
       } else {
         setTask(null);
-        toast.info(t('wms_no_tasks') || 'No hay tareas pendientes');
+        toast.info(t('wms_no_tasks'));
       }
     } catch (e) {
-      toast.error('Error fetching task');
+      toast.error(t('wms_dw_fetch_err'));
     } finally {
       setLoading(false);
     }
@@ -41,11 +41,11 @@ export const DirectedWorkModule = () => {
   const handleComplete = async () => {
     if (!task) return;
     if (task.lpn_id && scan !== task.lpn_id) {
-      toast.error(t('wms_scan_mismatch') || 'El LPN escaneado no coincide');
+      toast.error(t('wms_scan_mismatch'));
       return;
     }
     if (task.task_type === 'putaway' && !dest) {
-      toast.error(t('wms_dest_req') || 'Ubicacion de destino requerida');
+      toast.error(t('wms_dest_req'));
       return;
     }
 
@@ -56,16 +56,16 @@ export const DirectedWorkModule = () => {
         destination_location: dest
       });
       if (resp.ok) {
-        toast.success(t('wms_task_done') || 'Tarea completada');
+        toast.success(t('wms_task_done'));
         setTask(null);
         // Refresh badges to show progress
         refreshBadges();
       } else {
         const err = await resp.json();
-        toast.error(err.detail || 'Error completing task');
+        toast.error(err.detail || t('wms_dw_complete_err'));
       }
     } catch (e) {
-      toast.error('Connection error');
+      toast.error(t('wms_conn_err'));
     } finally {
       setCompleting(false);
     }
@@ -75,8 +75,8 @@ export const DirectedWorkModule = () => {
     return (
       <div className="flex flex-col items-center justify-center py-20 space-y-6">
         <div className="text-center">
-          <h2 className="text-2xl font-bold tracking-tight text-foreground">{t('wms_directed_work') || 'Trabajo Dirigido'}</h2>
-          <p className="text-sm text-muted-foreground mt-0.5">{t('wms_ready_hint') || 'Listo para recibir instrucciones'}</p>
+          <h2 className="text-2xl font-bold tracking-tight text-foreground">{t('wms_directed_work')}</h2>
+          <p className="text-sm text-muted-foreground mt-0.5">{t('wms_ready_hint')}</p>
         </div>
         <button
           onClick={getTask}
@@ -84,7 +84,7 @@ export const DirectedWorkModule = () => {
           className="px-6 py-3 bg-primary text-primary-foreground rounded-md text-base font-medium hover:opacity-90 transition-colors disabled:opacity-50 disabled:pointer-events-none flex items-center gap-2"
         >
           {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <ScanLine className="w-5 h-5" />}
-          {t('wms_get_task') || 'Pedir Siguiente Tarea'}
+          {t('wms_get_task')}
         </button>
       </div>
     );
@@ -101,7 +101,7 @@ export const DirectedWorkModule = () => {
       }`}>
         {task.priority === 'HOT' && (
           <div className="absolute top-4 right-4 px-2 py-0.5 rounded-md border text-xs font-medium bg-red-50 text-red-700 border-red-200 dark:bg-red-500/10 dark:text-red-300 dark:border-red-500/25 z-10">
-            {t('wms_priority_hot') || 'PRIORIDAD CRITICA'}
+            {t('wms_priority_hot')}
           </div>
         )}
 
@@ -119,16 +119,16 @@ export const DirectedWorkModule = () => {
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6 text-center md:text-left">
           <div className="bg-muted/40 p-4 rounded-lg border border-border/60">
-            <span className="text-xs font-medium text-muted-foreground block mb-1">Origen / LPN</span>
+            <span className="text-xs font-medium text-muted-foreground block mb-1">{t('wms_dw_origin_lpn')}</span>
             <div className="text-xl font-semibold font-mono">{task.lpn_id}</div>
             <div className="text-xs text-foreground/80 mt-1 truncate">{task.lpn_details?.sku}</div>
           </div>
           <div className="bg-muted/40 p-4 rounded-lg border border-border/60">
-            <span className="text-xs font-medium text-muted-foreground block mb-1">Ubicacion Destino</span>
+            <span className="text-xs font-medium text-muted-foreground block mb-1">{t('wms_dw_dest_loc')}</span>
             <div className="text-xl font-semibold font-mono">
-              {isCrossDock ? 'PRODUCCION' : (task.context?.suggested_zone || 'ZONA A-Z')}
+              {isCrossDock ? 'PRODUCCION' : (task.context?.suggested_zone || t('wms_dw_zone_any'))}
             </div>
-            <div className="text-xs text-muted-foreground mt-1">{t('wms_suggested_hint') || 'Destino guiado por sistema'}</div>
+            <div className="text-xs text-muted-foreground mt-1">{t('wms_suggested_hint')}</div>
           </div>
         </div>
 
@@ -137,7 +137,7 @@ export const DirectedWorkModule = () => {
             <ScanLine className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
             <input
               autoFocus
-              placeholder="ESCANEAR LPN PARA VALIDAR"
+              placeholder={t('wms_dw_scan_placeholder')}
               value={scan}
               onChange={e => setScan(cleanScan(e.target.value))}
               className="w-full pl-12 pr-4 py-4 bg-card border border-input rounded-lg focus:outline-none focus:ring-2 focus:ring-ring/25 focus:border-ring text-lg font-mono transition-colors text-center placeholder:text-muted-foreground/60"
@@ -152,7 +152,7 @@ export const DirectedWorkModule = () => {
                 onChange={e => setDest(e.target.value)}
                 className="w-full pl-12 pr-4 py-4 bg-card border border-input rounded-lg focus:outline-none focus:ring-2 focus:ring-ring/25 focus:border-ring text-lg appearance-none transition-colors text-center"
               >
-                <option value="">UBICACION FINAL</option>
+                <option value="">{t('wms_dw_final_loc')}</option>
                 {locations.map(l => <option key={l.location_id} value={l.name}>{l.name}</option>)}
               </select>
             </div>
@@ -164,14 +164,14 @@ export const DirectedWorkModule = () => {
             className="w-full py-4 bg-primary text-primary-foreground rounded-lg text-base font-semibold transition-colors hover:opacity-90 disabled:opacity-50 disabled:pointer-events-none flex items-center justify-center gap-2"
           >
             {completing ? <Loader2 className="w-5 h-5 animate-spin" /> : <CheckCircle className="w-5 h-5" />}
-            {t('wms_confirm_execution') || 'CONFIRMAR MOVIMIENTO'}
+            {t('wms_confirm_execution')}
           </button>
 
           <button
             onClick={() => setTask(null)}
             className="w-full py-2 text-xs font-medium text-muted-foreground hover:text-red-600 dark:hover:text-red-400 transition-colors"
           >
-            {t('wms_cancel_task') || 'LIBERAR TAREA / RECHAZAR'}
+            {t('wms_cancel_task')}
           </button>
         </div>
       </div>

@@ -8,7 +8,8 @@ import { API, fetcher, poster, putter, logLoadError, useWmsSizes, isYouthSize, i
 import { TicketStatus, PickingStatus, PickDestination } from "./constants";
 import { Btn, StatCard, cls, EmptyState } from "./ui";
 
-const PRETK_MONTHS = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+// Claves i18n de los meses (se traducen con t() en el render; aquí no hay hooks).
+const PRETK_MONTH_KEYS = ['wms_mon_jan', 'wms_mon_feb', 'wms_mon_mar', 'wms_mon_apr', 'wms_mon_may', 'wms_mon_jun', 'wms_mon_jul', 'wms_mon_aug', 'wms_mon_sep', 'wms_mon_oct', 'wms_mon_nov', 'wms_mon_dec'];
 
 // Fusiona varias listas de opciones (curadas + del sistema/inventario) en una
 // sola, sin duplicados (case-insensitive), preservando el orden: primero lo
@@ -24,9 +25,10 @@ const mergeUnique = (...lists) => {
   return out;
 };
 
-// Deadline urgency color for a pre-ticket's cancel_date chip.
-function deadlineInfo(dateStr) {
-  const none = { bucket: 'none', order: 5, label: 'Sin fecha', cls: 'bg-muted text-muted-foreground border-border' };
+// Deadline urgency color for a pre-ticket's cancel_date chip. Recibe el
+// traductor `t` del componente (esta función vive fuera y no puede usar hooks).
+function deadlineInfo(dateStr, t) {
+  const none = { bucket: 'none', order: 5, label: t('no_date'), cls: 'bg-muted text-muted-foreground border-border' };
   if (!dateStr) return none;
   const d = new Date(dateStr);
   if (isNaN(d.getTime())) return none;
@@ -34,9 +36,9 @@ function deadlineInfo(dateStr) {
   const dd = new Date(d); dd.setHours(0, 0, 0, 0);
   const days = Math.round((dd - today) / 86400000);
   const fmt = dd.toLocaleDateString();
-  if (days < 0) return { bucket: 'overdue', order: 0, label: `Vencida · ${fmt}`, cls: 'bg-red-50 text-red-700 border-red-200 dark:bg-red-500/10 dark:text-red-300 dark:border-red-500/25' };
-  if (days === 0) return { bucket: 'today', order: 1, label: `Hoy · ${fmt}`, cls: 'bg-orange-50 text-orange-700 border-orange-200 dark:bg-orange-500/10 dark:text-orange-300 dark:border-orange-500/25' };
-  if (days <= 7) return { bucket: 'week', order: 2, label: `${days}d · ${fmt}`, cls: 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-500/10 dark:text-amber-300 dark:border-amber-500/25' };
+  if (days < 0) return { bucket: 'overdue', order: 0, label: t('wms_pk_overdue', { date: fmt }), cls: 'bg-red-50 text-red-700 border-red-200 dark:bg-red-500/10 dark:text-red-300 dark:border-red-500/25' };
+  if (days === 0) return { bucket: 'today', order: 1, label: t('wms_pk_today', { date: fmt }), cls: 'bg-orange-50 text-orange-700 border-orange-200 dark:bg-orange-500/10 dark:text-orange-300 dark:border-orange-500/25' };
+  if (days <= 7) return { bucket: 'week', order: 2, label: t('wms_pk_days', { days, date: fmt }), cls: 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-500/10 dark:text-amber-300 dark:border-amber-500/25' };
   return { bucket: 'later', order: 3, label: fmt, cls: 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-300 dark:border-emerald-500/25' };
 }
 
@@ -46,13 +48,13 @@ export const PickingModule = ({ currentUser } = {}) => {
     try {
       const res = await putter(`/pick-tickets/${ticketId}/prioritize`);
       if (res.ok) {
-        toast.success("Prioridad escalada a HOT");
+        toast.success(t('wms_pk_hot_done'));
         loadTickets();
       } else {
         const err = await res.json();
-        toast.error(err.detail || "Error");
+        toast.error(err.detail || t('error'));
       }
-    } catch { toast.error("Connection error"); }
+    } catch { toast.error(t('wms_conn_err')); }
   };
   const [tickets, setTickets] = useState([]);
   const [search, setSearch] = useState('');
@@ -249,23 +251,23 @@ export const PickingModule = ({ currentUser } = {}) => {
     : _hasToddler ? TODDLER_SIZES
     : SIZES_ORDER;
 
-  const openEdit = (t) => {
-    setEditingTicket(t);
+  const openEdit = (tk) => {
+    setEditingTicket(tk);
     const sizesObj = {};
-    ALL_SIZES.forEach(sz => { sizesObj[sz] = t.sizes?.[sz] || ''; });
+    ALL_SIZES.forEach(sz => { sizesObj[sz] = tk.sizes?.[sz] || ''; });
     setForm({
-      order_number: t.order_number || '', customer: t.customer || '', manufacturer: t.manufacturer || '',
-      style: t.style || '', color: t.color || '', quantity: t.quantity || 0,
-      assigned_to: t.assigned_to || '', assigned_to_name: t.assigned_to_name || '',
-      destination: t.destination || PickDestination.PRODUCTION, board_category: t.board_category || 'UNSET', strategy: t.strategy || 'default',
+      order_number: tk.order_number || '', customer: tk.customer || '', manufacturer: tk.manufacturer || '',
+      style: tk.style || '', color: tk.color || '', quantity: tk.quantity || 0,
+      assigned_to: tk.assigned_to || '', assigned_to_name: tk.assigned_to_name || '',
+      destination: tk.destination || PickDestination.PRODUCTION, board_category: tk.board_category || 'UNSET', strategy: tk.strategy || 'default',
       // Los pre-tickets (is_virtual) se CREAN al confirmar aquí → deben poder
       // elegir el comodín 2%. Los tickets reales ya lo traen aplicado (o no) y no
       // se re-infla al editar. Default OFF: el usuario decide.
       include_comodin: false, sizes: sizesObj
     });
-    setSizeLocations(t.size_locations || {});
-    if (t.customer) loadOptions(t.customer, t.manufacturer || '', t.style || '');
-    if (t.style) lookupLocations(t.style, t.color);
+    setSizeLocations(tk.size_locations || {});
+    if (tk.customer) loadOptions(tk.customer, tk.manufacturer || '', tk.style || '');
+    if (tk.style) lookupLocations(tk.style, tk.color);
     setShowForm(true);
   };
 
@@ -277,8 +279,8 @@ export const PickingModule = ({ currentUser } = {}) => {
   };
 
   const handleSubmit = async (forceDuplicate = false) => {
-    if (!form.order_number || !form.style) { toast.error(t('order_style_req')); return; }
-    if (totalPick === 0) { toast.error(t('enter_qty_size')); return; }
+    if (!form.order_number || !form.style) { toast.error(t('wms_pick_req')); return; }
+    if (totalPick === 0) { toast.error(t('wms_size_qty_req')); return; }
     setLoading(true);
     
     // React passes the SyntheticEvent to onClick handlers. If forceDuplicate is an object, ignore it.
@@ -298,7 +300,7 @@ export const PickingModule = ({ currentUser } = {}) => {
         res = await poster('/pick-tickets', payload);
       }
       if (res.ok) {
-        toast.success(editingTicket && !editingTicket.is_virtual ? t('ticket_updated') : t('ticket_created'));
+        toast.success(editingTicket && !editingTicket.is_virtual ? t('wms_pick_updated') : t('wms_pick_created'));
         setDupWarning(null);
         resetForm();
         loadTickets(); loadStats();
@@ -309,13 +311,13 @@ export const PickingModule = ({ currentUser } = {}) => {
         setDupWarning({
           pendingPayload: payload,
           existing: detail.existing_ticket || {},
-          message: detail.message || 'Ya existe un pick ticket activo para esta orden.',
+          message: detail.message || t('wms_pk_dup_default'),
         });
       } else {
         const err = await res.json().catch(() => ({}));
         toast.error(err.detail || t('error'));
       }
-    } catch { toast.error(t('conn_error')); }
+    } catch { toast.error(t('wms_conn_err')); }
     finally { setLoading(false); }
   };
 
@@ -335,9 +337,9 @@ export const PickingModule = ({ currentUser } = {}) => {
     setConfirmSaving(true);
     try {
       const res = await putter(`/pick-tickets/${ticket.ticket_id}/confirm`, { lines: ticket.lines || [] });
-      if (res.ok) { toast.success(t('pick_confirmed')); setConfirmTicket(null); loadTickets(); loadStats(); }
+      if (res.ok) { toast.success(t('wms_pick_confirmed')); setConfirmTicket(null); loadTickets(); loadStats(); }
       else { const err = await res.json().catch(() => ({})); toast.error(err.detail || t('error')); }
-    } catch { toast.error(t('conn_error')); }
+    } catch { toast.error(t('wms_conn_err')); }
     finally { setConfirmSaving(false); }
   };
 
@@ -350,7 +352,7 @@ export const PickingModule = ({ currentUser } = {}) => {
   const submitIncident = async () => {
     if (!incidentTicket) return;
     const qty = parseInt(incidentDraft.qty);
-    if (Number.isNaN(qty) || qty < 1) { toast.error(t('qty') + ' ≥ 1'); return; }
+    if (Number.isNaN(qty) || qty < 1) { toast.error(t('wms_pk_qty_min')); return; }
     setIncidentSaving(true);
     try {
       const replacement_sizes = Object.fromEntries(
@@ -370,36 +372,36 @@ export const PickingModule = ({ currentUser } = {}) => {
         const result = await res.json();
         if (result.replacement_qty > 0) {
           toast.success(result.inventory_deducted
-            ? `Incidencia reportada — ${result.replacement_qty} prendas descontadas del inventario`
-            : 'Incidencia reportada (revisa el inventario manualmente)'
+            ? t('wms_pk_incident_deducted', { n: result.replacement_qty })
+            : t('wms_pk_incident_manual')
           );
         } else {
-          toast.success(t('incident_reported_success') || 'Incidencia reportada correctamente');
+          toast.success(t('wms_pk_incident_ok'));
         }
         setIncidentTicket(null);
       } else {
         const err = await res.json().catch(() => ({}));
-        toast.error(err.detail || 'Error al reportar');
+        toast.error(err.detail || t('wms_pk_report_err'));
       }
-    } catch { toast.error('Error de conexión'); }
+    } catch { toast.error(t('wms_conn_err')); }
     finally { setIncidentSaving(false); }
   };
 
   const handleQuickStatus = async (ticket_id, new_status) => {
     try {
       const res = await putter(`/pick-tickets/${ticket_id}/status`, { blank_status: new_status });
-      if (res.ok) { toast.success(t('status_updated')); loadTickets(); }
+      if (res.ok) { toast.success(t('wms_pk_status_updated')); loadTickets(); }
       else { const err = await res.json().catch(() => ({})); toast.error(err.detail || t('error')); }
-    } catch { toast.error(t('conn_error')); }
+    } catch { toast.error(t('wms_conn_err')); }
   };
 
   const handleDismissPreticket = async (orderNumber) => {
-    if (!window.confirm("¿Estás seguro de que quieres ocultar este pre-ticket?")) return;
+    if (!window.confirm(t('wms_pk_dismiss_confirm'))) return;
     try {
       await fetcher(`/pick-tickets/virtual/${orderNumber}/dismiss`, { method: 'PUT' });
-      toast.success('Pre-ticket ocultado correctamente');
+      toast.success(t('wms_pk_dismissed'));
       loadTickets();
-    } catch { toast.error('Error al ocultar pre-ticket'); }
+    } catch { toast.error(t('wms_pk_dismiss_err')); }
   };
 
   const handleQuickAssign = async (ticket_id, user_val) => {
@@ -412,9 +414,9 @@ export const PickingModule = ({ currentUser } = {}) => {
         assigned_to_name: op.name || op.email || ""
       };
       const res = await putter(`/pick-tickets/${ticket_id}/assign`, payload);
-      if (res.ok) { toast.success(t('assigned_correctly')); loadTickets(); loadStats(); }
+      if (res.ok) { toast.success(t('wms_pk_assigned_ok')); loadTickets(); loadStats(); }
       else { const err = await res.json().catch(() => ({})); toast.error(err.detail || t('error')); }
-    } catch { toast.error(t('conn_error')); }
+    } catch { toast.error(t('wms_conn_err')); }
   };
 
   // Carga tab: multi-select reassignment/removal.
@@ -425,7 +427,7 @@ export const PickingModule = ({ currentUser } = {}) => {
   const handleBulkAssign = async (user_val) => {
     const ids = [...selectedWorkload];
     if (ids.length === 0) return;
-    if (!user_val && !window.confirm(`¿Retirar ${ids.length} ticket(s) de su operador?`)) return;
+    if (!user_val && !window.confirm(t('wms_pk_bulk_withdraw_confirm', { n: ids.length }))) return;
     const op = operators.find(o => o.user_id === user_val || o.email === user_val) || {};
     const payload = {
       operator_id: user_val || "", operator_name: op.name || op.email || "",
@@ -438,13 +440,13 @@ export const PickingModule = ({ currentUser } = {}) => {
     }
     setSelectedWorkload([]);
     loadTickets(); loadStats();
-    if (ok) toast.success(`${ok} ticket(s) ${user_val ? 'reasignado(s)' : 'retirado(s)'}`);
-    if (fail) toast.error(`${fail} ticket(s) fallaron`);
+    if (ok) toast.success(user_val ? t('wms_pk_bulk_reassigned', { n: ok }) : t('wms_pk_bulk_withdrawn', { n: ok }));
+    if (fail) toast.error(t('wms_pk_bulk_failed', { n: fail }));
   };
 
   const handlePrint = (ticket) => {
     const pw = window.open('', '_blank');
-    if (!pw) { toast.error(t('allow_popups')); return; }
+    if (!pw) { toast.error(t('wms_popup_err')); return; }
     // Render the barcode locally (no external CDN) so labels print even when the
     // warehouse PC is offline. Serialize an off-DOM <svg> into the popup markup.
     let barcodeMarkup = '';
@@ -490,9 +492,9 @@ export const PickingModule = ({ currentUser } = {}) => {
       const extra = comodinBySize[sz];
       let qtyCell;
       if (done) {
-        qtyCell = `<span style="color:#15803d">&#10003; ${req}</span><div style="font-size:9px;color:#15803d;font-weight:normal">SURTIDO</div>`;
+        qtyCell = `<span style="color:#15803d">&#10003; ${req}</span><div style="font-size:9px;color:#15803d;font-weight:normal">${t('wms_pk_lbl_picked')}</div>`;
       } else if (started) {
-        qtyCell = `${pend} <span style="font-size:10px;color:#888;font-weight:normal">/ ${req}</span><div style="font-size:9px;color:#b45309;font-weight:normal">surtido ${picked}</div>`;
+        qtyCell = `${pend} <span style="font-size:10px;color:#888;font-weight:normal">/ ${req}</span><div style="font-size:9px;color:#b45309;font-weight:normal">${t('wms_pk_lbl_picked_n', { n: picked })}</div>`;
       } else {
         qtyCell = extra > 0
           ? `${req}<div style="font-size:10px;color:#92400e;font-weight:bold">+${extra} (2%)</div>`
@@ -508,7 +510,7 @@ export const PickingModule = ({ currentUser } = {}) => {
       return `<tr style="${rowBg}"><td style="border:1px solid #000;padding:4px 8px;font-weight:bold;text-align:center;font-size:16px">${sz}</td><td style="border:1px solid #000;padding:4px 8px;text-align:center;font-size:20px;font-weight:bold">${qtyCell}</td><td style="border:1px solid #000;padding:4px 8px;font-size:11px;font-family:monospace">${locStr}</td></tr>`;
     }).join('');
     const partialBanner = isPartial
-      ? `<div style="text-align:center;font-size:11px;font-weight:bold;color:#b45309;border:1px dashed #b45309;border-radius:4px;padding:2px 4px;margin:4px 0">SURTIDO PARCIAL · ${totalPicked} de ${totalQty} · FALTAN ${totalPending}</div>`
+      ? `<div style="text-align:center;font-size:11px;font-weight:bold;color:#b45309;border:1px dashed #b45309;border-radius:4px;padding:2px 4px;margin:4px 0">${t('wms_pk_lbl_partial', { picked: totalPicked, total: totalQty, pending: totalPending })}</div>`
       : '';
     // Orden #: se imprime grande arriba (recuadro) y se repite en la columna
     // derecha para que el equipo NO tenga que escribirlo con pluma. El ticket_id
@@ -523,16 +525,16 @@ export const PickingModule = ({ currentUser } = {}) => {
     // Fila del comodín: si ya está aplicado en las tallas, solo se informa (el
     // total YA lo incluye); si no, se muestra el +2% informativo como antes.
     const comodinRow = comodinApplied
-      ? `<tr style="background:#fef3c7"><td colspan="3" style="border:1px solid #000;padding:4px;text-align:center;font-size:10px;font-weight:bold;color:#92400e">&#10003; INCLUYE COMOD&Iacute;N 2% &middot; Total a surtir: ${totalQty}</td></tr>`
-      : `<tr style="background:#fef3c7"><td style="border:1px solid #000;padding:4px;text-align:center;font-size:10px;font-weight:bold;color:#92400e">COMOD&Iacute;N 2%</td><td style="border:1px solid #000;padding:4px;text-align:center;font-size:16px;font-weight:900;color:#92400e">+${comodinQty}</td><td style="border:1px solid #000;padding:4px;font-size:9px;color:#92400e;font-weight:bold">Total a surtir: ${comodinTotal}</td></tr>`;
-    pw.document.write(`<html><head><title>Pick Ticket - ${ticket.ticket_id}</title><style>@page{size:4in 6in;margin:6mm}body{font-family:Arial,sans-serif;margin:0;padding:10px;width:3.6in}@media print{body{padding:0}}</style></head><body><div style="text-align:center;font-size:16px;font-weight:bold;margin-bottom:2px">${ticket.customer || ''}</div><div style="text-align:center;font-size:26px;font-weight:900;margin:8px 0 14px;letter-spacing:1px;line-height:1.1">ORDEN #${orderNo}</div><div style="text-align:center;margin:0 0 6px">${barcodeMarkup}</div>${partialBanner}<div style="display:flex;justify-content:space-between;margin-bottom:4px"><div><div style="font-size:13px;font-weight:bold">${ticket.customer || ''}</div><div style="font-size:12px;font-weight:bold">${ticket.manufacturer || ''}</div><div style="font-size:12px;font-weight:bold">${ticket.color || ''}</div></div><div style="text-align:right;line-height:1.4"><div style="font-size:9px;color:#666">Style</div><div style="font-size:20px;font-weight:900;line-height:1.1">${ticket.style || ''}</div><div style="font-size:9px;color:#666;margin-top:3px">Total</div><div style="font-size:16px;font-weight:bold;line-height:1.1">${totalQty}</div><div style="font-size:7px;color:#888;font-family:monospace;margin-top:4px">${ticket.ticket_id}</div></div></div><table style="width:100%;border-collapse:collapse;margin:6px 0"><thead><tr style="background:#eee"><th style="border:1px solid #000;padding:3px;font-size:10px">${t('size')}</th><th style="border:1px solid #000;padding:3px;font-size:10px">${t('qty')}</th><th style="border:1px solid #000;padding:3px;font-size:10px">${t('location')}</th></tr></thead><tbody>${gridRows}</tbody><tfoot><tr style="font-weight:bold;background:#eee"><td style="border:1px solid #000;padding:4px;text-align:center">${t('total')}</td><td style="border:1px solid #000;padding:4px;text-align:center;font-size:18px">${totalQty}${isPartial ? ` <span style="font-size:11px;color:#b45309;font-weight:normal">(faltan ${totalPending})</span>` : ''}</td><td style="border:1px solid #000;padding:4px"></td></tr>${comodinRow}</tfoot></table><div style="margin-top:12px;display:flex;gap:20px;font-size:11px"><div>${t('picker')}: ___________________</div><div>${t('date')}: ___________________</div></div><script>setTimeout(function(){window.print()},300);<\/script></body></html>`);
+      ? `<tr style="background:#fef3c7"><td colspan="3" style="border:1px solid #000;padding:4px;text-align:center;font-size:10px;font-weight:bold;color:#92400e">&#10003; ${t('wms_pk_lbl_comodin_incl', { n: totalQty })}</td></tr>`
+      : `<tr style="background:#fef3c7"><td style="border:1px solid #000;padding:4px;text-align:center;font-size:10px;font-weight:bold;color:#92400e">${t('wms_pk_lbl_comodin')}</td><td style="border:1px solid #000;padding:4px;text-align:center;font-size:16px;font-weight:900;color:#92400e">+${comodinQty}</td><td style="border:1px solid #000;padding:4px;font-size:9px;color:#92400e;font-weight:bold">${t('wms_pk_lbl_total_pick', { n: comodinTotal })}</td></tr>`;
+    pw.document.write(`<html><head><meta charset="utf-8"><title>Pick Ticket - ${ticket.ticket_id}</title><style>@page{size:4in 6in;margin:6mm}body{font-family:Arial,sans-serif;margin:0;padding:10px;width:3.6in}@media print{body{padding:0}}</style></head><body><div style="text-align:center;font-size:16px;font-weight:bold;margin-bottom:2px">${ticket.customer || ''}</div><div style="text-align:center;font-size:26px;font-weight:900;margin:8px 0 14px;letter-spacing:1px;line-height:1.1">${t('wms_pk_lbl_order', { n: orderNo })}</div><div style="text-align:center;margin:0 0 6px">${barcodeMarkup}</div>${partialBanner}<div style="display:flex;justify-content:space-between;margin-bottom:4px"><div><div style="font-size:13px;font-weight:bold">${ticket.customer || ''}</div><div style="font-size:12px;font-weight:bold">${ticket.manufacturer || ''}</div><div style="font-size:12px;font-weight:bold">${ticket.color || ''}</div></div><div style="text-align:right;line-height:1.4"><div style="font-size:9px;color:#666">Style</div><div style="font-size:20px;font-weight:900;line-height:1.1">${ticket.style || ''}</div><div style="font-size:9px;color:#666;margin-top:3px">Total</div><div style="font-size:16px;font-weight:bold;line-height:1.1">${totalQty}</div><div style="font-size:7px;color:#888;font-family:monospace;margin-top:4px">${ticket.ticket_id}</div></div></div><table style="width:100%;border-collapse:collapse;margin:6px 0"><thead><tr style="background:#eee"><th style="border:1px solid #000;padding:3px;font-size:10px">${t('wms_label_size')}</th><th style="border:1px solid #000;padding:3px;font-size:10px">${t('wms_qty')}</th><th style="border:1px solid #000;padding:3px;font-size:10px">${t('location')}</th></tr></thead><tbody>${gridRows}</tbody><tfoot><tr style="font-weight:bold;background:#eee"><td style="border:1px solid #000;padding:4px;text-align:center">${t('total')}</td><td style="border:1px solid #000;padding:4px;text-align:center;font-size:18px">${totalQty}${isPartial ? ` <span style="font-size:11px;color:#b45309;font-weight:normal">${t('wms_pk_lbl_missing', { n: totalPending })}</span>` : ''}</td><td style="border:1px solid #000;padding:4px"></td></tr>${comodinRow}</tfoot></table><div style="margin-top:12px;display:flex;gap:20px;font-size:11px"><div>${t('wms_pk_picker')}: ___________________</div><div>${t('date')}: ___________________</div></div><script>setTimeout(function(){window.print()},300);<\/script></body></html>`);
     pw.document.close();
   };
 
-  const filteredTickets = tickets.filter(t => {
+  const filteredTickets = tickets.filter(tk => {
     // Si el formulario de edicion esta abierto para este ticket, lo ocultamos de la lista
     // para evitar que el usuario se confunda pensando que esta duplicado.
-    if (showForm && editingTicket && t.ticket_id === editingTicket.ticket_id) {
+    if (showForm && editingTicket && tk.ticket_id === editingTicket.ticket_id) {
       return false;
     }
     // Busqueda orientada a lo que el usuario conoce: numero de orden (2123),
@@ -542,15 +544,15 @@ export const PickingModule = ({ currentUser } = {}) => {
     const term = search.trim().toLowerCase();
     if (!term) return true;
     return (
-      (t.order_number || '').toString().toLowerCase().includes(term) ||
-      (t.customer || '').toLowerCase().includes(term) ||
-      (t.style || '').toLowerCase().includes(term) ||
-      (t.color || '').toLowerCase().includes(term)
+      (tk.order_number || '').toString().toLowerCase().includes(term) ||
+      (tk.customer || '').toLowerCase().includes(term) ||
+      (tk.style || '').toLowerCase().includes(term) ||
+      (tk.color || '').toLowerCase().includes(term)
     );
   });
 
-  const preTickets = filteredTickets.filter(t => t.is_virtual);
-  const activeTickets = filteredTickets.filter(t => !t.is_virtual && t.status !== TicketStatus.CONFIRMED && t.picking_status !== PickingStatus.COMPLETED);
+  const preTickets = filteredTickets.filter(tk => tk.is_virtual);
+  const activeTickets = filteredTickets.filter(tk => !tk.is_virtual && tk.status !== TicketStatus.CONFIRMED && tk.picking_status !== PickingStatus.COMPLETED);
 
   // Workload grouped by operator (for the "Carga" tab): who has which active
   // tickets, so an admin can reassign or unassign by load.
@@ -559,7 +561,7 @@ export const PickingModule = ({ currentUser } = {}) => {
     const groups = {};
     for (const tk of activeTickets) {
       const id = (tk.assigned_to || '').trim() || UNASSIGNED_KEY;
-      const name = id === UNASSIGNED_KEY ? 'Sin asignar' : (tk.assigned_to_name || tk.assigned_to || 'Operador');
+      const name = id === UNASSIGNED_KEY ? t('unassigned') : (tk.assigned_to_name || tk.assigned_to || t('wms_operator'));
       if (!groups[id]) groups[id] = { id, name, tickets: [], units: 0 };
       groups[id].tickets.push(tk);
       groups[id].units += Number(tk.total_pick_qty || 0);
@@ -574,17 +576,25 @@ export const PickingModule = ({ currentUser } = {}) => {
       return b.tickets.length - a.tickets.length;
     });
   })();
-  const unassignedCount = activeTickets.filter(t => !(t.assigned_to || '').trim()).length;
-  const filteredCompleted = filterOp ? completedTickets.filter(t => t.assigned_to_name === filterOp) : completedTickets;
+  const unassignedCount = activeTickets.filter(tk => !(tk.assigned_to || '').trim()).length;
+  const filteredCompleted = filterOp ? completedTickets.filter(tk => tk.assigned_to_name === filterOp) : completedTickets;
 
   // Case# 005: within active tickets, split those with picking progress
   // ("En avance" — includes partial-closed waiting on restock) from untouched
   // ones ("Sin iniciar"), so a partial pick never looks finished or lost.
-  const ticketPicked = (t) => Object.values(t.picked_sizes || {})
+  const ticketPicked = (tk) => Object.values(tk.picked_sizes || {})
     .reduce((s, v) => s + (parseInt(typeof v === 'object' && v ? v.total : v) || 0), 0);
-  const hasProgress = (t) => ticketPicked(t) > 0 || t.picking_status === PickingStatus.IN_PROGRESS || t.partial_closed;
+  const hasProgress = (tk) => ticketPicked(tk) > 0 || tk.picking_status === PickingStatus.IN_PROGRESS || tk.partial_closed;
   const inProgressTickets = activeTickets.filter(hasProgress);
-  const notStartedTickets = activeTickets.filter(t => !hasProgress(t));
+  const notStartedTickets = activeTickets.filter(tk => !hasProgress(tk));
+
+  // Etiqueta visible de picking_status. El valor comparado/guardado NO cambia.
+  const PICKING_STATUS_KEYS = {
+    [PickingStatus.PENDING]: 'wms_status_pending',
+    [PickingStatus.IN_PROGRESS]: 'wms_status_in_progress',
+    [PickingStatus.COMPLETED]: 'wms_status_completed',
+  };
+  const pickingStatusLabel = (st) => (PICKING_STATUS_KEYS[st] ? t(PICKING_STATUS_KEYS[st]) : String(st || '').replace('_', ' '));
 
   // New ticket card renderer (Premium Kanban style)
   const renderTicket = (ticket, showEdit = true) => {
@@ -623,9 +633,9 @@ export const PickingModule = ({ currentUser } = {}) => {
               #{ticket.order_number}
             </span>
             {ticket.cancel_date && (() => {
-              const di = deadlineInfo(ticket.cancel_date);
+              const di = deadlineInfo(ticket.cancel_date, t);
               return (
-                <span className={`text-xs font-medium px-1.5 py-0.5 rounded-md border flex items-center gap-1 ${di.cls}`} title="Fecha límite (cancel date)">
+                <span className={`text-xs font-medium px-1.5 py-0.5 rounded-md border flex items-center gap-1 ${di.cls}`} title={t('wms_pk_deadline_title')}>
                   <Calendar className="w-2.5 h-2.5" /> {di.label}
                 </span>
               );
@@ -637,13 +647,13 @@ export const PickingModule = ({ currentUser } = {}) => {
             )}
             {!hasSizes && !ticket.is_virtual && (
               <span className="text-xs font-medium px-2 py-0.5 rounded-md border bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-500/10 dark:text-amber-300 dark:border-amber-500/25">
-                {t('draft')}
+                {t('wms_draft')}
               </span>
             )}
             {ticket.partial_closed && !ticket.is_virtual && (
               <span className="text-xs font-medium px-2 py-0.5 rounded-md border bg-orange-50 text-orange-700 border-orange-200 dark:bg-orange-500/10 dark:text-orange-300 dark:border-orange-500/25"
-                title="Cerrado parcial — esperando más material. Reasigna el ticket cuando llegue stock.">
-                Parcial · espera material
+                title={t('wms_pk_partial_wait_title')}>
+                {t('wms_pk_partial_wait')}
               </span>
             )}
             <select
@@ -707,14 +717,14 @@ export const PickingModule = ({ currentUser } = {}) => {
         {/* Progress */}
         <div className="hidden md:block w-32 shrink-0">
           <div className="flex items-center justify-between text-xs font-medium text-muted-foreground mb-1">
-            <span>{currentStatus.replace('_', ' ')}</span>
+            <span>{pickingStatusLabel(currentStatus)}</span>
             <span>{pct}%</span>
           </div>
           <div className="h-1.5 bg-muted rounded-full overflow-hidden">
             <div className={`h-full rounded-full transition-all duration-1000 ${pct === 100 ? 'bg-emerald-500' : 'bg-primary'}`} style={{ width: `${pct}%` }} />
           </div>
           <div className="text-xs text-muted-foreground tabular-nums text-center mt-1">
-            {totalPkd} / {totalReq} {t('units')}
+            {totalPkd} / {totalReq} {t('wms_label_units')}
           </div>
         </div>
 
@@ -743,15 +753,15 @@ export const PickingModule = ({ currentUser } = {}) => {
               <button
                 onClick={() => openIncident(ticket)}
                 className="p-1.5 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-md transition-colors"
-                title={t('wms_report_incident') || 'Reportar Problema'}
+                title={t('wms_report_incident')}
               >
                 <AlertTriangle className="w-4 h-4" />
               </button>
-              <button onClick={() => handlePrint(ticket)} className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted rounded-md transition-colors" title={t('print')}><Printer className="w-4 h-4" /></button>
+              <button onClick={() => handlePrint(ticket)} className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted rounded-md transition-colors" title={t('wms_print')}><Printer className="w-4 h-4" /></button>
               <button
                 onClick={(e) => { e.stopPropagation(); handlePrioritize(ticket.ticket_id); }}
                 className="p-1.5 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-md transition-colors"
-                title="Marcar como HOT / RUSH"
+                title={t('wms_pk_mark_hot')}
               >
                 <Zap className="w-4 h-4" />
               </button>
@@ -761,7 +771,7 @@ export const PickingModule = ({ currentUser } = {}) => {
             <button
               onClick={() => handleDismissPreticket(ticket.order_number)}
               className="p-1.5 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-md transition-colors mr-1"
-              title="Eliminar Pre-Ticket (Admin)"
+              title={t('wms_pk_delete_preticket')}
             >
               <Trash2 className="w-4 h-4" />
             </button>
@@ -770,7 +780,7 @@ export const PickingModule = ({ currentUser } = {}) => {
             <button
               onClick={() => openEdit(ticket)}
               className={`p-1.5 rounded-md transition-colors flex items-center gap-1 ${ticket.is_virtual ? 'bg-primary text-primary-foreground px-3 font-medium text-xs hover:opacity-90' : 'text-muted-foreground hover:text-foreground hover:bg-muted'}`}
-              title={ticket.is_virtual ? "Crear Ticket" : "Editar / Ver Tallas"}
+              title={ticket.is_virtual ? t('wms_pk_create_ticket') : t('wms_pk_edit_sizes')}
             >
               {ticket.is_virtual ? (
                 <>{t('wms_new_pick') || 'Iniciar'}</>
@@ -793,9 +803,9 @@ export const PickingModule = ({ currentUser } = {}) => {
         <div className="flex items-center gap-1 bg-muted/50 p-1 rounded-lg border border-border">
           {[
             { id: 'pretickets', label: 'PRE-TICKETS', icon: ClipboardList, count: preTickets.length },
-            { id: 'tickets', label: 'TICKETS (ACTIVOS)', icon: ClipboardCheck, count: activeTickets.length },
+            { id: 'tickets', label: t('wms_pk_tab_active'), icon: ClipboardCheck, count: activeTickets.length },
             { id: 'completed', label: t('wms_picking_completed'), icon: CheckCircle, count: completedLoaded ? completedTickets.length : undefined },
-            { id: 'workload', label: 'CARGA', icon: Users, count: unassignedCount },
+            { id: 'workload', label: t('wms_pk_tab_workload'), icon: Users, count: unassignedCount },
             { id: 'dashboard', label: t('wms_picking_kpis'), icon: BarChart3 },
           ].map(tab => {
             const Icon = tab.icon;
@@ -831,7 +841,7 @@ export const PickingModule = ({ currentUser } = {}) => {
           className="whitespace-nowrap"
         >
           <Plus className="w-4 h-4" />
-          Nuevo Pick Ticket
+          {t('wms_new_pick')}
         </Btn>
       </div>
 
@@ -839,7 +849,7 @@ export const PickingModule = ({ currentUser } = {}) => {
       {loadingMoreTickets && ticketsTotal > 0 && (
         <div className="flex items-center gap-3 text-xs text-muted-foreground bg-card border border-border px-3 py-2 rounded-lg">
           <Loader2 className="w-3 h-3 animate-spin" />
-          Cargando tickets {tickets.length.toLocaleString()} / {ticketsTotal.toLocaleString()}
+          {t('wms_pk_loading_tickets', { n: tickets.length.toLocaleString(), total: ticketsTotal.toLocaleString() })}
           <div className="flex-1 h-1 bg-muted rounded-full overflow-hidden max-w-xs">
             <div className="h-full bg-primary transition-all" style={{ width: `${ticketsTotal > 0 ? (tickets.length / ticketsTotal) * 100 : 0}%` }} />
           </div>
@@ -847,7 +857,7 @@ export const PickingModule = ({ currentUser } = {}) => {
       )}
       {ticketsCapped && (
         <div className="text-xs text-amber-600 dark:text-amber-400">
-          Mostrando los primeros {MAX_TICKETS.toLocaleString()} de {ticketsTotal.toLocaleString()} tickets — usa la búsqueda para acotar
+          {t('wms_pk_capped', { max: MAX_TICKETS.toLocaleString(), total: ticketsTotal.toLocaleString() })}
         </div>
       )}
 
@@ -855,7 +865,7 @@ export const PickingModule = ({ currentUser } = {}) => {
       <div className="relative">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground/60" />
         <input
-          placeholder={t('wms_search_pick_hint') || "Buscar por N° de orden, cliente, estilo o color…"}
+          placeholder={t('wms_search_pick_hint')}
           value={search}
           onChange={e => setSearch(e.target.value)}
           className={`${cls.input} pl-9 pr-10`}
@@ -894,13 +904,13 @@ export const PickingModule = ({ currentUser } = {}) => {
               {!editingTicket && (
                 <div className="text-xs text-muted-foreground mt-0.5">
                   {form.order_number && !orders.some(o => o.order_number === form.order_number)
-                    ? <span className="text-amber-600 dark:text-amber-400 font-medium">⚠ Orden manual (no está en el sistema) — llena Customer / Style / tallas</span>
-                    : '¿No aparece la orden? Escríbela y elige «Agregar …» para crear un ticket manual.'}
+                    ? <span className="text-amber-600 dark:text-amber-400 font-medium">{t('wms_pk_manual_order_warn')}</span>
+                    : t('wms_pk_order_not_found_hint')}
                 </div>
               )}
             </div>
             <div>
-              <label className="text-xs font-medium text-muted-foreground block mb-1">Customer</label>
+              <label className="text-xs font-medium text-muted-foreground block mb-1">{t('wms_label_customer')}</label>
               <SearchableSelect options={customerOptions} value={form.customer} onChange={handleCustomerChange} placeholder={t('wms_search_customer')} testId="pick-customer" allowCreate={false} />
             </div>
             <div>
@@ -920,47 +930,47 @@ export const PickingModule = ({ currentUser } = {}) => {
               <input type="number" value={form.quantity} onChange={e => setForm(p => ({ ...p, quantity: parseInt(e.target.value) || 0 }))} className="w-full px-3 py-2 bg-background border border-border rounded-md text-sm text-foreground" data-testid="pick-qty" />
             </div>
             <div>
-              <label className="text-xs font-medium text-muted-foreground block mb-1">Destino</label>
+              <label className="text-xs font-medium text-muted-foreground block mb-1">{t('wms_pk_destination')}</label>
               <select value={form.destination} onChange={e => setForm(p => ({ ...p, destination: e.target.value }))} className="w-full px-3 py-2 bg-background border border-border text-foreground rounded-md text-sm">
-                <option value={PickDestination.PRODUCTION}>Producción Directa</option>
-                <option value={PickDestination.NECK_CUTTING}>Corte de Neck</option>
+                <option value={PickDestination.PRODUCTION}>{t('wms_pk_dest_production')}</option>
+                <option value={PickDestination.NECK_CUTTING}>{t('wms_pk_dest_neck')}</option>
               </select>
             </div>
             <div>
-              <label className="text-xs font-medium text-muted-foreground block mb-1">Estrategia de picking</label>
+              <label className="text-xs font-medium text-muted-foreground block mb-1">{t('wms_pk_strategy')}</label>
               <select
                 value={form.strategy}
                 onChange={e => setForm(p => ({ ...p, strategy: e.target.value }))}
                 className="w-full px-3 py-2 bg-background border border-border text-foreground rounded-md text-sm"
                 data-testid="pick-strategy"
-                title="Cómo ordenar las ubicaciones que ve el operador"
+                title={t('wms_pk_strategy_title')}
               >
-                <option value="default">Default (sistema)</option>
-                <option value="proximity">Por cercanía (mismo pasillo)</option>
-                <option value="origin">Por país de origen</option>
+                <option value="default">{t('wms_pk_strat_default')}</option>
+                <option value="proximity">{t('wms_pk_strat_proximity')}</option>
+                <option value="origin">{t('wms_pk_strat_origin')}</option>
               </select>
             </div>
           </div>
           <div className="grid grid-cols-3 gap-3">
             <div>
-              <label className="text-xs font-medium text-muted-foreground block mb-1">Manufacturer</label>
+              <label className="text-xs font-medium text-muted-foreground block mb-1">{t('wms_label_manufacturer')}</label>
               <SearchableSelect options={options.manufacturers || []} value={form.manufacturer} onChange={handleManufacturerChange} placeholder={t('wms_search_manufacturer')} testId="pick-manufacturer" allowCreate={false} />
-              {!form.customer && <div className="text-xs text-muted-foreground mt-0.5">{t('select_order_first')}</div>}
+              {!form.customer && <div className="text-xs text-muted-foreground mt-0.5">{t('wms_pk_select_customer_first')}</div>}
             </div>
             <div>
-              <label className="text-xs font-medium text-muted-foreground block mb-1">Style</label>
+              <label className="text-xs font-medium text-muted-foreground block mb-1">{t('wms_label_style')}</label>
               <SearchableSelect options={styleOptions} value={form.style} onChange={handleStyleChange} placeholder={t('wms_search_style')} testId="pick-style" allowCreate={false} />
             </div>
             <div>
-              <label className="text-xs font-medium text-muted-foreground block mb-1">Color</label>
+              <label className="text-xs font-medium text-muted-foreground block mb-1">{t('wms_label_color')}</label>
               <SearchableSelect options={colorOptions} value={form.color} onChange={handleColorChange} placeholder={t('wms_search_color')} testId="pick-color" allowCreate={false} />
-              {form.style && !form.color && <div className="text-xs text-muted-foreground mt-0.5">{t('select_color_to_see_locs')}</div>}
+              {form.style && !form.color && <div className="text-xs text-muted-foreground mt-0.5">{t('wms_pk_select_color_locs')}</div>}
             </div>
           </div>
           <div className="text-xs font-medium text-muted-foreground">{t('wms_size_locs')}</div>
           <div className="overflow-auto">
             <table className="w-full text-sm">
-              <thead><tr className="text-xs font-semibold text-muted-foreground"><th className="p-1 text-center w-16">{t('size')}</th><th className="p-1 text-center w-20">{t('qty')}</th><th className="p-1 text-left">{t('wms_loc_qty')}</th><th className="p-1 text-right w-20">{t('available')}</th></tr></thead>
+              <thead><tr className="text-xs font-semibold text-muted-foreground"><th className="p-1 text-center w-16">{t('wms_label_size')}</th><th className="p-1 text-center w-20">{t('wms_qty')}</th><th className="p-1 text-left">{t('wms_loc_qty')}</th><th className="p-1 text-right w-20">{t('wms_available')}</th></tr></thead>
               <tbody>
                 {gridSizes.map(sz => (
                   <tr key={sz} className="border-b border-border/60">
@@ -973,12 +983,12 @@ export const PickingModule = ({ currentUser } = {}) => {
                             <div key={i}
                               className={`flex flex-col px-2 py-1 rounded-md border ${l.sin_verificar ? 'bg-amber-500/10 border-amber-500/40' : 'bg-card border-border'}`}
                               title={l.sin_verificar
-                                ? `${l.available} units SIN CAJAS que las respalden — verificar en piso · ${l.country_of_origin || ''}`
-                                : `${l.available} units · ${l.country_of_origin || ''} · ${l.percentage ?? 0}%`}>
+                                ? t('wms_pk_loc_unverified_title', { n: l.available, coo: l.country_of_origin || '' })
+                                : t('wms_pk_loc_title', { n: l.available, coo: l.country_of_origin || '', pct: l.percentage ?? 0 })}>
                               <div className="flex items-center gap-2">
                                 <span className={`font-medium text-xs ${l.sin_verificar ? 'text-amber-400' : 'text-foreground'}`}>{l.location}</span>
                                 <span className={`font-semibold text-xs tabular-nums ${l.sin_verificar ? 'text-amber-400' : ''}`}>{l.available}</span>
-                                {l.sin_verificar && <span className="text-[9px] font-black uppercase text-amber-400">sin cajas</span>}
+                                {l.sin_verificar && <span className="text-[9px] font-black uppercase text-amber-400">{t('wms_pk_no_boxes_tag')}</span>}
                               </div>
                               <div className="flex items-center justify-between mt-0.5 gap-2">
                                 {l.country_of_origin && <span className="text-[10px] text-muted-foreground">{l.country_of_origin}</span>}
@@ -1012,15 +1022,15 @@ export const PickingModule = ({ currentUser } = {}) => {
                   onChange={e => setForm(p => ({ ...p, include_comodin: e.target.checked }))}
                   className="w-4 h-4 accent-amber-500" data-testid="pick-comodin" />
                 <div className="flex-1">
-                  <div className="text-xs font-semibold text-amber-700 dark:text-amber-300">Incluir comodín 2%</div>
+                  <div className="text-xs font-semibold text-amber-700 dark:text-amber-300">{t('wms_pk_comodin_include')}</div>
                   <div className="text-xs text-muted-foreground">
-                    Reparte el 2% en las tallas (redondeo hacia arriba por talla) para descontarlo del sistema.
+                    {t('wms_pk_comodin_desc')}
                   </div>
                 </div>
                 {form.include_comodin && comodinExtra > 0 && (
                   <div className="text-right">
                     <div className="text-amber-700 dark:text-amber-300 font-semibold tabular-nums">+{comodinExtra}</div>
-                    <div className="text-xs text-muted-foreground">→ {totalPick + comodinExtra} total</div>
+                    <div className="text-xs text-muted-foreground">{t('wms_pk_comodin_total', { n: totalPick + comodinExtra })}</div>
                   </div>
                 )}
               </label>
@@ -1048,7 +1058,7 @@ export const PickingModule = ({ currentUser } = {}) => {
             });
             const noDate = parsed.filter(p => p.year === null);
             const years = [...new Set(parsed.filter(p => p.year !== null).map(p => p.year))].sort();
-            const monthCounts = PRETK_MONTHS.map((_, m) => parsed.filter(p => p.year === pretkYear && p.month === m).length);
+            const monthCounts = PRETK_MONTH_KEYS.map((_, m) => parsed.filter(p => p.year === pretkYear && p.month === m).length);
             const inSel = pretkMonth === 'none' ? noDate : parsed.filter(p => p.year === pretkYear && p.month === pretkMonth);
             const weeks = {};
             for (const p of inSel) {
@@ -1065,14 +1075,14 @@ export const PickingModule = ({ currentUser } = {}) => {
                       {years.map(y => <option key={y} value={y}>{y}</option>)}
                     </select>
                   )}
-                  {PRETK_MONTHS.map((mn, m) => {
+                  {PRETK_MONTH_KEYS.map((mk, m) => {
                     const c = monthCounts[m];
                     const active = pretkMonth === m;
                     return (
                       <button key={m} onClick={() => setPretkMonth(m)}
                         className={`flex items-center gap-1 px-2.5 py-1.5 rounded-md text-xs font-medium transition-colors
                           ${active ? 'bg-primary text-primary-foreground' : c ? 'bg-muted hover:bg-muted/70' : 'bg-muted/40 text-muted-foreground/50'}`}>
-                        {mn}
+                        {t(mk)}
                         {c > 0 && <span className={`px-1 rounded text-[10px] ${active ? 'bg-black/10' : 'bg-background text-muted-foreground'}`}>{c}</span>}
                       </button>
                     );
@@ -1080,7 +1090,7 @@ export const PickingModule = ({ currentUser } = {}) => {
                   {noDate.length > 0 && (
                     <button onClick={() => setPretkMonth('none')}
                       className={`flex items-center gap-1 px-2.5 py-1.5 rounded-md text-xs font-medium transition-colors ${pretkMonth === 'none' ? 'bg-primary text-primary-foreground' : 'bg-muted hover:bg-muted/70'}`}>
-                      Sin fecha <span className={`px-1 rounded text-[10px] ${pretkMonth === 'none' ? 'bg-black/10' : 'bg-background text-muted-foreground'}`}>{noDate.length}</span>
+                      {t('no_date')} <span className={`px-1 rounded text-[10px] ${pretkMonth === 'none' ? 'bg-black/10' : 'bg-background text-muted-foreground'}`}>{noDate.length}</span>
                     </button>
                   )}
                 </div>
@@ -1092,9 +1102,9 @@ export const PickingModule = ({ currentUser } = {}) => {
                       <div className="flex items-center gap-2 px-1">
                         <Calendar className="w-3.5 h-3.5 text-muted-foreground" />
                         <span className="text-xs font-semibold">
-                          {wk === 0 ? 'Sin día' : `Semana ${wk}`}
+                          {wk === 0 ? t('wms_pk_no_day') : t('wms_pk_week_n', { n: wk })}
                         </span>
-                        {wk > 0 && <span className="text-xs text-muted-foreground">días {(wk - 1) * 7 + 1}–{wk * 7}</span>}
+                        {wk > 0 && <span className="text-xs text-muted-foreground">{t('wms_pk_days_range', { a: (wk - 1) * 7 + 1, b: wk * 7 })}</span>}
                         <span className="text-xs font-medium text-muted-foreground bg-muted px-2 py-0.5 rounded-md">{items.length}</span>
                       </div>
                       <div className="flex flex-col gap-2">
@@ -1106,7 +1116,7 @@ export const PickingModule = ({ currentUser } = {}) => {
                 {inSel.length === 0 && (
                   <div className="py-16 text-center">
                     <p className="text-sm font-semibold text-foreground/80">
-                      Sin órdenes en {pretkMonth === 'none' ? 'esta categoría' : `${PRETK_MONTHS[pretkMonth]} ${pretkYear}`}
+                      {t('wms_pk_no_orders_in', { x: pretkMonth === 'none' ? t('wms_pk_this_category') : `${t(PRETK_MONTH_KEYS[pretkMonth])} ${pretkYear}` })}
                     </p>
                   </div>
                 )}
@@ -1114,8 +1124,8 @@ export const PickingModule = ({ currentUser } = {}) => {
             );
           })()}
           {preTickets.length === 0 && (
-            <EmptyState art="done" title="No hay pre-tickets pendientes"
-              hint="Todas las órdenes en MOS ya tienen tickets generados." />
+            <EmptyState art="done" title={t('wms_pk_no_pretickets')}
+              hint={t('wms_pk_no_pretickets_hint')} />
           )}
         </div>
       )}
@@ -1126,7 +1136,7 @@ export const PickingModule = ({ currentUser } = {}) => {
             <div className="space-y-2">
               <div className="flex items-center gap-2 px-1">
                 <span className="w-2 h-2 rounded-full bg-amber-500" />
-                <span className="text-xs font-semibold text-amber-600 dark:text-amber-400">En avance</span>
+                <span className="text-xs font-semibold text-amber-600 dark:text-amber-400">{t('wms_pk_in_progress_group')}</span>
                 <span className="text-xs font-medium text-muted-foreground bg-muted px-2 py-0.5 rounded-md">{inProgressTickets.length}</span>
               </div>
               <div className="flex flex-col gap-2" data-testid="pick-inprogress-list">
@@ -1138,7 +1148,7 @@ export const PickingModule = ({ currentUser } = {}) => {
             <div className="space-y-2">
               <div className="flex items-center gap-2 px-1">
                 <span className="w-2 h-2 rounded-full bg-blue-500" />
-                <span className="text-xs font-semibold text-blue-600 dark:text-blue-400">Sin iniciar</span>
+                <span className="text-xs font-semibold text-blue-600 dark:text-blue-400">{t('wms_pk_not_started')}</span>
                 <span className="text-xs font-medium text-muted-foreground bg-muted px-2 py-0.5 rounded-md">{notStartedTickets.length}</span>
               </div>
               <div className="flex flex-col gap-2" data-testid="pick-notstarted-list">
@@ -1147,8 +1157,8 @@ export const PickingModule = ({ currentUser } = {}) => {
             </div>
           )}
           {activeTickets.length === 0 && (
-            <EmptyState art="clipboard" title="No hay tickets activos"
-              hint="Inicia un pre-ticket para comenzar a trabajar." />
+            <EmptyState art="clipboard" title={t('wms_pk_no_active')}
+              hint={t('wms_pk_no_active_hint')} />
           )}
         </div>
       )}
@@ -1156,15 +1166,15 @@ export const PickingModule = ({ currentUser } = {}) => {
         <div className="space-y-6">
           {!completedLoaded ? (
             <div className="flex flex-col items-center justify-center py-16 text-center">
-              <p className="text-sm font-semibold text-foreground/80 mb-1">Las completadas no se cargan automáticamente</p>
-              <p className="text-sm text-muted-foreground mb-5 max-w-sm">Para ahorrar recursos en los equipos del almacén. Cárgalas solo cuando las necesites.</p>
+              <p className="text-sm font-semibold text-foreground/80 mb-1">{t('wms_pk_completed_not_loaded')}</p>
+              <p className="text-sm text-muted-foreground mb-5 max-w-sm">{t('wms_pk_completed_hint')}</p>
               <Btn
                 variant="primary"
                 onClick={loadCompletedTickets}
                 disabled={loadingCompleted}
               >
                 {loadingCompleted ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />}
-                {loadingCompleted ? 'Cargando…' : 'Cargar completadas'}
+                {loadingCompleted ? t('loading') : t('wms_pk_load_completed')}
               </Btn>
             </div>
           ) : (
@@ -1177,8 +1187,8 @@ export const PickingModule = ({ currentUser } = {}) => {
                     {operators.map(op => <option key={op.email} value={op.name || op.email}>{op.name || op.email}</option>)}
                   </select>
                 </div>
-                <Btn onClick={loadCompletedTickets} disabled={loadingCompleted} title="Refrescar completadas">
-                  {loadingCompleted ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <History className="w-3.5 h-3.5" />} Refrescar
+                <Btn onClick={loadCompletedTickets} disabled={loadingCompleted} title={t('wms_pk_refresh_completed')}>
+                  {loadingCompleted ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <History className="w-3.5 h-3.5" />} {t('wms_refresh')}
                 </Btn>
                 <div className="px-3 py-1.5 bg-muted rounded-md text-xs font-medium text-muted-foreground">
                   {filteredCompleted.length} {t('completed')}
@@ -1198,24 +1208,24 @@ export const PickingModule = ({ currentUser } = {}) => {
         <div className="space-y-4" data-testid="pick-workload">
           <div className="flex items-center gap-2 px-1 text-xs text-muted-foreground">
             <Users className="w-4 h-4" />
-            Carga de trabajo por operador — reasigna o retira tickets según la carga de cada uno.
+            {t('wms_pk_workload_desc')}
           </div>
           {selectedWorkload.length > 0 && (
             <div className="sticky top-2 z-20 flex flex-wrap items-center gap-3 px-4 py-2.5 bg-card border border-border rounded-lg shadow-xl">
-              <span className="text-sm font-medium">{selectedWorkload.length} seleccionado(s)</span>
+              <span className="text-sm font-medium">{t('wms_pk_n_selected', { n: selectedWorkload.length })}</span>
               <select
                 value=""
                 onChange={(e) => { if (e.target.value) handleBulkAssign(e.target.value); }}
                 className="text-sm bg-background border border-border rounded-md px-2 py-1.5 cursor-pointer"
-                title="Reasignar todos los seleccionados"
+                title={t('wms_pk_reassign_all_title')}
               >
-                <option value="">Reasignar a…</option>
+                <option value="">{t('wms_pk_reassign_to')}</option>
                 {operators.map(o => <option key={o.user_id} value={o.user_id}>{o.name || o.email}</option>)}
               </select>
               <Btn variant="danger" onClick={() => handleBulkAssign("")}>
-                <UserMinus className="w-3.5 h-3.5" /> Retirar
+                <UserMinus className="w-3.5 h-3.5" /> {t('wms_pk_withdraw')}
               </Btn>
-              <button onClick={() => setSelectedWorkload([])} className="text-sm font-medium text-muted-foreground hover:text-foreground ml-auto">Limpiar</button>
+              <button onClick={() => setSelectedWorkload([])} className="text-sm font-medium text-muted-foreground hover:text-foreground ml-auto">{t('clear')}</button>
             </div>
           )}
           {workloadByOperator.map(group => (
@@ -1223,25 +1233,25 @@ export const PickingModule = ({ currentUser } = {}) => {
               <div className="flex items-center justify-between gap-3 px-4 py-2.5 bg-muted/50 border-b border-border">
                 <div className="flex items-center gap-2 min-w-0">
                   {group.tickets.length > 0 && (() => {
-                    const groupIds = group.tickets.map(t => t.ticket_id);
+                    const groupIds = group.tickets.map(tk => tk.ticket_id);
                     const allSel = groupIds.every(id => selectedWorkload.includes(id));
                     return (
                       <input type="checkbox" checked={allSel}
                         onChange={() => toggleWorkloadGroup(groupIds, allSel)}
                         className="w-4 h-4 rounded border-border accent-primary cursor-pointer shrink-0"
-                        title="Seleccionar todos de este operador" />
+                        title={t('wms_pk_select_all_op')} />
                     );
                   })()}
                   <span className={`w-2 h-2 rounded-full ${group.id === UNASSIGNED_KEY ? 'bg-red-500' : group.tickets.length === 0 ? 'bg-muted-foreground/40' : 'bg-emerald-500'}`} />
                   <span className="font-semibold text-sm truncate">{group.name}</span>
                 </div>
                 <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
-                  <span className="px-2 py-0.5 rounded-md bg-muted">{group.tickets.length} tickets</span>
-                  <span className="px-2 py-0.5 rounded-md bg-muted">{group.units.toLocaleString()} pzs</span>
+                  <span className="px-2 py-0.5 rounded-md bg-muted">{t('wms_pk_n_tickets', { n: group.tickets.length })}</span>
+                  <span className="px-2 py-0.5 rounded-md bg-muted">{group.units.toLocaleString()} {t('wms_pcs')}</span>
                 </div>
               </div>
               {group.tickets.length === 0 ? (
-                <div className="px-4 py-3 text-xs text-muted-foreground italic">Sin tickets asignados — disponible.</div>
+                <div className="px-4 py-3 text-xs text-muted-foreground italic">{t('wms_pk_no_tickets_free')}</div>
               ) : (
                 <div className="divide-y divide-border/60">
                   {group.tickets.map(tk => (
@@ -1249,13 +1259,13 @@ export const PickingModule = ({ currentUser } = {}) => {
                       <input type="checkbox" checked={selectedWorkload.includes(tk.ticket_id)}
                         onChange={() => toggleWorkloadSelect(tk.ticket_id)}
                         className="w-4 h-4 rounded border-border accent-primary cursor-pointer shrink-0"
-                        title="Seleccionar ticket" />
+                        title={t('wms_pk_select_ticket')} />
                       <div className="min-w-0">
                         <div className="flex items-center gap-2 text-sm font-medium truncate">
                           <span className="font-mono">{tk.order_number}</span>
                           <span className="text-muted-foreground truncate font-normal">{tk.style} {tk.color}</span>
                         </div>
-                        <div className="text-xs text-muted-foreground">{(tk.total_pick_qty || 0).toLocaleString()} pzs · {tk.picking_status}</div>
+                        <div className="text-xs text-muted-foreground">{(tk.total_pick_qty || 0).toLocaleString()} {t('wms_pcs')} · {pickingStatusLabel(tk.picking_status)}</div>
                       </div>
                       {/* Dotted leader line tying each ticket to its own controls
                           (the big empty gap made it easy to act on the wrong row).
@@ -1266,9 +1276,9 @@ export const PickingModule = ({ currentUser } = {}) => {
                           value=""
                           onChange={(e) => { if (e.target.value) handleQuickAssign(tk.ticket_id, e.target.value); }}
                           className="text-xs bg-card border border-border rounded-md px-2 py-1 cursor-pointer hover:bg-muted transition-colors"
-                          title="Reasignar a otro operador"
+                          title={t('wms_pk_reassign_other')}
                         >
-                          <option value="">Reasignar…</option>
+                          <option value="">{t('wms_pk_reassign_ph')}</option>
                           {operators.filter(o => o.user_id !== group.id).map(o => (
                             <option key={o.user_id} value={o.user_id}>{o.name || o.email}</option>
                           ))}
@@ -1277,9 +1287,9 @@ export const PickingModule = ({ currentUser } = {}) => {
                           <button
                             onClick={() => handleQuickAssign(tk.ticket_id, "")}
                             className="flex items-center gap-1 text-xs font-medium text-red-600 dark:text-red-400 border border-border rounded-md px-2 py-1 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors whitespace-nowrap"
-                            title="Retirar del operador (queda sin asignar)"
+                            title={t('wms_pk_withdraw_title')}
                           >
-                            <UserMinus className="w-3 h-3" /> Retirar
+                            <UserMinus className="w-3 h-3" /> {t('wms_pk_withdraw')}
                           </button>
                         )}
                       </div>
@@ -1290,7 +1300,7 @@ export const PickingModule = ({ currentUser } = {}) => {
             </div>
           ))}
           {workloadByOperator.length === 0 && (
-            <EmptyState art="clipboard" title="Sin operadores ni tickets activos" />
+            <EmptyState art="clipboard" title={t('wms_pk_no_ops_tickets')} />
           )}
         </div>
       )}
@@ -1347,7 +1357,7 @@ export const PickingModule = ({ currentUser } = {}) => {
               </div>
             </div>
           ) : (
-            <div className="text-center text-muted-foreground text-sm py-8">{t('no_operator_data')}</div>
+            <div className="text-center text-muted-foreground text-sm py-8">{t('wms_no_op_data')}</div>
           )}
         </div>
       )}
@@ -1358,13 +1368,13 @@ export const PickingModule = ({ currentUser } = {}) => {
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2 text-red-600 dark:text-red-400">
                 <AlertTriangle className="w-5 h-5" />
-                <h3 className="font-semibold text-sm">{t('wms_report_incident') || 'Reportar Problema'}</h3>
+                <h3 className="font-semibold text-sm">{t('wms_report_incident')}</h3>
               </div>
               <button onClick={() => setIncidentTicket(null)} className="p-1 hover:bg-muted rounded-md transition-colors"><X className="w-5 h-5" /></button>
             </div>
 
             <p className="text-xs text-muted-foreground">
-              {t('wms_incident_ticket') || 'Ticket'}: <span className="text-foreground">{incidentTicket.ticket_id}</span>
+              {t('wms_ticket')}: <span className="text-foreground">{incidentTicket.ticket_id}</span>
             </p>
 
             <div className="space-y-3">
@@ -1384,13 +1394,13 @@ export const PickingModule = ({ currentUser } = {}) => {
                   </select>
                 </div>
                 <div>
-                  <label className="text-xs font-medium text-muted-foreground block mb-1">Talla</label>
+                  <label className="text-xs font-medium text-muted-foreground block mb-1">{t('wms_label_size')}</label>
                   <select
                     value={incidentDraft.size}
                     onChange={e => setIncidentDraft(p => ({ ...p, size: e.target.value }))}
                     className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm transition-colors"
                   >
-                    <option value="">— Todas —</option>
+                    <option value="">{t('wms_pk_all_sizes_opt')}</option>
                     {Object.keys(incidentTicket.sizes || {}).filter(sz => incidentTicket.sizes[sz] > 0).map(sz => (
                       <option key={sz} value={sz}>{sz}</option>
                     ))}
@@ -1401,7 +1411,7 @@ export const PickingModule = ({ currentUser } = {}) => {
               {/* Qty + Razón */}
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-xs font-medium text-muted-foreground block mb-1">Cant. afectada</label>
+                  <label className="text-xs font-medium text-muted-foreground block mb-1">{t('wms_pk_qty_affected')}</label>
                   <input
                     type="number" min="1"
                     value={incidentDraft.qty}
@@ -1410,25 +1420,25 @@ export const PickingModule = ({ currentUser } = {}) => {
                   />
                 </div>
                 <div>
-                  <label className="text-xs font-medium text-muted-foreground block mb-1">Razón</label>
+                  <label className="text-xs font-medium text-muted-foreground block mb-1">{t('wms_pk_reason')}</label>
                   <select
                     value={incidentDraft.reason}
                     onChange={e => setIncidentDraft(p => ({ ...p, reason: e.target.value }))}
                     className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm"
                   >
-                    <option value="Dañado">Dañado</option>
-                    <option value="Manchado">Manchado</option>
-                    <option value="Incompleto">Incompleto</option>
-                    <option value="Faltante">Faltante</option>
-                    <option value="Talla incorrecta">Talla incorrecta</option>
-                    <option value="Otro">Otro</option>
+                    <option value="Dañado">{t('wms_pk_reason_damaged')}</option>
+                    <option value="Manchado">{t('wms_pk_reason_stained')}</option>
+                    <option value="Incompleto">{t('wms_pk_reason_incomplete')}</option>
+                    <option value="Faltante">{t('wms_pk_reason_missing')}</option>
+                    <option value="Talla incorrecta">{t('wms_pk_reason_wrong_size')}</option>
+                    <option value="Otro">{t('wms_pk_reason_other')}</option>
                   </select>
                 </div>
               </div>
 
               {/* Reposición */}
               <div className="border-t border-border/60 pt-3 space-y-3">
-                <p className="text-xs font-medium text-red-600 dark:text-red-400">Prendas a reponer por talla</p>
+                <p className="text-xs font-medium text-red-600 dark:text-red-400">{t('wms_pk_replace_by_size')}</p>
 
                 {/* Size grid */}
                 {(() => {
@@ -1453,7 +1463,7 @@ export const PickingModule = ({ currentUser } = {}) => {
                       </div>
                       {totalRep > 0 && (
                         <div className="mt-2 text-right text-xs font-medium text-red-600 dark:text-red-400">
-                          Total a reponer: <span className="text-foreground">{totalRep} prendas</span>
+                          {t('wms_pk_total_replace')} <span className="text-foreground">{t('wms_pk_n_garments', { n: totalRep })}</span>
                         </div>
                       )}
                     </div>
@@ -1461,22 +1471,22 @@ export const PickingModule = ({ currentUser } = {}) => {
                 })()}
 
                 <div>
-                  <label className="text-xs font-medium text-muted-foreground block mb-1">Descripción / Contenido a reponer</label>
+                  <label className="text-xs font-medium text-muted-foreground block mb-1">{t('wms_pk_replace_desc')}</label>
                   <input
                     type="text"
                     value={incidentDraft.replacement_description}
                     onChange={e => setIncidentDraft(p => ({ ...p, replacement_description: e.target.value }))}
-                    placeholder="Ej: Camiseta 5000 Blanca"
+                    placeholder={t('wms_pk_replace_desc_ph')}
                     className={cls.input}
                   />
                 </div>
                 <div>
-                  <label className="text-xs font-medium text-muted-foreground block mb-1">Notas</label>
+                  <label className="text-xs font-medium text-muted-foreground block mb-1">{t('wms_notes')}</label>
                   <input
                     type="text"
                     value={incidentDraft.notes}
                     onChange={e => setIncidentDraft(p => ({ ...p, notes: e.target.value }))}
-                    placeholder="Observaciones adicionales..."
+                    placeholder={t('wms_pk_notes_ph')}
                     className={cls.input}
                   />
                 </div>
@@ -1490,10 +1500,10 @@ export const PickingModule = ({ currentUser } = {}) => {
                 className="flex-1 bg-red-600 hover:bg-red-700 text-white font-medium text-sm py-2 rounded-md transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
               >
                 {incidentSaving && <Loader2 className="w-4 h-4 animate-spin" />}
-                {t('confirm') || 'Confirmar'}
+                {t('confirm')}
               </button>
               <Btn onClick={() => setIncidentTicket(null)} disabled={incidentSaving} className="flex-1">
-                {t('cancel') || 'Cancelar'}
+                {t('cancel')}
               </Btn>
             </div>
           </div>
@@ -1506,7 +1516,7 @@ export const PickingModule = ({ currentUser } = {}) => {
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2 text-amber-600 dark:text-amber-400">
                 <AlertTriangle className="w-5 h-5" />
-                <h3 className="font-semibold text-sm">Posible Duplicado</h3>
+                <h3 className="font-semibold text-sm">{t('wms_pk_possible_dup')}</h3>
               </div>
               <button onClick={() => setDupWarning(null)} disabled={loading} className="p-1 hover:bg-muted rounded-md transition-colors disabled:opacity-50"><X className="w-5 h-5" /></button>
             </div>
@@ -1515,15 +1525,15 @@ export const PickingModule = ({ currentUser } = {}) => {
               <p className="mb-2 font-medium">{dupWarning.message}</p>
               {dupWarning.existing && Object.keys(dupWarning.existing).length > 0 && (
                 <div className="space-y-1 text-xs text-muted-foreground bg-background/60 border border-border/60 p-2 rounded-md font-mono mt-3">
-                  <div><span className="text-muted-foreground/70">Ticket:</span> {dupWarning.existing.ticket_id}</div>
-                  <div><span className="text-muted-foreground/70">Status:</span> {dupWarning.existing.status} / {dupWarning.existing.picking_status}</div>
-                  <div><span className="text-muted-foreground/70">Creado por:</span> {dupWarning.existing.created_by_name}</div>
-                  <div><span className="text-muted-foreground/70">Fecha:</span> {new Date(dupWarning.existing.created_at).toLocaleString()}</div>
-                  <div><span className="text-muted-foreground/70">Qty:</span> {dupWarning.existing.total_pick_qty} unid.</div>
+                  <div><span className="text-muted-foreground/70">{t('wms_ticket')}:</span> {dupWarning.existing.ticket_id}</div>
+                  <div><span className="text-muted-foreground/70">{t('status')}:</span> {dupWarning.existing.status} / {dupWarning.existing.picking_status}</div>
+                  <div><span className="text-muted-foreground/70">{t('wms_pk_created_by')}:</span> {dupWarning.existing.created_by_name}</div>
+                  <div><span className="text-muted-foreground/70">{t('date')}:</span> {new Date(dupWarning.existing.created_at).toLocaleString()}</div>
+                  <div><span className="text-muted-foreground/70">{t('wms_qty')}:</span> {dupWarning.existing.total_pick_qty} {t('wms_pk_units_short')}</div>
                 </div>
               )}
               <p className="mt-3 text-xs italic text-muted-foreground">
-                Si solo necesitas hacer un ajuste, deberías <strong>editar el ticket existente</strong>. ¿Estás seguro que quieres crear uno nuevo adicional para esta orden?
+                {t('wms_pk_dup_hint_1')} <strong>{t('wms_pk_dup_hint_b')}</strong>{t('wms_pk_dup_hint_2')}
               </p>
             </div>
 
@@ -1534,10 +1544,10 @@ export const PickingModule = ({ currentUser } = {}) => {
                 className="flex-1 bg-amber-600 hover:bg-amber-700 text-white font-medium text-sm py-2 rounded-md transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
               >
                 {loading && <Loader2 className="w-4 h-4 animate-spin" />}
-                Crear de todos modos
+                {t('wms_pk_create_anyway')}
               </button>
               <Btn onClick={() => setDupWarning(null)} disabled={loading} className="flex-1">
-                Cancelar
+                {t('cancel')}
               </Btn>
             </div>
           </div>
@@ -1550,13 +1560,13 @@ export const PickingModule = ({ currentUser } = {}) => {
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2 text-emerald-600 dark:text-emerald-400">
                 <CheckCircle className="w-5 h-5" />
-                <h3 className="font-semibold text-sm">{t('confirm') || 'Confirmar'}</h3>
+                <h3 className="font-semibold text-sm">{t('confirm')}</h3>
               </div>
               <button onClick={() => setConfirmTicket(null)} disabled={confirmSaving} className="p-1 hover:bg-muted rounded-md transition-colors disabled:opacity-50"><X className="w-5 h-5" /></button>
             </div>
 
             <p className="text-sm text-muted-foreground">
-              {t('confirm_ticket') || '¿Confirmar este pick ticket? Se descontará el inventario.'}
+              {t('wms_pk_confirm_deduct')}
             </p>
             <div className="bg-muted/40 rounded-lg p-3 border border-border text-xs font-mono">
               <span className="text-foreground font-medium">{confirmTicket.ticket_id}</span>
@@ -1570,10 +1580,10 @@ export const PickingModule = ({ currentUser } = {}) => {
                 className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-medium text-sm py-2 rounded-md transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
               >
                 {confirmSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />}
-                {t('confirm') || 'Confirmar'}
+                {t('confirm')}
               </button>
               <Btn onClick={() => setConfirmTicket(null)} disabled={confirmSaving} className="flex-1">
-                {t('cancel') || 'Cancelar'}
+                {t('cancel')}
               </Btn>
             </div>
           </div>

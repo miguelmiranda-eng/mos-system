@@ -28,8 +28,19 @@ export const LanguageProvider = ({ children }) => {
     );
   }, [lang]);
 
+  // tName(value): alias de VISUALIZACIÓN para valores que son datos (nombres de
+  // tablero, etc.). El valor no se toca — sigue siendo la llave en la base —,
+  // solo cambia cómo se muestra. Busca la clave alias_<slug> y devuelve null si
+  // no hay alias, para que el llamador caiga a su formato de siempre.
+  const tName = useCallback((value) => {
+    if (!value) return null;
+    const slug = String(value).toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "")
+      .replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+    return translations[lang]?.["alias_" + slug] || null;
+  }, [lang]);
+
   return (
-    <LanguageContext.Provider value={{ lang, toggleLang, t }}>
+    <LanguageContext.Provider value={{ lang, toggleLang, t, tName }}>
       {children}
     </LanguageContext.Provider>
   );

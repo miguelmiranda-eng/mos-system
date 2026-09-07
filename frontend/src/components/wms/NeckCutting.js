@@ -23,7 +23,7 @@ export const NeckCuttingModule = () => {
   useEffect(() => { load(); }, [load]);
 
   const handleDeliver = async (order) => {
-    if (!window.confirm(`¿Surtir material de la orden #${order.order_number} a producción? Se descontará del inventario global.`)) return;
+    if (!window.confirm(t('wms_nc_deliver_confirm', { order: order.order_number }))) return;
     try {
       const itemsToDeliver = order.items.map(i => ({ box_id: i.box_id, qty: i.units || i.qty || 0 }));
       const res = await poster("/neck-cutting/deliver", {
@@ -31,13 +31,13 @@ export const NeckCuttingModule = () => {
         items: itemsToDeliver
       });
       if (res.ok) {
-        toast.success("Material surtido a producción exitosamente");
+        toast.success(t('wms_nc_delivered'));
         load();
       } else {
-        toast.error("Error al surtir material");
+        toast.error(t('wms_nc_deliver_err'));
       }
     } catch {
-      toast.error("Error de conexión");
+      toast.error(t('wms_conn_err'));
     }
   };
 
@@ -57,7 +57,7 @@ export const NeckCuttingModule = () => {
           <div key={o.order_number} className="p-5 bg-card border border-border rounded-lg transition-colors">
             <div className="flex justify-between items-start mb-4">
               <div>
-                <div className="text-xs font-medium text-muted-foreground mb-1">Pick Ticket en Corte</div>
+                <div className="text-xs font-medium text-muted-foreground mb-1">{t('wms_nc_ticket_in_cut')}</div>
                 <div className="text-2xl font-semibold tracking-tight tabular-nums">#{o.order_number}</div>
                 <div className="text-xs text-muted-foreground truncate max-w-[200px]">{o.customer}</div>
               </div>
@@ -68,7 +68,7 @@ export const NeckCuttingModule = () => {
 
             <div className="space-y-2 mb-4 bg-muted/40 p-3 rounded-md border border-border/60">
               <div className="flex justify-between items-center text-xs font-medium text-muted-foreground mb-2">
-                <span>Material Surtido</span>
+                <span>{t('wms_nc_picked_material')}</span>
               </div>
               {o.items.map((item, idx) => (
                 <div key={idx} className="flex justify-between items-center text-xs gap-4">
@@ -84,14 +84,14 @@ export const NeckCuttingModule = () => {
               className="w-full"
             >
               <Factory className="w-4 h-4" />
-              Surtir a Producción
+              {t('wms_nc_deliver_btn')}
             </Btn>
           </div>
         ))}
       </div>
 
       {orders.length === 0 && !loading && (
-        <EmptyState art="done" title="No hay órdenes en proceso de corte" />
+        <EmptyState art="done" title={t('wms_nc_empty')} />
       )}
     </div>
   );

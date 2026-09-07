@@ -10,6 +10,13 @@ import { SoftAlert, Btn, Chip, cls } from "./ui";
 
 const STANDARD_UNITS_PER_BOX = 72;
 
+// Campos de identidad obligatorios al CREAR un recibo: [campo, clave i18n del label].
+const REQUIRED_FIELDS = [
+  ['customer', 'wms_label_customer'], ['manufacturer', 'wms_label_manufacturer'], ['style', 'wms_label_style'],
+  ['color', 'wms_label_color'], ['size', 'wms_label_size'], ['description', 'description'],
+  ['country_of_origin', 'wms_label_coo'], ['fabric_content', 'wms_label_fabric'],
+];
+
 // ISO3 country code -> list of likely full-name variants found in dropdowns.
 // Order matters: first hit in the actual dropdown wins. Add codes as needed.
 const COUNTRY_ISO3 = Object.freeze({
@@ -84,13 +91,13 @@ const findInOptions = (needle, haystack = [], opts = {}) => {
   //    Tokenize both, require >= 50% of needle's non-trivial tokens to be in
   //    the candidate. Pick the candidate with the most overlap.
   const STOP = new Set(['DE', 'DEL', 'LA', 'EL', 'PARA', 'CON', 'Y', 'O', 'A', 'EN', 'POR']);
-  const tokenize = (s) => String(s).toUpperCase().split(/[^A-Z0-9%]+/).filter(t => t.length >= 2 && !STOP.has(t));
+  const tokenize = (s) => String(s).toUpperCase().split(/[^A-Z0-9%]+/).filter(tok => tok.length >= 2 && !STOP.has(tok));
   const needleTokens = tokenize(n);
   if (needleTokens.length >= 3) {
     let bestItem = '', bestScore = 0;
     for (const h of haystack) {
       const hTokens = new Set(tokenize(h));
-      const overlap = needleTokens.filter(t => hTokens.has(t)).length;
+      const overlap = needleTokens.filter(tok => hTokens.has(tok)).length;
       if (overlap > bestScore) { bestScore = overlap; bestItem = h; }
     }
     if (bestScore >= Math.ceil(needleTokens.length * 0.5)) return bestItem;
@@ -101,6 +108,9 @@ const findInOptions = (needle, haystack = [], opts = {}) => {
 
 export const ReceivingModule = () => {
   const { t } = useLang();
+  // El lookup de UPC vive en un useEffect que NO debe re-dispararse al cambiar idioma.
+  const tRef = useRef(t);
+  useEffect(() => { tRef.current = t; }, [t]);
   const [records, setRecords] = useState([]);
   // The recent-entries dump is gone: this screen is now search-driven. `search`
   // matches by receiving number OR customer (also style/sku) on the backend.
@@ -281,27 +291,27 @@ export const ReceivingModule = () => {
     const skipped = [];
 
     const manufacturer = findInOptions(line.brand, manufacturerOptions);
-    if (manufacturer) { updates.manufacturer = manufacturer; matched.push('Fabricante'); }
-    else if (line.brand) skipped.push('Fabricante');
+    if (manufacturer) { updates.manufacturer = manufacturer; matched.push(t('wms_label_manufacturer')); }
+    else if (line.brand) skipped.push(t('wms_label_manufacturer'));
 
     const country = findInOptions(line.country, fieldOptions.countries, { iso3: COUNTRY_ISO3 });
-    if (country) { updates.country_of_origin = country; matched.push('País'); }
-    else if (line.country) skipped.push('País');
+    if (country) { updates.country_of_origin = country; matched.push(t('wms_country')); }
+    else if (line.country) skipped.push(t('wms_country'));
 
     const description = findInOptions(line.description, fieldOptions.descriptions);
-    if (description) { updates.description = description; matched.push('Descripción'); }
-    else if (line.description) skipped.push('Descripción');
+    if (description) { updates.description = description; matched.push(t('description')); }
+    else if (line.description) skipped.push(t('description'));
 
     const fabric = findInOptions(line.fabric_content, fieldOptions.fabrics);
-    if (fabric) { updates.fabric_content = fabric; matched.push('Tela'); }
-    else if (line.fabric_content) skipped.push('Tela');
+    if (fabric) { updates.fabric_content = fabric; matched.push(t('wms_rcv_fabric_short')); }
+    else if (line.fabric_content) skipped.push(t('wms_rcv_fabric_short'));
 
     setForm(p => ({ ...p, ...updates }));
 
     if (matched.length || skipped.length) {
       const parts = [];
       if (matched.length) parts.push(`✓ ${matched.join(', ')}`);
-      if (skipped.length) parts.push(`sin match en dropdown: ${skipped.join(', ')}`);
+      if (skipped.length) parts.push(t('wms_rcv_no_dropdown_match', { list: skipped.join(', ') }));
       if (skipped.length) toast.warning(parts.join(' · '), { duration: 5000 });
       else toast.success(parts.join(' · '), { duration: 3000 });
     }
@@ -447,7 +457,7 @@ export const ReceivingModule = () => {
         const res = await fetch(url, { credentials: 'include' });
         console.log('[UPC lookup] ←', res.status, res.url);
         if (res.status === 401 || res.status === 403) {
-          toast.error('Sesión expirada. Cierra sesión y vuelve a entrar.');
+          toast.error(tRef.current('wms_rcv_session_expired'));
           setUpcDoc(null);
           return;
         }
@@ -459,14 +469,14 @@ export const ReceivingModule = () => {
         if (!res.ok) {
           const txt = await res.text();
           console.error('[UPC lookup] error body:', txt);
-          toast.error(`UPC lookup error ${res.status} — ver consola`);
+          toast.error(tRef.current('wms_rcv_upc_lookup_err', { status: res.status }));
           setUpcDoc(null);
           return;
         }
         const doc = await res.json();
         console.log('[UPC lookup] doc:', doc);
         if (!doc || !doc.upc) {
-          toast.error('UPC respuesta vacía — ver consola');
+          toast.error(tRef.current('wms_rcv_upc_empty'));
           setUpcDoc(null);
           return;
         }
@@ -487,7 +497,7 @@ export const ReceivingModule = () => {
         }));
       } catch (err) {
         console.error('[UPC lookup] exception:', err);
-        toast.error(`UPC lookup falló: ${err?.message || err}`);
+        toast.error(tRef.current('wms_rcv_upc_lookup_failed', { msg: err?.message || err }));
       } finally { setUpcLooking(false); }
     }, 300);
     return () => clearTimeout(handle);
@@ -539,7 +549,7 @@ export const ReceivingModule = () => {
 
   const handleCreateAsn = async () => {
     const asnId = asnDraft.asn_id.trim();
-    if (!asnId) { toast.error('Captura el número de ASN'); return; }
+    if (!asnId) { toast.error(t('wms_rcv_asn_num_req')); return; }
     const cleanItems = asnDraft.items
       .map(it => ({
         part_number: (it.part_number || '').trim().toUpperCase(),
@@ -550,7 +560,7 @@ export const ReceivingModule = () => {
       }))
       .filter(it => it.part_number && it.qty_expected > 0);
     if (cleanItems.length === 0) {
-      toast.error('Captura al menos una línea con Part Number y Cantidad esperada');
+      toast.error(t('wms_rcv_asn_min_line'));
       return;
     }
     setCreatingAsn(true);
@@ -563,18 +573,18 @@ export const ReceivingModule = () => {
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        toast.error(err.detail || 'No se pudo crear el ASN');
+        toast.error(err.detail || t('wms_rcv_asn_create_err'));
         return;
       }
       const newAsn = await res.json();
-      toast.success(`ASN ${newAsn.asn_id} creado · ${cleanItems.length} línea(s)`);
+      toast.success(t('wms_rcv_asn_created', { id: newAsn.asn_id, n: cleanItems.length }));
       // Refresh openAsns + auto-seleccionar el nuevo.
       const all = await fetcher('/asn');
       setOpenAsns((all || []).filter(a => a.status !== AsnStatus.RECEIVED));
       setForm(p => ({ ...p, asn_reference: newAsn.asn_id }));
       setCreateAsnOpen(false);
     } catch (err) {
-      toast.error('Error de conexión');
+      toast.error(t('wms_conn_error'));
     } finally { setCreatingAsn(false); }
   };
 
@@ -590,25 +600,20 @@ export const ReceivingModule = () => {
     // no hay recibo: el supervisor lo da de alta en Config -> Catalogo de UPC.
     if (!upcDoc) {
       toast.error(upc.trim()
-        ? `El UPC ${upc.trim().toUpperCase()} no está registrado. El supervisor debe darlo de alta en Configuración → Catálogo de UPC.`
-        : 'Escanea el UPC del cartón — todo material se recibe con UPC.');
+        ? t('wms_rcv_upc_not_registered', { upc: upc.trim().toUpperCase() })
+        : t('wms_rcv_scan_upc_req'));
       return;
     }
     if (!form.style) { toast.error(t('wms_style_req')); return; }
-    const requeridos = [
-      ['customer', 'Customer'], ['manufacturer', 'Fabricante'], ['style', 'Style'],
-      ['color', 'Color'], ['size', 'Talla (Size)'], ['description', 'Descripción'],
-      ['country_of_origin', 'País de origen'], ['fabric_content', 'Contenido de tela'],
-    ];
-    const falta = requeridos.find(([k]) => !String(form[k] || '').trim());
-    if (falta) { toast.error(`${falta[1]} es obligatorio`); return; }
-    if (totalUnits <= 0) { toast.error('Ingresa una cantidad mayor a 0 (N° de cajas o piezas sueltas)'); return; }
-    if (!form.asn_reference?.trim()) { toast.error('ASN obligatorio — captura el número de packing list o créalo primero'); return; }
-    if (!selectedAsnDoc) { toast.error(`ASN ${form.asn_reference} no existe. Créalo con el botón "+ Crear ASN".`); return; }
+    const falta = REQUIRED_FIELDS.find(([k]) => !String(form[k] || '').trim());
+    if (falta) { toast.error(t('wms_rcv_field_required', { field: t(falta[1]) })); return; }
+    if (totalUnits <= 0) { toast.error(t('wms_rcv_qty_gt_zero')); return; }
+    if (!form.asn_reference?.trim()) { toast.error(t('wms_rcv_asn_required')); return; }
+    if (!selectedAsnDoc) { toast.error(t('wms_rcv_asn_not_exists', { asn: form.asn_reference })); return; }
 
     const warnings = [];
-    if (!upc.trim()) warnings.push('Sin UPC — el recibo se guardará sin referencia de catálogo.');
-    else if (!upcDoc) warnings.push(`UPC ${upc.trim().toUpperCase()} no está en catálogo — se guardará de todas formas.`);
+    if (!upc.trim()) warnings.push(t('wms_rcv_warn_no_upc'));
+    else if (!upcDoc) warnings.push(t('wms_rcv_warn_upc_not_catalog', { upc: upc.trim().toUpperCase() }));
     // Posible sobrerrecepción contra la línea del ASN (mismo criterio que el
     // candado del backend, tolerancia default 5%): aviso aquí, el backend decide.
     const line = selectedAsnLine != null
@@ -618,7 +623,7 @@ export const ReceivingModule = () => {
       const exp = parseInt(line.qty_expected) || 0;
       const rec = parseInt(line.qty_received) || 0;
       if (exp > 0 && rec + totalUnits > exp * 1.05) {
-        warnings.push(`Posible sobrerrecepción: la línea ${line.part_number} espera ${exp.toLocaleString()}, lleva ${rec.toLocaleString()} y este recibo trae ${totalUnits.toLocaleString()} — el sistema lo rechazará salvo autorización de un admin.`);
+        warnings.push(t('wms_rcv_warn_overreceipt', { part: line.part_number, exp: exp.toLocaleString(), rec: rec.toLocaleString(), n: totalUnits.toLocaleString() }));
       }
     }
     setShowCartMenu(false);
@@ -632,35 +637,25 @@ export const ReceivingModule = () => {
     if (!editingId) {
       // UPC opcional — advertencia si falta o no está en catálogo, pero no bloquea.
       if (!upc.trim()) {
-        toast.warning('Sin UPC — el recibo se guardará sin referencia de catálogo', { duration: 4000 });
+        toast.warning(t('wms_rcv_warn_no_upc'), { duration: 4000 });
       } else if (!upcDoc) {
-        toast.warning(`UPC ${upc.trim().toUpperCase()} no está en catálogo — el recibo se guardará de todas formas`, { duration: 4000 });
+        toast.warning(t('wms_rcv_warn_upc_not_catalog', { upc: upc.trim().toUpperCase() }), { duration: 4000 });
       }
       // Todos los campos de identidad son OBLIGATORIOS (única excepción: Lot Number).
-      const requeridos = [
-        ['customer', 'Customer'],
-        ['manufacturer', 'Fabricante'],
-        ['style', 'Style'],
-        ['color', 'Color'],
-        ['size', 'Talla (Size)'],
-        ['description', 'Descripción'],
-        ['country_of_origin', 'País de origen'],
-        ['fabric_content', 'Contenido de tela'],
-      ];
-      const falta = requeridos.find(([k]) => !String(form[k] || '').trim());
-      if (falta) { toast.error(`${falta[1]} es obligatorio`); return; }
+      const falta = REQUIRED_FIELDS.find(([k]) => !String(form[k] || '').trim());
+      if (falta) { toast.error(t('wms_rcv_field_required', { field: t(falta[1]) })); return; }
       // Cantidad obligatoria > 0 (antes se podía recibir un registro de 0 unidades).
       if (totalUnits <= 0) {
-        toast.error('Ingresa una cantidad mayor a 0 (N° de cajas o piezas sueltas)');
+        toast.error(t('wms_rcv_qty_gt_zero'));
         return;
       }
       // ASN obligatorio: no se puede recibir material sin un ASN cargado.
       if (!form.asn_reference?.trim()) {
-        toast.error('ASN obligatorio — captura el número de packing list o créalo primero');
+        toast.error(t('wms_rcv_asn_required'));
         return;
       }
       if (!selectedAsnDoc) {
-        toast.error(`ASN ${form.asn_reference} no existe. Créalo con el botón "+ Crear ASN".`);
+        toast.error(t('wms_rcv_asn_not_exists', { asn: form.asn_reference }));
         return;
       }
     }
@@ -674,7 +669,7 @@ export const ReceivingModule = () => {
           lot_number: form.lot_number, inv_location: form.inv_location
         };
         const res = await fetcher(`/receiving/${editingId}`, { method: 'PUT', body: JSON.stringify(payload) });
-        toast.success(res?.message || 'Registro actualizado exitosamente');
+        toast.success(res?.message || t('wms_rcv_record_updated'));
         setShowForm(false);
         setEditingId(null);
         setForm({ customer: '', manufacturer: '', style: '', color: '', size: '', description: '', country_of_origin: '', fabric_content: '', boxes: '', pieces: '', units: '', loose: '', lot_number: '', sku: '', inv_location: '', is_bpo: false, asn_reference: '' });
@@ -712,9 +707,9 @@ export const ReceivingModule = () => {
           const warns = data.asn_warnings || [];
           if (warns.length > 0) {
             const reasons = warns.map(w => {
-              if (w.reason === 'asn_not_found') return `ASN no encontrado`;
-              if (w.reason === 'part_not_in_asn') return `${w.part_number} no en ASN`;
-              if (w.reason === 'line_not_in_asn') return `Línea ${w.line_no} ya no existe en el ASN`;
+              if (w.reason === 'asn_not_found') return t('wms_rcv_asn_not_found');
+              if (w.reason === 'part_not_in_asn') return t('wms_rcv_part_not_in_asn', { part: w.part_number });
+              if (w.reason === 'line_not_in_asn') return t('wms_rcv_line_not_in_asn', { line: w.line_no });
               return w.reason || 'mismatch';
             });
             toast.warning(`ASN ${form.asn_reference}: ${reasons.join(', ')}`, { duration: 6000 });
@@ -733,9 +728,9 @@ export const ReceivingModule = () => {
           // ASN y regresa el foco a la barra de escaneo.
           setAsnRefresh(n => n + 1);
           setTimeout(() => scanRef.current?.focus(), 50);
-        } else { const err = await res.json().catch(() => ({})); toast.error(err.detail || 'Error'); }
+        } else { const err = await res.json().catch(() => ({})); toast.error(err.detail || t('error')); }
       }
-    } catch { toast.error(t('error_connection')); }
+    } catch { toast.error(t('wms_conn_error')); }
     finally { setLoading(false); }
   };
 
@@ -813,12 +808,12 @@ export const ReceivingModule = () => {
         ${r.upc ? `<div style="text-align:center;margin-top:4px"><span class="label">UPC</span><svg id="upcbar-${idx}"></svg></div>` : ''}
         <div style="margin-top:8px;border-top:2px solid #000;padding-top:6px">
           <div style="display:flex;justify-content:space-between;align-items:baseline">
-            <div><span class="label">Caja</span><span style="font-size:30px;font-weight:bold;font-family:monospace;line-height:1;letter-spacing:-0.5px;display:block">${box.box_id}</span></div>
-            <div style="text-align:right"><span class="label">Etiqueta</span><span style="font-size:16px;font-weight:bold">${idx + 1} de ${boxes.length}</span></div>
+            <div><span class="label">${t('wms_box')}</span><span style="font-size:30px;font-weight:bold;font-family:monospace;line-height:1;letter-spacing:-0.5px;display:block">${box.box_id}</span></div>
+            <div style="text-align:right"><span class="label">${t('wms_rcv_label_word')}</span><span style="font-size:16px;font-weight:bold">${t('wms_rcv_label_n_of', { i: idx + 1, n: boxes.length })}</span></div>
           </div>
           <div style="display:flex;justify-content:space-between;align-items:baseline;margin-top:6px">
-            <div><span class="label">Fecha de recibo</span><span style="font-size:15px;font-weight:bold">${fmtLabelDate(box.created_at || r.created_at)}</span></div>
-            <div style="text-align:right"><span class="label">Recibi&oacute;</span><span style="font-size:15px;font-weight:bold">${r.received_by_name || ''}</span></div>
+            <div><span class="label">${t('wms_rcv_label_date')}</span><span style="font-size:15px;font-weight:bold">${fmtLabelDate(box.created_at || r.created_at)}</span></div>
+            <div style="text-align:right"><span class="label">${t('wms_rcv_label_received_by')}</span><span style="font-size:15px;font-weight:bold">${r.received_by_name || ''}</span></div>
           </div>
         </div>
       </div>`;
@@ -851,8 +846,8 @@ export const ReceivingModule = () => {
           El retorno vive aquí, con su propio flujo. ── */}
       <div className="inline-flex rounded-lg border border-border bg-card p-1" role="tablist">
         {[
-          { id: 'externo', label: 'Material externo', icon: Truck },
-          { id: 'retorno', label: 'Material de retorno', icon: Undo2 },
+          { id: 'externo', labelKey: 'wms_rcv_tab_external', icon: Truck },
+          { id: 'retorno', labelKey: 'wms_rcv_tab_return', icon: Undo2 },
         ].map(v => {
           const Icon = v.icon;
           const activo = intake === v.id;
@@ -867,7 +862,7 @@ export const ReceivingModule = () => {
                 activo ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'
               }`}
             >
-              <Icon className="w-4 h-4" /> {v.label}
+              <Icon className="w-4 h-4" /> {t(v.labelKey)}
             </button>
           );
         })}
@@ -886,7 +881,7 @@ export const ReceivingModule = () => {
           value={scanBuf}
           onChange={e => setScanBuf(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); handleGlobalScan(); } }}
-          placeholder="ESCANEA EL UPC DEL CARTÓN PARA RECIBIR…"
+          placeholder={t('wms_rcv_global_scan_ph')}
           className="w-full pl-14 pr-4 py-4 bg-card border border-input rounded-lg text-lg font-mono focus:outline-none focus:ring-2 focus:ring-ring/25 focus:border-ring transition-colors placeholder:text-sm placeholder:text-muted-foreground/60"
           data-testid="rcv-global-scan"
           autoFocus
@@ -901,7 +896,7 @@ export const ReceivingModule = () => {
           <input
             value={search}
             onChange={e => setSearch(e.target.value)}
-            placeholder="Buscar por N° de recibo, cliente o carro (ubicación)…"
+            placeholder={t('wms_rcv_search_ph')}
             className={`${cls.input} pl-12 pr-10`}
             data-testid="rcv-search"
           />
@@ -909,7 +904,7 @@ export const ReceivingModule = () => {
             <button
               onClick={() => setSearch('')}
               className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-muted-foreground hover:text-foreground rounded-md transition-colors"
-              title="Limpiar búsqueda"
+              title={t('wms_rcv_clear_search')}
             >
               <X className="w-4 h-4" />
             </button>
@@ -918,21 +913,21 @@ export const ReceivingModule = () => {
       </div>
       {/* Exportar Excel de recibos por cliente */}
       <div className="flex items-center gap-2 flex-wrap">
-        <span className="text-xs font-medium text-muted-foreground">Exportar recibos:</span>
+        <span className="text-xs font-medium text-muted-foreground">{t('wms_rcv_export_label')}</span>
         <div className="w-64">
-          <SearchableSelect options={customerOptions} value={exportCustomer} onChange={setExportCustomer} placeholder="Cliente (vacío = todos)…" testId="rcv-export-customer" />
+          <SearchableSelect options={customerOptions} value={exportCustomer} onChange={setExportCustomer} placeholder={t('wms_rcv_export_customer_ph')} testId="rcv-export-customer" />
         </div>
         <Btn
           onClick={() => window.open(`${API}/export/receiving${exportCustomer ? `?customer=${encodeURIComponent(exportCustomer)}` : ''}`, '_blank')}
           data-testid="rcv-export-btn"
-          title={exportCustomer ? `Exportar recibos de ${exportCustomer}` : 'Exportar todos los recibos'}
+          title={exportCustomer ? t('wms_rcv_export_of', { customer: exportCustomer }) : t('wms_rcv_export_all')}
         >
-          <Download className="w-4 h-4" /> Exportar Excel
+          <Download className="w-4 h-4" /> {t('export_excel')}
         </Btn>
       </div>
       {search.trim() && (
         <div className="text-xs font-medium text-muted-foreground px-1">
-          {records.length} resultado(s) para "{search.trim()}"
+          {t('wms_rcv_results_for', { n: records.length, q: search.trim() })}
         </div>
       )}
       {showForm && (
@@ -946,7 +941,7 @@ export const ReceivingModule = () => {
               <div className="flex gap-2">
                 <input
                   list="rcv-asn-list"
-                  placeholder="N° de ASN (obligatorio)"
+                  placeholder={t('wms_rcv_asn_ph')}
                   value={form.asn_reference}
                   onChange={e => { setForm(p => ({ ...p, asn_reference: e.target.value.trim() })); setSelectedAsnLine(null); }}
                   className={`flex-1 px-3 py-2 bg-background border rounded text-sm text-foreground font-mono ${form.asn_reference && !selectedAsnDoc && !editingId ? 'border-red-500/60' : selectedAsnDoc ? 'border-emerald-500/40' : 'border-border'}`}
@@ -959,22 +954,22 @@ export const ReceivingModule = () => {
                     variant="primary"
                     onClick={openCreateAsn}
                     className="whitespace-nowrap"
-                    title={`Crear ASN ${form.asn_reference} si aún no existe`}
+                    title={t('wms_rcv_create_asn_title', { asn: form.asn_reference })}
                     data-testid="rcv-asn-create"
                   >
                     <Plus className="w-3.5 h-3.5" />
-                    Crear ASN
+                    {t('wms_rcv_create_asn')}
                   </Btn>
                 )}
               </div>
               {!editingId && form.asn_reference && !selectedAsnDoc && (
                 <p className="text-xs text-red-600 dark:text-red-400 mt-1 flex items-center gap-1">
-                  El ASN <span className="font-mono font-semibold">{form.asn_reference}</span> no está cargado. Créalo antes de recibir.
+                  {t('wms_rcv_asn_not_loaded_a')} <span className="font-mono font-semibold">{form.asn_reference}</span> {t('wms_rcv_asn_not_loaded_b')}
                 </p>
               )}
               <datalist id="rcv-asn-list">
                 {openAsns.map(a => (
-                  <option key={a.asn_id} value={a.asn_id}>{`${a.vendor || ''} · ${a.items?.length || 0} líneas · ${a.status}`}</option>
+                  <option key={a.asn_id} value={a.asn_id}>{t('wms_rcv_asn_option', { vendor: a.vendor || '', n: a.items?.length || 0, status: a.status })}</option>
                 ))}
               </datalist>
               {/* Line picker — opcional. Si el operador ignora esto, sigue funcionando tecleando el style manualmente. */}
@@ -984,7 +979,7 @@ export const ReceivingModule = () => {
                     <div className="flex items-center gap-2">
                       <FileText className="w-3.5 h-3.5 text-muted-foreground" />
                       <span className="text-xs font-medium text-muted-foreground">
-                        Líneas del ASN ({pendingAsnLines.length}) — opcional, click para autollenar y matchear
+                        {t('wms_rcv_asn_lines_hint', { n: pendingAsnLines.length })}
                       </span>
                     </div>
                     {selectedAsnLine != null && (
@@ -993,13 +988,13 @@ export const ReceivingModule = () => {
                         onClick={clearAsnLine}
                         className="flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground"
                       >
-                        <X className="w-3 h-3" /> Limpiar
+                        <X className="w-3 h-3" /> {t('clear')}
                       </button>
                     )}
                   </div>
                   {pendingAsnLines.length === 0 ? (
                     <div className="px-3 py-3 text-xs text-muted-foreground">
-                      Este ASN está cerrado o no tiene líneas — puedes recibir manualmente sin matchear.
+                      {t('wms_rcv_asn_closed_or_empty')}
                     </div>
                   ) : (
                     <div className="max-h-44 overflow-y-auto custom-scrollbar divide-y divide-border/10">
@@ -1010,10 +1005,10 @@ export const ReceivingModule = () => {
                         const isSel = selectedAsnLine === line.line_no;
                         // remaining > 0 → faltante (pendiente); < 0 → sobrante; 0 → completo
                         const badge = remaining > 0
-                          ? { value: remaining.toLocaleString(), label: 'pendientes', cls: 'text-foreground' }
+                          ? { value: remaining.toLocaleString(), label: t('wms_rcv_badge_pending'), cls: 'text-foreground' }
                           : remaining < 0
-                            ? { value: `+${Math.abs(remaining).toLocaleString()}`, label: 'sobrante', cls: 'text-amber-600 dark:text-amber-400' }
-                            : { value: '0', label: 'completo', cls: 'text-emerald-600 dark:text-emerald-400' };
+                            ? { value: `+${Math.abs(remaining).toLocaleString()}`, label: t('wms_rcv_badge_surplus'), cls: 'text-amber-600 dark:text-amber-400' }
+                            : { value: '0', label: t('wms_rcv_badge_complete'), cls: 'text-emerald-600 dark:text-emerald-400' };
                         return (
                           <button
                             key={line.line_no}
@@ -1056,18 +1051,18 @@ export const ReceivingModule = () => {
                   <div className="px-3 py-2 bg-muted/50 border-b border-border flex items-center gap-2">
                     <ClipboardCheck className="w-3.5 h-3.5 text-muted-foreground" />
                     <span className="text-xs font-medium text-muted-foreground">
-                      Recibido en este ASN — color × talla ({(asnBoxes || []).length} cajas)
+                      {t('wms_rcv_asn_matrix_title', { n: (asnBoxes || []).length })}
                     </span>
                   </div>
                   <div className="overflow-x-auto custom-scrollbar">
                     <table className="w-full text-[11px] tabular-nums">
                       <thead>
                         <tr className="bg-muted/50 border-b border-border">
-                          <th className="text-left px-3 py-1.5 font-semibold text-muted-foreground">Color</th>
+                          <th className="text-left px-3 py-1.5 font-semibold text-muted-foreground">{t('wms_label_color')}</th>
                           {asnMatrix.sizes.map(sz => (
                             <th key={sz} className="px-2 py-1.5 font-semibold text-muted-foreground">{sz}</th>
                           ))}
-                          <th className="px-3 py-1.5 font-semibold text-muted-foreground">Total</th>
+                          <th className="px-3 py-1.5 font-semibold text-muted-foreground">{t('total')}</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -1102,15 +1097,15 @@ export const ReceivingModule = () => {
             <div className="p-3 rounded-lg bg-card border border-border">
               <label className="text-xs font-medium text-muted-foreground mb-1 flex items-center gap-2">
                 <span className="text-foreground font-semibold">UPC</span>
-                <Chip tone="danger">Obligatorio</Chip>
+                <Chip tone="danger">{t('wms_required')}</Chip>
                 {upcDoc && (
                   <Chip tone="success">
-                    <CheckCircle2 className="w-2.5 h-2.5" /> en catálogo
+                    <CheckCircle2 className="w-2.5 h-2.5" /> {t('wms_rcv_in_catalog')}
                   </Chip>
                 )}
                 {upc.trim() && !upcDoc && !upcLooking && (
                   <Chip tone="danger">
-                    no registrado
+                    {t('wms_rcv_not_registered')}
                   </Chip>
                 )}
               </label>
@@ -1118,7 +1113,7 @@ export const ReceivingModule = () => {
                 <input
                   value={upc}
                   onChange={e => setUpc(e.target.value)}
-                  placeholder="Escanea el UPC del cartón"
+                  placeholder={t('wms_rcv_upc_ph')}
                   className={`flex-1 px-3 py-2 bg-background border rounded text-sm font-mono ${
                     upcDoc ? 'border-emerald-500/40' : upc.trim() ? 'border-red-500/40' : 'border-border'
                   }`}
@@ -1134,7 +1129,7 @@ export const ReceivingModule = () => {
                   <Btn
                     type="button"
                     onClick={() => { setUpc(''); setUpcDoc(null); }}
-                    title="Limpiar UPC y desbloquear campos"
+                    title={t('wms_rcv_clear_upc')}
                   >
                     <X className="w-3.5 h-3.5" />
                   </Btn>
@@ -1148,14 +1143,13 @@ export const ReceivingModule = () => {
               {upc.trim() && !upcDoc && !upcLooking && (
                 <SoftAlert tone="danger" className="mt-2">
                   <span>
-                    El UPC <span className="font-mono font-semibold">{upc.trim().toUpperCase()}</span> no está registrado. No se puede recibir.
-                    Pídele al supervisor que lo dé de alta en <b>Configuración WMS → Catálogo de UPC</b>.
+                    {t('wms_rcv_upc_alert_a')} <span className="font-mono font-semibold">{upc.trim().toUpperCase()}</span> {t('wms_rcv_upc_alert_b')} <b>{t('wms_rcv_upc_alert_path')}</b>.
                   </span>
                 </SoftAlert>
               )}
               {!upc.trim() && (
                 <p className="text-xs text-muted-foreground mt-1.5">
-                  Escanea el UPC del cartón. Todo material se recibe con UPC registrado.
+                  {t('wms_rcv_upc_hint')}
                 </p>
               )}
             </div>
@@ -1164,7 +1158,7 @@ export const ReceivingModule = () => {
           <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
             <div>
               <label className="text-xs font-medium text-muted-foreground block mb-1">
-                {t('customer')} {!editingId && <span className="text-red-600 dark:text-red-400">*</span>} {!!upcDoc?.customer && <span className="text-emerald-600 dark:text-emerald-400 text-[9px]" title="Bloqueado por UPC">🔒</span>}
+                {t('wms_label_customer')} {!editingId && <span className="text-red-600 dark:text-red-400">*</span>} {!!upcDoc?.customer && <span className="text-emerald-600 dark:text-emerald-400 text-[9px]" title={t('wms_rcv_locked_by_upc')}>🔒</span>}
               </label>
               <SearchableSelect options={customerOptions} value={form.customer} onChange={handleCustomerChange} placeholder={t('wms_search_customer')} testId="rcv-customer" disabled={!!upcDoc?.customer} allowCreate={false} />
             </div>
@@ -1182,19 +1176,19 @@ export const ReceivingModule = () => {
           <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
             <div>
               <label className="text-xs font-medium text-muted-foreground block mb-1">
-                {t('style')} {!editingId && <span className="text-red-600 dark:text-red-400">*</span>} {!!upcDoc?.style && <span className="text-emerald-600 dark:text-emerald-400 text-[9px]" title="Bloqueado por UPC">🔒</span>}
+                {t('wms_label_style')} {!editingId && <span className="text-red-600 dark:text-red-400">*</span>} {!!upcDoc?.style && <span className="text-emerald-600 dark:text-emerald-400 text-[9px]" title={t('wms_rcv_locked_by_upc')}>🔒</span>}
               </label>
-              <SearchableSelect options={styleOptions} value={form.style} onChange={handleStyleChange} placeholder={form.customer && styleOptions.length === 0 ? 'Cliente sin catálogo — pídele al líder' : t('wms_search_style')} testId="rcv-style" disabled={!!editingId || !!upcDoc?.style || (form.customer && styleOptions.length === 0)} allowCreate={false} />
+              <SearchableSelect options={styleOptions} value={form.style} onChange={handleStyleChange} placeholder={form.customer && styleOptions.length === 0 ? t('wms_customer_no_catalog') : t('wms_search_style')} testId="rcv-style" disabled={!!editingId || !!upcDoc?.style || (form.customer && styleOptions.length === 0)} allowCreate={false} />
             </div>
             <div>
               <label className="text-xs font-medium text-muted-foreground block mb-1">
-                {t('color')} {!editingId && <span className="text-red-600 dark:text-red-400">*</span>} {!!upcDoc?.color && <span className="text-emerald-600 dark:text-emerald-400 text-[9px]" title="Bloqueado por UPC">🔒</span>}
+                {t('wms_label_color')} {!editingId && <span className="text-red-600 dark:text-red-400">*</span>} {!!upcDoc?.color && <span className="text-emerald-600 dark:text-emerald-400 text-[9px]" title={t('wms_rcv_locked_by_upc')}>🔒</span>}
               </label>
               <SearchableSelect options={colorOptions} value={form.color} onChange={handleColorChange} placeholder={t('wms_search_color')} testId="rcv-color" disabled={!!editingId || !!upcDoc?.color} allowCreate={false} />
             </div>
             <div>
               <label className="text-xs font-medium text-muted-foreground block mb-1">
-                {t('size')} {!editingId && <span className="text-red-600 dark:text-red-400">*</span>} {!!upcDoc?.size && <span className="text-emerald-600 dark:text-emerald-400 text-[9px]" title="Bloqueado por UPC">🔒</span>}
+                {t('wms_label_size')} {!editingId && <span className="text-red-600 dark:text-red-400">*</span>} {!!upcDoc?.size && <span className="text-emerald-600 dark:text-emerald-400 text-[9px]" title={t('wms_rcv_locked_by_upc')}>🔒</span>}
               </label>
               <select value={form.size} onChange={e => setForm(p => ({ ...p, size: e.target.value }))} className="w-full px-3 py-2 bg-background border border-border rounded text-sm text-foreground disabled:opacity-50" data-testid="rcv-size" disabled={!!editingId || !!upcDoc?.size}>
                 <option value="">{t('select_placeholder')}</option>
@@ -1230,7 +1224,7 @@ export const ReceivingModule = () => {
               + piezas sueltas (caja incompleta). El total se calcula solo. */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             <div>
-              <label className="text-xs text-muted-foreground mb-1 block">Piezas por caja</label>
+              <label className="text-xs text-muted-foreground mb-1 block">{t('wms_rcv_units_per_box')}</label>
               <input
                 type="number" min="1" step="1" placeholder="72"
                 value={unitsPerBox}
@@ -1239,10 +1233,10 @@ export const ReceivingModule = () => {
                 className="w-full px-3 py-2 bg-background border border-border rounded text-sm text-foreground font-mono disabled:opacity-50 disabled:cursor-not-allowed"
                 data-testid="rcv-units-per-box"
               />
-              <p className="text-xs text-muted-foreground mt-1">Default 72. Cámbialo si la caja trae otra cantidad (ej. 60).</p>
+              <p className="text-xs text-muted-foreground mt-1">{t('wms_rcv_upb_hint')}</p>
             </div>
             <div>
-              <label className="text-xs text-muted-foreground mb-1 block">N° de cajas</label>
+              <label className="text-xs text-muted-foreground mb-1 block">{t('wms_rcv_num_boxes')}</label>
               <input
                 type="number" min="0" step="1" placeholder="0"
                 value={form.boxes}
@@ -1251,10 +1245,10 @@ export const ReceivingModule = () => {
                 className="w-full px-3 py-2 bg-background border border-border rounded text-sm text-foreground disabled:opacity-50 disabled:cursor-not-allowed"
                 data-testid="rcv-boxes"
               />
-              <p className="text-xs text-muted-foreground mt-1">Cajas completas de {effectiveUpb} pzs c/u.</p>
+              <p className="text-xs text-muted-foreground mt-1">{t('wms_rcv_full_boxes_hint', { n: effectiveUpb })}</p>
             </div>
             <div>
-              <label className="text-xs text-muted-foreground mb-1 block">Piezas sueltas <span className="normal-case text-muted-foreground/70">(opcional)</span></label>
+              <label className="text-xs text-muted-foreground mb-1 block">{t('wms_rcv_loose')} <span className="normal-case text-muted-foreground/70">{t('wms_optional')}</span></label>
               <input
                 type="number" min="0" step="1" placeholder="0"
                 value={form.loose}
@@ -1263,15 +1257,15 @@ export const ReceivingModule = () => {
                 className="w-full px-3 py-2 bg-background border border-border rounded text-sm text-foreground disabled:opacity-50 disabled:cursor-not-allowed"
                 data-testid="rcv-loose"
               />
-              <p className="text-xs text-muted-foreground mt-1">Caja incompleta (menos de {effectiveUpb}).</p>
+              <p className="text-xs text-muted-foreground mt-1">{t('wms_rcv_loose_hint', { n: effectiveUpb })}</p>
             </div>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="text-xs text-muted-foreground mb-1 block">Total a recibir (auto)</label>
+              <label className="text-xs text-muted-foreground mb-1 block">{t('wms_rcv_total_auto')}</label>
               <input type="number" value={totalUnits} readOnly className="w-full px-3 py-2 bg-muted/50 border border-border rounded-md text-base text-foreground font-semibold tabular-nums" data-testid="rcv-total" />
               <p className="text-xs text-muted-foreground mt-1">
-                {(parseInt(form.boxes) || 0)} caja(s) × {effectiveUpb}{(parseInt(form.loose) || 0) > 0 ? ` + ${parseInt(form.loose)} sueltas` : ''} = <span className="font-semibold text-foreground">{totalUnits} pzs</span>
+                {t('wms_rcv_boxes_formula', { boxes: parseInt(form.boxes) || 0, upb: effectiveUpb, loose: (parseInt(form.loose) || 0) > 0 ? t('wms_rcv_plus_loose', { n: parseInt(form.loose) }) : '' })} = <span className="font-semibold text-foreground">{t('wms_rcv_n_pcs', { n: totalUnits })}</span>
               </p>
             </div>
             <div>
@@ -1301,10 +1295,10 @@ export const ReceivingModule = () => {
                   onClick={() => setShowCartMenu(s => !s)}
                   disabled={loading}
                   data-testid="rcv-submit-cart"
-                  title="Recibir esta caja a un carro de Putaway 2.0 — quedará en el carro hasta que la ubiques manualmente."
+                  title={t('wms_rcv_to_cart_title')}
                 >
                   {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Truck className="w-4 h-4" />}
-                  Recibir a Carro
+                  {t('wms_rcv_to_cart_btn')}
                   <ChevronDown className="w-3.5 h-3.5 opacity-70" />
                 </Btn>
                 {showCartMenu && (
@@ -1323,7 +1317,7 @@ export const ReceivingModule = () => {
                           <Truck className="w-3.5 h-3.5 text-muted-foreground" /> {c.name}
                         </span>
                         <span className="text-xs text-muted-foreground tabular-nums">
-                          {c.boxes || 0} cajas
+                          {t('wms_boxes_count', { n: c.boxes || 0 })}
                         </span>
                       </button>
                     ))}
@@ -1331,10 +1325,10 @@ export const ReceivingModule = () => {
                       onClick={() => requestSubmit({ toLocation: TRANSIT_LOCATION })}
                       disabled={loading}
                       className="w-full text-left px-3 py-2 text-xs border-t border-border hover:bg-muted text-muted-foreground disabled:opacity-50"
-                      title="Ubicación temporal legacy — solo si ninguno de los carros aplica."
+                      title={t('wms_rcv_legacy_title')}
                       data-testid="rcv-submit-temporal"
                     >
-                      ⏸ Ubicación Temporal (legacy)
+                      {t('wms_rcv_legacy_btn')}
                     </button>
                   </div>
                 )}
@@ -1352,28 +1346,27 @@ export const ReceivingModule = () => {
           <div className="w-full max-w-lg bg-card border border-border rounded-lg shadow-xl overflow-hidden">
             <div className="px-5 py-4 border-b border-border/20 flex items-center gap-2">
               <ClipboardCheck className="w-5 h-5 text-muted-foreground" />
-              <span className="font-semibold text-sm">Revisar y confirmar recepción</span>
+              <span className="font-semibold text-sm">{t('wms_rcv_summary_title')}</span>
             </div>
             <div className="p-5 space-y-4 max-h-[60vh] overflow-y-auto custom-scrollbar">
               <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-sm">
-                <span className="text-xs font-medium text-muted-foreground">Cliente</span>
+                <span className="text-xs font-medium text-muted-foreground">{t('wms_label_customer')}</span>
                 <span className="font-medium">{form.customer}</span>
-                <span className="text-xs font-medium text-muted-foreground">Producto</span>
+                <span className="text-xs font-medium text-muted-foreground">{t('wms_rcv_product')}</span>
                 <span className="font-mono font-medium">{form.style} / {form.color} / {form.size}</span>
                 <span className="text-xs font-medium text-muted-foreground">UPC</span>
-                <span className="font-mono">{upcDoc?.upc || (upc.trim() ? `${upc.trim().toUpperCase()} (sin catálogo)` : '— sin UPC —')}</span>
+                <span className="font-mono">{upcDoc?.upc || (upc.trim() ? t('wms_rcv_upc_no_catalog', { upc: upc.trim().toUpperCase() }) : t('wms_rcv_no_upc'))}</span>
                 <span className="text-xs font-medium text-muted-foreground">ASN</span>
-                <span className="font-mono">{form.asn_reference}{selectedAsnLine != null ? ` · línea ${selectedAsnLine}` : ''}</span>
-                <span className="text-xs font-medium text-muted-foreground">Destino</span>
+                <span className="font-mono">{form.asn_reference}{selectedAsnLine != null ? t('wms_rcv_line_n', { n: selectedAsnLine }) : ''}</span>
+                <span className="text-xs font-medium text-muted-foreground">{t('wms_destination')}</span>
                 <span className="font-mono font-medium">{pendingSubmit.opts.toLocation || 'UBICACION TEMPORAL'}</span>
               </div>
               <div className="rounded-lg border border-border bg-muted/30 p-3 text-center">
                 <div className="text-2xl font-semibold tracking-tight tabular-nums">
-                  {(parseInt(form.boxes) || 0).toLocaleString()} caja(s) × {effectiveUpb}
-                  {(parseInt(form.loose) || 0) > 0 ? ` + ${parseInt(form.loose)} sueltas` : ''}
+                  {t('wms_rcv_boxes_formula', { boxes: (parseInt(form.boxes) || 0).toLocaleString(), upb: effectiveUpb, loose: (parseInt(form.loose) || 0) > 0 ? t('wms_rcv_plus_loose', { n: parseInt(form.loose) }) : '' })}
                 </div>
                 <div className="text-sm font-medium text-muted-foreground mt-1">
-                  = {totalUnits.toLocaleString()} piezas
+                  {t('wms_rcv_eq_pieces', { n: totalUnits.toLocaleString() })}
                 </div>
               </div>
               {pendingSubmit.warnings.length > 0 && (
@@ -1394,7 +1387,7 @@ export const ReceivingModule = () => {
                 onClick={() => setPendingSubmit(null)}
                 data-testid="rcv-summary-cancel"
               >
-                Volver
+                {t('wms_back')}
               </Btn>
               <Btn
                 variant="primary"
@@ -1403,7 +1396,7 @@ export const ReceivingModule = () => {
                 data-testid="rcv-summary-confirm"
               >
                 {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Package className="w-4 h-4" />}
-                Confirmar recepción
+                {t('wms_rcv_confirm_btn')}
               </Btn>
             </div>
           </div>
@@ -1444,7 +1437,7 @@ export const ReceivingModule = () => {
                 <div className="text-right">
                   <div className="text-lg font-semibold tabular-nums leading-none">
                     {(r.total_units || r.units || 0).toLocaleString()}
-                    <span className="text-xs font-normal text-muted-foreground ml-1">Units</span>
+                    <span className="text-xs font-normal text-muted-foreground ml-1">{t('wms_units')}</span>
                   </div>
                   <div className="text-xs text-muted-foreground mt-1">
                     {new Date(r.created_at).toLocaleDateString(undefined, { day: '2-digit', month: 'short' })}
@@ -1455,7 +1448,7 @@ export const ReceivingModule = () => {
                   <button
                     onClick={() => handlePrintLabel(r)}
                     className="p-2 text-muted-foreground hover:text-foreground rounded-md hover:bg-muted transition-colors"
-                    title="Imprimir etiqueta"
+                    title={t('wms_print_label')}
                     data-testid={`rcv-print-${r.receiving_id}`}
                   >
                     <Printer className="w-5 h-5" />
@@ -1474,14 +1467,14 @@ export const ReceivingModule = () => {
         ))}
         {records.length === 0 && !search.trim() && (
           <div className="py-16 text-center">
-            <p className="text-sm font-semibold text-foreground/80">Busca un recibo</p>
-            <p className="text-sm text-muted-foreground mt-1">Escribe el N° de recibo o el nombre del cliente arriba</p>
+            <p className="text-sm font-semibold text-foreground/80">{t('wms_rcv_search_title')}</p>
+            <p className="text-sm text-muted-foreground mt-1">{t('wms_rcv_search_hint')}</p>
           </div>
         )}
         {records.length === 0 && search.trim() && !searching && (
           <div className="py-16 text-center">
-            <p className="text-sm font-semibold text-foreground/80">Sin resultados</p>
-            <p className="text-sm text-muted-foreground mt-1">No hay recibos que coincidan con "{search.trim()}"</p>
+            <p className="text-sm font-semibold text-foreground/80">{t('no_results')}</p>
+            <p className="text-sm text-muted-foreground mt-1">{t('wms_rcv_no_match', { q: search.trim() })}</p>
           </div>
         )}
       </div>
@@ -1493,9 +1486,9 @@ export const ReceivingModule = () => {
           <div className="bg-card border border-border rounded-lg w-full max-w-2xl max-h-[85vh] flex flex-col shadow-xl animate-in zoom-in-95 duration-150">
             <div className="flex items-center justify-between p-5 border-b border-border/20">
               <div>
-                <h3 className="font-semibold text-sm">Crear ASN manualmente</h3>
+                <h3 className="font-semibold text-sm">{t('wms_rcv_create_asn_modal_title')}</h3>
                 <p className="text-xs text-muted-foreground">
-                  Captura mínima del packing list — luego puedes recibir contra este ASN.
+                  {t('wms_rcv_create_asn_modal_sub')}
                 </p>
               </div>
               <button
@@ -1512,12 +1505,12 @@ export const ReceivingModule = () => {
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                 <div>
                   <label className="text-xs font-medium text-muted-foreground block mb-1">
-                    N° ASN <span className="text-red-600 dark:text-red-400">*</span>
+                    {t('wms_rcv_asn_number')} <span className="text-red-600 dark:text-red-400">*</span>
                   </label>
                   <input
                     value={asnDraft.asn_id}
                     onChange={e => setAsnDraft(p => ({ ...p, asn_id: e.target.value.trim() }))}
-                    placeholder="Ej. 12345"
+                    placeholder={t('wms_rcv_asn_number_ph')}
                     className="w-full px-3 py-2 bg-background border border-border rounded text-sm font-mono"
                     data-testid="asn-draft-id"
                   />
@@ -1527,7 +1520,7 @@ export const ReceivingModule = () => {
                   <input
                     value={asnDraft.vendor}
                     onChange={e => setAsnDraft(p => ({ ...p, vendor: e.target.value }))}
-                    placeholder="Proveedor"
+                    placeholder={t('wms_asn_vendor')}
                     className="w-full px-3 py-2 bg-background border border-border rounded text-sm"
                   />
                 </div>
@@ -1546,14 +1539,14 @@ export const ReceivingModule = () => {
               <div>
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-xs font-medium text-muted-foreground">
-                    Líneas del packing list ({asnDraft.items.length})
+                    {t('wms_rcv_pl_lines_n', { n: asnDraft.items.length })}
                   </span>
                   <button
                     type="button"
                     onClick={addAsnDraftItem}
                     className="flex items-center gap-1 text-xs font-medium text-primary hover:underline"
                   >
-                    <Plus className="w-3 h-3" /> Agregar línea
+                    <Plus className="w-3 h-3" /> {t('wms_add_line')}
                   </button>
                 </div>
                 <div className="space-y-2">
@@ -1570,7 +1563,7 @@ export const ReceivingModule = () => {
                         />
                       </div>
                       <div className="col-span-4">
-                        <label className="text-xs font-medium text-muted-foreground block mb-1">Descripción</label>
+                        <label className="text-xs font-medium text-muted-foreground block mb-1">{t('description')}</label>
                         <input
                           value={it.description}
                           onChange={e => updateAsnDraftItem(idx, 'description', e.target.value)}
@@ -1578,7 +1571,7 @@ export const ReceivingModule = () => {
                         />
                       </div>
                       <div className="col-span-2">
-                        <label className="text-xs font-medium text-muted-foreground block mb-1">Cant.*</label>
+                        <label className="text-xs font-medium text-muted-foreground block mb-1">{t('wms_rcv_qty_short')}*</label>
                         <input
                           type="number"
                           min="1"
@@ -1589,7 +1582,7 @@ export const ReceivingModule = () => {
                         />
                       </div>
                       <div className="col-span-1">
-                        <label className="text-xs font-medium text-muted-foreground block mb-1">País</label>
+                        <label className="text-xs font-medium text-muted-foreground block mb-1">{t('wms_country')}</label>
                         <input
                           value={it.country}
                           onChange={e => updateAsnDraftItem(idx, 'country', e.target.value.toUpperCase())}
@@ -1598,7 +1591,7 @@ export const ReceivingModule = () => {
                         />
                       </div>
                       <div className="col-span-1">
-                        <label className="text-xs font-medium text-muted-foreground block mb-1">Marca</label>
+                        <label className="text-xs font-medium text-muted-foreground block mb-1">{t('wms_brand')}</label>
                         <input
                           value={it.brand}
                           onChange={e => updateAsnDraftItem(idx, 'brand', e.target.value)}
@@ -1611,7 +1604,7 @@ export const ReceivingModule = () => {
                           onClick={() => removeAsnDraftItem(idx)}
                           disabled={asnDraft.items.length <= 1}
                           className="p-1.5 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded disabled:opacity-30 disabled:cursor-not-allowed"
-                          title="Quitar línea"
+                          title={t('wms_remove_line')}
                         >
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
@@ -1631,13 +1624,13 @@ export const ReceivingModule = () => {
                 data-testid="asn-draft-submit"
               >
                 {creatingAsn ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
-                Crear ASN
+                {t('wms_rcv_create_asn')}
               </Btn>
               <Btn
                 onClick={() => setCreateAsnOpen(false)}
                 disabled={creatingAsn}
               >
-                Cancelar
+                {t('cancel')}
               </Btn>
             </div>
           </div>

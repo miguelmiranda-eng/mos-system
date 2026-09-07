@@ -38,6 +38,7 @@ const agingColorCls = (days) => {
  * El icono se ilumina cuando el filtro tiene valor.
  */
 const ColFilterHeader = memo(function ColFilterHeader({ label, value, onChange, placeholder, mono, options }) {
+  const { t } = useLang();
   const active = !!(value || '').trim();
   // The typed text IS the filter (works even when there's no options list, e.g.
   // location/description). The options below are quick-picks filtered by it.
@@ -56,7 +57,7 @@ const ColFilterHeader = memo(function ColFilterHeader({ label, value, onChange, 
           <button
             type="button"
             className={`p-0.5 rounded transition-colors flex-shrink-0 ${active ? 'bg-primary/20 text-primary animate-pulse' : 'hover:bg-secondary text-muted-foreground'}`}
-            title={`Filtrar por ${label}`}
+            title={t('wms_inv_filter_by', { label })}
             onClick={e => e.stopPropagation()}
           >
             <ListFilter className="w-3.5 h-3.5" />
@@ -67,7 +68,7 @@ const ColFilterHeader = memo(function ColFilterHeader({ label, value, onChange, 
             <span className="text-xs font-medium text-muted-foreground">{label}</span>
             {active && (
               <button onClick={() => onChange('')} className="text-[10px] font-bold text-destructive hover:underline uppercase">
-                Limpiar
+                {t('clear')}
               </button>
             )}
           </div>
@@ -80,7 +81,7 @@ const ColFilterHeader = memo(function ColFilterHeader({ label, value, onChange, 
           />
           <div className="max-h-56 overflow-y-auto custom-scrollbar -mx-0.5">
             {filtered.length === 0 ? (
-              <p className="text-[11px] text-muted-foreground italic px-2 py-3 text-center">Sin coincidencias</p>
+              <p className="text-[11px] text-muted-foreground italic px-2 py-3 text-center">{t('wms_inv_no_matches')}</p>
             ) : (
               filtered.map(opt => {
                 const isSel = String(opt).toUpperCase() === String(value || '').toUpperCase();
@@ -230,6 +231,14 @@ export const InventoryModule = ({ initialCustomer = '', currentUser = null }) =>
   // Motivos para la bitácora de auditoría (entrada y salida).
   const ADD_REASONS = ['RECEPCIÓN', 'AJUSTE DE CONTEO', 'DEVOLUCIÓN DE CLIENTE', 'PRODUCCIÓN', 'TRASLADO', 'OTRO'];
   const REMOVE_REASONS = ['MERMA', 'AJUSTE DE CONTEO', 'DAÑO / DEFECTO', 'TRASLADO', 'DEVOLUCIÓN A PROVEEDOR', 'OTRO'];
+  // Solo para MOSTRAR el motivo: el valor guardado/comparado no cambia.
+  const REASON_KEYS = {
+    'RECEPCIÓN': 'wms_inv_reason_reception', 'AJUSTE DE CONTEO': 'wms_inv_reason_count_adj',
+    'DEVOLUCIÓN DE CLIENTE': 'wms_inv_reason_customer_return', 'PRODUCCIÓN': 'wms_inv_reason_production',
+    'TRASLADO': 'wms_inv_reason_transfer', 'OTRO': 'wms_inv_reason_other', 'MERMA': 'wms_inv_reason_shrink',
+    'DAÑO / DEFECTO': 'wms_inv_reason_damage', 'DEVOLUCIÓN A PROVEEDOR': 'wms_inv_reason_supplier_return',
+  };
+  const reasonLabel = (r) => (REASON_KEYS[r] ? t(REASON_KEYS[r]) : r);
   const [manualForm, setManualForm] = useState(emptyManualForm);
   const zoneOptions = useMemo(() => Object.keys(locationsByZone).sort(), [locationsByZone]);
   // Flat list of EVERY location (all zones, incl. CARRO/TRANSIT/RECEIVING) + a
@@ -434,7 +443,7 @@ export const InventoryModule = ({ initialCustomer = '', currentUser = null }) =>
         toast.success(`${t('excel_summary')}: ${data.imported.toLocaleString()} ${t('activity_records')}. ${data.locations_created} ${t('wms_locations')}.`);
         load(); loadFilters();
       } else { const err = await res.json().catch(() => ({})); toast.error(err.detail || t('error')); }
-    } catch { toast.error(t('error_connection')); }
+    } catch { toast.error(t('wms_conn_err')); }
     finally { setImporting(false); e.target.value = ''; }
   };
 
@@ -483,9 +492,9 @@ export const InventoryModule = ({ initialCustomer = '', currentUser = null }) =>
       }));
     } catch (err) {
       logLoadError('style info')(err);
-      toast.error('No se pudo cargar info del style');
+      toast.error(t('wms_inv_style_info_err'));
     } finally { setLoadingStyleInfo(false); }
-  }, []);
+  }, [t]);
 
   // Stable handlers for each Typeahead — memo() above relies on prop identity
   // staying the same across the parent's frequent re-renders (chunked paging).
@@ -510,14 +519,14 @@ export const InventoryModule = ({ initialCustomer = '', currentUser = null }) =>
     const isAdd = manualOp !== 'remove';
     const boxId = (manualForm.box_id || '').trim().toUpperCase();
     const boxes = isAdd ? 1 : (Number(manualForm.total_boxes) || 0);
-    if (!style) { toast.error('Style es requerido'); return; }
-    if (!color) { toast.error('Color es requerido'); return; }
-    if (!size) { toast.error('Talla es requerida'); return; }
-    if (!location) { toast.error('Ubicación es requerida'); return; }
-    if (units <= 0) { toast.error('Unidades debe ser mayor a 0'); return; }
-    if (isAdd && !boxId) { toast.error('Número de caja (LPN) es requerido'); return; }
-    if (!isAdd && boxes < 0) { toast.error('Cajas no puede ser negativo'); return; }
-    if (!manualForm.reason) { toast.error(`Selecciona el motivo de la ${manualOp === 'remove' ? 'salida' : 'entrada'}`); return; }
+    if (!style) { toast.error(t('wms_style_req')); return; }
+    if (!color) { toast.error(t('wms_inv_color_req')); return; }
+    if (!size) { toast.error(t('wms_inv_size_req')); return; }
+    if (!location) { toast.error(t('wms_inv_loc_req')); return; }
+    if (units <= 0) { toast.error(t('wms_inv_units_gt0')); return; }
+    if (isAdd && !boxId) { toast.error(t('wms_inv_lpn_req')); return; }
+    if (!isAdd && boxes < 0) { toast.error(t('wms_inv_boxes_neg')); return; }
+    if (!manualForm.reason) { toast.error(manualOp === 'remove' ? t('wms_inv_reason_out_req') : t('wms_inv_reason_in_req')); return; }
     setSavingManual(true);
     try {
       // Editable form fields override the style template; everything else is
@@ -544,12 +553,12 @@ export const InventoryModule = ({ initialCustomer = '', currentUser = null }) =>
       });
       if (res.ok) {
         const data = await res.json();
-        const boxNote = data.box_id ? ` · Caja ${data.box_id}` : '';
+        const boxNote = data.box_id ? t('wms_inv_box_note', { id: data.box_id }) : '';
         const msg = data.mode === 'removed'
-          ? `Material retirado (-${data.removed_units} pzs)`
+          ? t('wms_inv_removed', { n: data.removed_units })
           : data.mode === 'accumulated'
-            ? `Inventario acumulado (+${data.added_units} pzs)${boxNote}`
-            : `Inventario creado (${data.added_units} pzs)${boxNote}`;
+            ? t('wms_inv_accumulated', { n: data.added_units, box: boxNote })
+            : t('wms_inv_created', { n: data.added_units, box: boxNote });
         toast.success(msg);
         setShowAddManual(false);
         // Show what we just added by setting the search to the style — the
@@ -559,11 +568,11 @@ export const InventoryModule = ({ initialCustomer = '', currentUser = null }) =>
         loadFilters();
       } else {
         const err = await res.json().catch(() => ({}));
-        toast.error(err.detail || 'Error al guardar');
+        toast.error(err.detail || t('options_save_err'));
       }
     } catch (err) {
       logLoadError('manual inventory add')(err);
-      toast.error(t('error_connection'));
+      toast.error(t('wms_conn_err'));
     } finally { setSavingManual(false); }
   };
 
@@ -574,10 +583,10 @@ export const InventoryModule = ({ initialCustomer = '', currentUser = null }) =>
 
   const submitMultiAdd = async () => {
     const style = (manualForm.style || '').trim();
-    if (!style) { toast.error('Style es requerido'); return; }
-    if (!manualForm.reason) { toast.error('Selecciona el motivo de la entrada'); return; }
+    if (!style) { toast.error(t('wms_style_req')); return; }
+    if (!manualForm.reason) { toast.error(t('wms_inv_reason_in_req')); return; }
     const items = styleItems.filter(it => it.color && it.size && it.location && (Number(it.total_units) || 0) > 0);
-    if (items.length === 0) { toast.error('Agrega al menos un item con color, talla, ubicación y unidades'); return; }
+    if (items.length === 0) { toast.error(t('wms_inv_min_item')); return; }
     const header = {
       customer: (manualForm.customer || '').toUpperCase(),
       description: (manualForm.description || '').toUpperCase(),
@@ -606,7 +615,7 @@ export const InventoryModule = ({ initialCustomer = '', currentUser = null }) =>
       setMultiDone(i + 1);
     }
     setSavingManual(false);
-    toast.success(`Estilo ${style}: ${ok} item(s) creado(s)${fail ? ` · ${fail} con error` : ''}`);
+    toast.success(t('wms_inv_style_created', { style, ok }) + (fail ? t('wms_inv_n_failed', { n: fail }) : ''));
     if (ok) { setShowAddManual(false); setSearch(style); loadFilters(); }
   };
 
@@ -623,7 +632,7 @@ export const InventoryModule = ({ initialCustomer = '', currentUser = null }) =>
       setHistoryData(data);
     } catch (err) {
       logLoadError('inventory history')(err);
-      toast.error('Error al cargar historial');
+      toast.error(t('wms_inv_history_err'));
     } finally {
       setHistoryLoading(false);
     }
@@ -631,7 +640,7 @@ export const InventoryModule = ({ initialCustomer = '', currentUser = null }) =>
 
   const openBoxes = async (inv) => {
     if (!inv.inventory_id) {
-      toast.error('Esta fila no tiene inventory_id — no se pueden listar cajas');
+      toast.error(t('wms_inv_no_inv_id_boxes'));
       return;
     }
     const label = [inv.style || inv.sku, inv.color, inv.size].filter(Boolean).join(' · ');
@@ -643,7 +652,7 @@ export const InventoryModule = ({ initialCustomer = '', currentUser = null }) =>
       setBoxesList(Array.isArray(data) ? data : []);
     } catch (err) {
       logLoadError('boxes by inventory')(err);
-      toast.error('Error al cargar las cajas');
+      toast.error(t('wms_inv_boxes_err'));
     } finally {
       setBoxesLoading(false);
     }
@@ -651,7 +660,7 @@ export const InventoryModule = ({ initialCustomer = '', currentUser = null }) =>
 
   // Toggle the inline LPN list beneath a row (Case# 007). Lazy + cached.
   const toggleInlineBoxes = async (inv) => {
-    if (!inv.inventory_id) { toast.error('Esta fila no tiene inventory_id'); return; }
+    if (!inv.inventory_id) { toast.error(t('wms_inv_no_inv_id')); return; }
     if (expandedBoxes === inv.inventory_id) { setExpandedBoxes(null); return; }
     setExpandedBoxes(inv.inventory_id);
     if (!boxesCache[inv.inventory_id]) {
@@ -661,7 +670,7 @@ export const InventoryModule = ({ initialCustomer = '', currentUser = null }) =>
         setBoxesCache(c => ({ ...c, [inv.inventory_id]: Array.isArray(data) ? data : [] }));
       } catch (err) {
         logLoadError('boxes inline')(err);
-        toast.error('Error al cargar las cajas');
+        toast.error(t('wms_inv_boxes_err'));
       } finally {
         setBoxesRowLoading(null);
       }
@@ -673,7 +682,7 @@ export const InventoryModule = ({ initialCustomer = '', currentUser = null }) =>
     const days = agingDays(inv.oldest_received_at);
     if (days == null) return <span className="text-muted-foreground/50">—</span>;
     return (
-      <span className={`font-medium tabular-nums ${agingColorCls(days)}`} title={inv.oldest_received_at ? `Caja más vieja: ${new Date(inv.oldest_received_at).toLocaleDateString()}` : undefined}>
+      <span className={`font-medium tabular-nums ${agingColorCls(days)}`} title={inv.oldest_received_at ? t('wms_inv_oldest_box', { date: new Date(inv.oldest_received_at).toLocaleDateString() }) : undefined}>
         {days.toLocaleString()}<span className="text-muted-foreground/60 font-normal"> d</span>
       </span>
     );
@@ -684,11 +693,11 @@ export const InventoryModule = ({ initialCustomer = '', currentUser = null }) =>
   const renderCajasCell = (inv) => (
     inv.total_boxes > 0 && inv.inventory_id ? (
       <div className="flex items-center justify-end gap-1">
-        <button onClick={() => toggleInlineBoxes(inv)} title="Ver/ocultar las cajas (LPNs) aquí"
+        <button onClick={() => toggleInlineBoxes(inv)} title={t('wms_inv_toggle_boxes')}
           className="p-0.5 rounded text-muted-foreground hover:text-primary transition-all">
           <ChevronRight className={`w-3.5 h-3.5 transition-transform ${expandedBoxes === inv.inventory_id ? 'rotate-90 text-primary' : ''}`} />
         </button>
-        <button onClick={() => openBoxes(inv)} title="Ver LPNs en ventana"
+        <button onClick={() => openBoxes(inv)} title={t('wms_inv_boxes_window')}
           className="px-2 py-0.5 rounded-md border border-border bg-card hover:bg-muted transition-colors font-mono font-medium cursor-pointer underline-offset-2 hover:underline">
           {inv.total_boxes.toLocaleString()}
         </button>
@@ -705,12 +714,12 @@ export const InventoryModule = ({ initialCustomer = '', currentUser = null }) =>
         <td colSpan="15" className="px-6 py-2.5">
           {boxesRowLoading === inv.inventory_id ? (
             <div className="flex items-center gap-2 text-xs text-muted-foreground py-1">
-              <Loader2 className="w-4 h-4 animate-spin" /> Cargando cajas…
+              <Loader2 className="w-4 h-4 animate-spin" /> {t('wms_inv_loading_boxes')}
             </div>
           ) : (boxesCache[inv.inventory_id]?.length ? (
             <div className="space-y-1.5">
               <div className="text-xs font-medium text-muted-foreground">
-                {boxesCache[inv.inventory_id].length} caja(s) en {inv.inv_location || inv.location || '—'}
+                {t('wms_inv_boxes_in', { n: boxesCache[inv.inventory_id].length, loc: inv.inv_location || inv.location || '—' })}
               </div>
               <div className="flex flex-wrap gap-1.5">
                 {boxesCache[inv.inventory_id].map((b, i) => (
@@ -723,7 +732,7 @@ export const InventoryModule = ({ initialCustomer = '', currentUser = null }) =>
               </div>
             </div>
           ) : (
-            <div className="text-xs text-muted-foreground py-1 italic">Sin cajas registradas para esta línea.</div>
+            <div className="text-xs text-muted-foreground py-1 italic">{t('wms_inv_no_boxes_line')}</div>
           ))}
         </td>
       </tr>
@@ -743,13 +752,13 @@ export const InventoryModule = ({ initialCustomer = '', currentUser = null }) =>
               por Recepcion, que SI genera cajas; nunca por renglon suelto.
               Handlers y modales quedan por si se rehabilitan con candado
               supersu. */}
-          <label className="flex items-center gap-1.5 text-sm text-muted-foreground cursor-pointer select-none px-1" title="Excluir las locaciones en HOLD (SAT) del reporte exportado">
+          <label className="flex items-center gap-1.5 text-sm text-muted-foreground cursor-pointer select-none px-1" title={t('wms_inv_exclude_hold_title')}>
             <input type="checkbox" checked={excludeHold} onChange={e => setExcludeHold(e.target.checked)} className="accent-primary w-3.5 h-3.5" data-testid="exclude-hold-chk"
       />
-            Excluir HOLD
+            {t('wms_inv_exclude_hold')}
           </label>
           <Btn onClick={exportExcel} data-testid="export-inv-btn">
-            <Download className="w-4 h-4" /> Export
+            <Download className="w-4 h-4" /> {t('action_export')}
           </Btn>
         </div>
         }
@@ -778,11 +787,11 @@ export const InventoryModule = ({ initialCustomer = '', currentUser = null }) =>
           { key: 'wms_available', value: summary.total_available || 0 },
           // Material que viene en camino (ASN/BPO no recibido) y disponibilidad
           // proyectada (disponible + en tránsito).
-          { label: 'En Tránsito', value: summary.total_in_transit || 0 },
-          { label: 'On Demand', value: summary.total_on_demand || 0 },
+          { key: 'wms_inv_in_transit', value: summary.total_in_transit || 0 },
+          { key: 'wms_inv_on_demand', value: summary.total_on_demand || 0 },
           { key: 'wms_locations', value: summary.total_locations || 0 },
-        ].map((s, i) => (
-          <StatCard key={s.key || `x${i}`} label={s.label || t(s.key)} value={(s.value || 0).toLocaleString()} />
+        ].map((s) => (
+          <StatCard key={s.key} label={t(s.key)} value={(s.value || 0).toLocaleString()} />
         ))}
       </div>
 
@@ -815,7 +824,7 @@ export const InventoryModule = ({ initialCustomer = '', currentUser = null }) =>
           onClick={() => setGroupByCustomer(!groupByCustomer)}
           data-testid="inv-toggle-group"
         >
-          {groupByCustomer ? t('wms_ungroup') || 'Desagrupar' : t('wms_group_cust') || 'Agrupar Cliente'}
+          {groupByCustomer ? t('wms_ungroup') : t('wms_group_cust')}
         </Btn>
       </div>
       {showFilters && (
@@ -828,7 +837,7 @@ export const InventoryModule = ({ initialCustomer = '', currentUser = null }) =>
             </select>
           </div>
           <div>
-            <label className="text-xs font-medium text-muted-foreground block mb-1">{t('category')}</label>
+            <label className="text-xs font-medium text-muted-foreground block mb-1">{t('wms_inv_category')}</label>
             <select value={categoryFilter} onChange={e => setCategoryFilter(e.target.value)} className="w-full px-2 py-1.5 bg-background border border-border rounded text-sm text-foreground" data-testid="inv-filter-category">
               <option value="">{t('all')}</option>
               {filters.categories.map(c => <option key={c} value={c}>{c}</option>)}
@@ -845,38 +854,38 @@ export const InventoryModule = ({ initialCustomer = '', currentUser = null }) =>
             <thead className="bg-muted/50 sticky top-0 z-10 border-b border-border">
               <tr>
                 <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground whitespace-nowrap">
-                  <ColFilterHeader label={t('customer')} value={colFilters.customer} onChange={v => updateColFilter('customer', v)} placeholder="Buscar cliente…" options={facets.customers.length ? facets.customers : filters.customers} />
+                  <ColFilterHeader label={t('wms_label_customer')} value={colFilters.customer} onChange={v => updateColFilter('customer', v)} placeholder={t('wms_inv_ph_customer')} options={facets.customers.length ? facets.customers : filters.customers} />
                 </th>
                 {/* Style y SKU son dos identidades distintas (negocio vs. etiqueta
                     física): columnas separadas. El filtro busca en ambos campos. */}
                 <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground whitespace-nowrap">
-                  <ColFilterHeader label="Style" value={colFilters.sku} onChange={v => updateColFilter('sku', v)} placeholder="Style o SKU…" mono options={facets.styles.length ? facets.styles : filters.styles} />
+                  <ColFilterHeader label="Style" value={colFilters.sku} onChange={v => updateColFilter('sku', v)} placeholder={t('wms_inv_ph_style')} mono options={facets.styles.length ? facets.styles : filters.styles} />
                 </th>
                 <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground whitespace-nowrap">SKU</th>
                 <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground whitespace-nowrap">
-                  <ColFilterHeader label="Color" value={colFilters.color} onChange={v => updateColFilter('color', v)} placeholder="Color…" options={facets.colors} />
+                  <ColFilterHeader label={t('wms_label_color')} value={colFilters.color} onChange={v => updateColFilter('color', v)} placeholder={t('wms_inv_ph_color')} options={facets.colors} />
                 </th>
                 <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground whitespace-nowrap">
-                  <ColFilterHeader label="Talla" value={colFilters.size} onChange={v => updateColFilter('size', v)} placeholder="Talla…" options={facetSizes} />
+                  <ColFilterHeader label={t('wms_label_size')} value={colFilters.size} onChange={v => updateColFilter('size', v)} placeholder={t('wms_inv_ph_size')} options={facetSizes} />
                 </th>
                 <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground whitespace-nowrap">
-                  <ColFilterHeader label={t('description')} value={colFilters.description} onChange={v => updateColFilter('description', v)} placeholder="Descripción…" />
+                  <ColFilterHeader label={t('description')} value={colFilters.description} onChange={v => updateColFilter('description', v)} placeholder={t('wms_inv_ph_desc')} />
                 </th>
                 <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground whitespace-nowrap">
-                  <ColFilterHeader label={t('location')} value={colFilters.location} onChange={v => updateColFilter('location', v)} placeholder="Ubicación…" mono options={facets.locations} />
+                  <ColFilterHeader label={t('location')} value={colFilters.location} onChange={v => updateColFilter('location', v)} placeholder={t('wms_inv_ph_location')} mono options={facets.locations} />
                 </th>
                 <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground whitespace-nowrap">
-                  <ColFilterHeader label={t('country_of_origin')} value={colFilters.country_of_origin} onChange={v => updateColFilter('country_of_origin', v)} placeholder="País…" mono options={facets.countries.length ? facets.countries : filters.countries} />
+                  <ColFilterHeader label={t('country_of_origin')} value={colFilters.country_of_origin} onChange={v => updateColFilter('country_of_origin', v)} placeholder={t('wms_inv_ph_country')} mono options={facets.countries.length ? facets.countries : filters.countries} />
                 </th>
                 <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground whitespace-nowrap">
-                  <ColFilterHeader label="Fabric %" value={colFilters.fabric_content} onChange={v => updateColFilter('fabric_content', v)} placeholder="ej. 100% cotton" options={facets.fabrics.length ? facets.fabrics : filters.fabrics} />
+                  <ColFilterHeader label="Fabric %" value={colFilters.fabric_content} onChange={v => updateColFilter('fabric_content', v)} placeholder={t('wms_inv_ph_fabric')} options={facets.fabrics.length ? facets.fabrics : filters.fabrics} />
                 </th>
                 <th className="px-3 py-2.5 text-right text-xs font-semibold text-muted-foreground whitespace-nowrap">{t('wms_boxes')}</th>
                 <th className="px-3 py-2.5 text-right text-xs font-semibold text-muted-foreground whitespace-nowrap">{t('wms_on_hand')}</th>
                 <th className="px-3 py-2.5 text-right text-xs font-semibold text-muted-foreground whitespace-nowrap">{t('wms_allocated')}</th>
                 <th className="px-3 py-2.5 text-right text-xs font-semibold text-muted-foreground whitespace-nowrap">{t('wms_available')}</th>
-                <th className="px-3 py-2.5 text-right text-xs font-semibold text-muted-foreground whitespace-nowrap">Días en almacén</th>
-                <th className="px-3 py-2.5 text-center text-xs font-semibold text-muted-foreground whitespace-nowrap">Historial</th>
+                <th className="px-3 py-2.5 text-right text-xs font-semibold text-muted-foreground whitespace-nowrap">{t('wms_inv_days_in_wh')}</th>
+                <th className="px-3 py-2.5 text-center text-xs font-semibold text-muted-foreground whitespace-nowrap">{t('wms_history')}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border/10">
@@ -909,7 +918,7 @@ export const InventoryModule = ({ initialCustomer = '', currentUser = null }) =>
                         </td>
                         <td className="px-3 py-2.5 text-right">{renderAgingCell(inv)}</td>
                         <td className="px-3 py-2.5 text-center">
-                          <button onClick={() => openHistory(inv)} className="p-1.5 rounded-lg text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all" title="Ver historial">
+                          <button onClick={() => openHistory(inv)} className="p-1.5 rounded-lg text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all" title={t('wms_inv_view_history')}>
                             <History className="w-3.5 h-3.5" />
                           </button>
                         </td>
@@ -940,7 +949,7 @@ export const InventoryModule = ({ initialCustomer = '', currentUser = null }) =>
                     </td>
                     <td className="px-3 py-2.5 text-right">{renderAgingCell(inv)}</td>
                     <td className="px-3 py-2.5 text-center">
-                      <button onClick={() => openHistory(inv)} className="p-1.5 rounded-lg text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all" title="Ver historial">
+                      <button onClick={() => openHistory(inv)} className="p-1.5 rounded-lg text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all" title={t('wms_inv_view_history')}>
                         <History className="w-3.5 h-3.5" />
                       </button>
                     </td>
@@ -956,8 +965,8 @@ export const InventoryModule = ({ initialCustomer = '', currentUser = null }) =>
               return (
                 <EmptyState
                   art="scan"
-                  title="Busca un producto para empezar"
-                  hint="Escribe un Style o SKU para consultar el inventario."
+                  title={t('wms_inv_search_to_start')}
+                  hint={t('wms_inv_search_hint')}
                 />
               );
             }
@@ -971,7 +980,7 @@ export const InventoryModule = ({ initialCustomer = '', currentUser = null }) =>
         {loadingMore && totalRows > 0 && (
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
             <Loader2 className="w-3 h-3 animate-spin" />
-            Cargando {inventory.length.toLocaleString()} / {totalRows.toLocaleString()}
+            {t('wms_inv_loading_rows', { n: inventory.length.toLocaleString(), total: totalRows.toLocaleString() })}
             <div className="w-24 h-1 bg-muted rounded-full overflow-hidden">
               <div className="h-full bg-primary transition-all" style={{ width: `${totalRows > 0 ? (inventory.length / totalRows) * 100 : 0}%` }} />
             </div>
@@ -982,7 +991,7 @@ export const InventoryModule = ({ initialCustomer = '', currentUser = null }) =>
         </div>
         {capped && (
           <div className="text-xs text-amber-600 dark:text-amber-400">
-            Mostrando los primeros {MAX_GRID_ROWS.toLocaleString()} de {totalRows.toLocaleString()} — refina la búsqueda o usa Exportar para ver todo
+            {t('wms_inv_capped', { max: MAX_GRID_ROWS.toLocaleString(), total: totalRows.toLocaleString() })}
           </div>
         )}
       </div>
@@ -993,7 +1002,7 @@ export const InventoryModule = ({ initialCustomer = '', currentUser = null }) =>
           <div className="bg-card border border-border rounded-lg w-full max-w-2xl max-h-[85vh] flex flex-col shadow-xl animate-in zoom-in-95 duration-150">
             <div className="flex items-center justify-between p-5 border-b border-border/20">
               <div className="min-w-0">
-                <div className="text-xs font-medium text-muted-foreground">Cajas / LPNs</div>
+                <div className="text-xs font-medium text-muted-foreground">{t('wms_inv_boxes_lpns')}</div>
                 <div className="font-semibold text-foreground truncate">{boxesFor.label}</div>
                 {boxesFor.location && (
                   <div className="text-xs font-mono text-muted-foreground flex items-center gap-1 mt-0.5">
@@ -1009,26 +1018,26 @@ export const InventoryModule = ({ initialCustomer = '', currentUser = null }) =>
               {boxesLoading ? (
                 <div className="flex flex-col items-center justify-center py-16 gap-3">
                   <Loader2 className="w-8 h-8 animate-spin text-primary" />
-                  <p className="text-sm text-muted-foreground">Cargando cajas…</p>
+                  <p className="text-sm text-muted-foreground">{t('wms_inv_loading_boxes')}</p>
                 </div>
               ) : boxesList.length === 0 ? (
                 <div className="text-center py-12">
-                  <p className="text-sm font-semibold text-foreground/80">Sin cajas registradas</p>
+                  <p className="text-sm font-semibold text-foreground/80">{t('wms_inv_no_boxes')}</p>
                 </div>
               ) : (
                 <>
                   <div className="text-xs font-medium text-muted-foreground mb-2">
-                    {boxesList.length} {boxesList.length === 1 ? 'caja' : 'cajas'} · {boxesList.reduce((s, b) => s + (Number(b.units) || 0), 0).toLocaleString()} unidades
+                    {t('wms_inv_boxes_units', { n: boxesList.length, u: boxesList.reduce((s, b) => s + (Number(b.units) || 0), 0).toLocaleString() })}
                   </div>
                   <table className="w-full text-sm">
                     <thead className="bg-muted/50 sticky top-0 border-b border-border">
                       <tr>
                         <th className="px-2 py-2 text-left text-xs font-semibold text-muted-foreground">LPN</th>
-                        <th className="px-2 py-2 text-right text-xs font-semibold text-muted-foreground">Unidades</th>
-                        <th className="px-2 py-2 text-left text-xs font-semibold text-muted-foreground">Ubicación</th>
-                        <th className="px-2 py-2 text-left text-xs font-semibold text-muted-foreground">Estado</th>
-                        <th className="px-2 py-2 text-left text-xs font-semibold text-muted-foreground">Transferido</th>
-                        <th className="px-2 py-2 text-left text-xs font-semibold text-muted-foreground">Por</th>
+                        <th className="px-2 py-2 text-right text-xs font-semibold text-muted-foreground">{t('wms_label_units')}</th>
+                        <th className="px-2 py-2 text-left text-xs font-semibold text-muted-foreground">{t('location')}</th>
+                        <th className="px-2 py-2 text-left text-xs font-semibold text-muted-foreground">{t('status')}</th>
+                        <th className="px-2 py-2 text-left text-xs font-semibold text-muted-foreground">{t('wms_inv_transferred')}</th>
+                        <th className="px-2 py-2 text-left text-xs font-semibold text-muted-foreground">{t('wms_inv_by')}</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1057,12 +1066,12 @@ export const InventoryModule = ({ initialCustomer = '', currentUser = null }) =>
           <div className="bg-card border border-border rounded-lg w-full max-w-4xl max-h-[85vh] flex flex-col shadow-xl animate-in zoom-in-95 duration-150">
             <div className="flex items-center justify-between p-5 border-b border-border/20">
               <div className="min-w-0">
-                <h3 className="font-semibold text-sm truncate">Historial de movimientos</h3>
+                <h3 className="font-semibold text-sm truncate">{t('wms_inv_history_title')}</h3>
                 <p className="text-xs text-muted-foreground truncate">
                   <span className="font-mono">{historyFor.style}</span>
                   {historyFor.color && <> · {historyFor.color}</>}
                   {historyFor.size && <> · {historyFor.size}</>}
-                  {historyData && <> · {historyData.count} movimientos</>}
+                  {historyData && <> · {t('wms_inv_n_movements', { n: historyData.count })}</>}
                 </p>
               </div>
               <button onClick={() => setHistoryFor(null)} className="p-2 hover:bg-secondary rounded-lg transition-all flex-shrink-0">
@@ -1077,18 +1086,18 @@ export const InventoryModule = ({ initialCustomer = '', currentUser = null }) =>
                 </div>
               ) : !historyData?.movements?.length ? (
                 <div className="text-center py-20 text-sm text-muted-foreground">
-                  Sin movimientos registrados para este SKU
+                  {t('wms_inv_no_movements')}
                 </div>
               ) : (
                 <table className="w-full text-sm">
                   <thead className="bg-muted/50 sticky top-0 border-b border-border">
                     <tr>
-                      <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground whitespace-nowrap">Fecha</th>
-                      <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground whitespace-nowrap">Tipo</th>
-                      <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground whitespace-nowrap">Detalles</th>
-                      <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground whitespace-nowrap">Ubicación</th>
-                      <th className="px-3 py-2.5 text-right text-xs font-semibold text-muted-foreground whitespace-nowrap">Cantidad</th>
-                      <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground whitespace-nowrap">Usuario</th>
+                      <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground whitespace-nowrap">{t('date')}</th>
+                      <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground whitespace-nowrap">{t('wms_type')}</th>
+                      <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground whitespace-nowrap">{t('details')}</th>
+                      <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground whitespace-nowrap">{t('location')}</th>
+                      <th className="px-3 py-2.5 text-right text-xs font-semibold text-muted-foreground whitespace-nowrap">{t('quantity')}</th>
+                      <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground whitespace-nowrap">{t('user')}</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border/10">
@@ -1143,12 +1152,12 @@ export const InventoryModule = ({ initialCustomer = '', currentUser = null }) =>
                 </div>
                 <div className="min-w-0">
                   <h3 className="font-black uppercase tracking-tighter text-sm truncate">
-                    {manualOp === 'remove' ? 'Sacar inventario manual' : 'Agregar inventario manual'}
+                    {manualOp === 'remove' ? t('wms_inv_manual_remove_title') : t('wms_inv_manual_add_title')}
                   </h3>
                   <p className="text-[11px] text-muted-foreground font-bold truncate">
                     {manualOp === 'remove'
-                      ? 'Resta de una línea existente (SKU+color+talla+ubicación).'
-                      : 'Si la combinación SKU+color+talla+ubicación ya existe, se acumula.'}
+                      ? t('wms_inv_manual_remove_sub')
+                      : t('wms_inv_manual_add_sub')}
                   </p>
                 </div>
               </div>
@@ -1167,7 +1176,7 @@ export const InventoryModule = ({ initialCustomer = '', currentUser = null }) =>
                   data-testid="manual-op-add"
                   className={`flex items-center justify-center gap-1.5 py-2.5 rounded-lg text-[11px] font-black uppercase tracking-widest transition-all ${manualOp === 'add' && !multiMode ? 'bg-emerald-500 text-white shadow-md' : 'text-muted-foreground hover:text-foreground hover:bg-background/60'}`}
                 >
-                  <Plus className="w-3.5 h-3.5" /> Entrada
+                  <Plus className="w-3.5 h-3.5" /> {t('wms_inv_tab_in')}
                 </button>
                 <button
                   type="button"
@@ -1176,7 +1185,7 @@ export const InventoryModule = ({ initialCustomer = '', currentUser = null }) =>
                   data-testid="manual-op-remove"
                   className={`flex items-center justify-center gap-1.5 py-2.5 rounded-lg text-[11px] font-black uppercase tracking-widest transition-all ${manualOp === 'remove' ? 'bg-rose-500 text-white shadow-md' : 'text-muted-foreground hover:text-foreground hover:bg-background/60'}`}
                 >
-                  <Minus className="w-3.5 h-3.5" /> Salida
+                  <Minus className="w-3.5 h-3.5" /> {t('wms_inv_tab_out')}
                 </button>
                 <button
                   type="button"
@@ -1185,19 +1194,19 @@ export const InventoryModule = ({ initialCustomer = '', currentUser = null }) =>
                   data-testid="manual-multi-toggle"
                   className={`flex items-center justify-center gap-1.5 py-2.5 rounded-lg text-[11px] font-black uppercase tracking-widest transition-all ${manualOp === 'add' && multiMode ? 'bg-emerald-500 text-white shadow-md' : 'text-muted-foreground hover:text-foreground hover:bg-background/60'}`}
                 >
-                  <Tag className="w-3.5 h-3.5" /> Crear estilo
+                  <Tag className="w-3.5 h-3.5" /> {t('wms_inv_create_style')}
                 </button>
               </div>
 
               {multiMode && manualOp === 'add' && (
                 <p className="text-[11px] text-muted-foreground bg-emerald-500/5 border border-emerald-500/20 rounded-lg px-3 py-2 leading-relaxed">
-                  Captura los <b className="text-foreground">datos del estilo</b> una vez y agrega cada talla/color como un <b className="text-foreground">item</b> abajo. Al guardar se crean todos juntos.
+                  {t('wms_inv_multi_hint_1')} <b className="text-foreground">{t('wms_inv_multi_hint_b1')}</b> {t('wms_inv_multi_hint_2')} <b className="text-foreground">{t('wms_inv_multi_hint_b2')}</b> {t('wms_inv_multi_hint_3')}
                 </p>
               )}
 
               <div>
                 <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">
-                  {manualOp === 'remove' ? 'Motivo de la salida *' : 'Motivo de la entrada *'}
+                  {manualOp === 'remove' ? t('wms_inv_reason_out') : t('wms_inv_reason_in')}
                 </label>
                 <select
                   value={manualForm.reason}
@@ -1205,45 +1214,45 @@ export const InventoryModule = ({ initialCustomer = '', currentUser = null }) =>
                   data-testid="manual-reason"
                   className="w-full px-3 py-2 bg-background border border-border rounded text-sm text-foreground"
                 >
-                  <option value="">Selecciona un motivo…</option>
-                  {(manualOp === 'remove' ? REMOVE_REASONS : ADD_REASONS).map(r => <option key={r} value={r}>{r}</option>)}
+                  <option value="">{t('wms_inv_select_reason')}</option>
+                  {(manualOp === 'remove' ? REMOVE_REASONS : ADD_REASONS).map(r => <option key={r} value={r}>{reasonLabel(r)}</option>)}
                 </select>
               </div>
               {multiMode && manualOp === 'add' && (
-                <span className="text-xs font-black uppercase tracking-widest text-foreground block border-t border-border/30 pt-3">Datos del estilo</span>
+                <span className="text-xs font-black uppercase tracking-widest text-foreground block border-t border-border/30 pt-3">{t('wms_inv_style_data')}</span>
               )}
               <div className="grid grid-cols-2 gap-3">
                 <div className="col-span-2">
                   <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">
-                    {multiMode ? 'Número de estilo / SKU *' : 'Style / SKU *'}
+                    {multiMode ? t('wms_inv_style_number') : `${t('wms_style_sku')} *`}
                   </label>
                   <Typeahead
                     value={manualForm.style}
                     onChange={onStyleChange}
                     options={filters.styles || EMPTY}
-                    placeholder="Escribe el número de estilo… ej: 1001"
+                    placeholder={t('wms_inv_ph_style_number')}
                     testid="manual-style"
                   />
                 </div>
                 {!multiMode && (<>
                 <div>
-                  <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Color *</label>
+                  <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">{t('wms_label_color')} *</label>
                   <Typeahead
                     value={manualForm.color}
                     onChange={onColorChange}
                     options={styleInfo?.colors || EMPTY}
-                    placeholder={loadingStyleInfo ? 'Cargando…' : (manualForm.style ? 'Escribe o elige… ej: BLACK' : 'Elige o escribe style')}
+                    placeholder={loadingStyleInfo ? t('loading') : (manualForm.style ? t('wms_inv_ph_pick_color') : t('wms_inv_ph_style_first'))}
                     disabled={!manualForm.style || loadingStyleInfo}
                     testid="manual-color"
                   />
                 </div>
                 <div>
-                  <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Talla *</label>
+                  <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">{t('wms_label_size')} *</label>
                   <Typeahead
                     value={manualForm.size}
                     onChange={onSizeChange}
                     options={sizeOptions}
-                    placeholder={manualForm.color ? 'Escribe o elige… ej: M' : 'Elige o escribe color'}
+                    placeholder={manualForm.color ? t('wms_inv_ph_pick_size') : t('wms_inv_ph_color_first')}
                     disabled={!manualForm.color}
                     testid="manual-size"
                   />
@@ -1251,72 +1260,72 @@ export const InventoryModule = ({ initialCustomer = '', currentUser = null }) =>
                 </>)}
                 {!multiMode && (<>
                 <div>
-                  <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Zona *</label>
+                  <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">{t('wms_zone')} *</label>
                   <Typeahead
                     value={manualForm.zone}
                     onChange={onZoneChange}
                     options={zoneOptions}
-                    placeholder="Escribe… ej: RP06"
+                    placeholder={t('wms_inv_ph_zone')}
                     testid="manual-zone"
                   />
                 </div>
                 <div>
-                  <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Ubicación *</label>
+                  <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">{t('location')} *</label>
                   <Typeahead
                     value={manualForm.location}
                     onChange={onLocationChange}
                     options={locationOptions}
-                    placeholder="Escribe o elige… ej: B15"
+                    placeholder={t('wms_inv_ph_location_pick')}
                     testid="manual-location"
                   />
                 </div>
                 </>)}
                 <div>
-                  <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Cliente</label>
+                  <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">{t('wms_label_customer')}</label>
                   <Typeahead
                     value={manualForm.customer}
                     onChange={onCustomerChange}
                     options={filters.customers || EMPTY}
-                    placeholder="Escribe… ej: GIL"
+                    placeholder={t('wms_inv_ph_customer_ex')}
                     testid="manual-customer"
                   />
                 </div>
                 <div>
-                  <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">País de origen</label>
+                  <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">{t('country_of_origin')}</label>
                   <Typeahead
                     value={manualForm.country_of_origin}
                     onChange={onCooChange}
                     options={filters.countries || EMPTY}
-                    placeholder="Escribe… ej: HON"
+                    placeholder={t('wms_inv_ph_coo')}
                     testid="manual-coo"
                   />
                 </div>
                 <div>
-                  <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Contenido de tela (%)</label>
+                  <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">{t('wms_inv_fabric_pct')}</label>
                   <Typeahead
                     value={manualForm.fabric_content}
                     onChange={onFabricChange}
                     options={filters.fabrics || EMPTY}
-                    placeholder="Escribe… ej: 100% COTTON"
+                    placeholder={t('wms_inv_ph_fabric_ex')}
                     testid="manual-fabric"
                   />
                 </div>
                 <div>
-                  <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Categoría</label>
+                  <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">{t('wms_inv_category')}</label>
                   <Typeahead
                     value={manualForm.category}
                     onChange={onCategoryChange}
                     options={filters.categories || EMPTY}
-                    placeholder="Escribe…"
+                    placeholder={t('wms_inv_ph_type')}
                     testid="manual-category"
                   />
                 </div>
                 <div className="col-span-2">
-                  <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Descripción</label>
+                  <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">{t('description')}</label>
                   <input
                     value={manualForm.description}
                     onChange={e => setManualForm(f => ({ ...f, description: e.target.value.toUpperCase() }))}
-                    placeholder="Heredada del style; puedes editarla"
+                    placeholder={t('wms_inv_ph_desc_inherited')}
                     className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm font-mono"
                     data-testid="manual-description"
                   />
@@ -1324,20 +1333,20 @@ export const InventoryModule = ({ initialCustomer = '', currentUser = null }) =>
                 {!multiMode && (<>
                 {manualOp === 'add' ? (
                   <div>
-                    <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Número de caja (LPN) *</label>
+                    <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">{t('wms_inv_lpn_label')}</label>
                     <input
                       type="text"
                       value={manualForm.box_id}
                       onChange={e => setManualForm(f => ({ ...f, box_id: e.target.value.toUpperCase() }))}
-                      placeholder="Escanea o teclea el número"
+                      placeholder={t('wms_inv_ph_lpn')}
                       className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm font-mono tabular-nums uppercase"
                       data-testid="manual-box-id"
                     />
-                    <p className="text-[10px] text-muted-foreground mt-1">Una caja por ajuste. Queda enlazada y rastreable por este número.</p>
+                    <p className="text-[10px] text-muted-foreground mt-1">{t('wms_inv_lpn_hint')}</p>
                   </div>
                 ) : (
                   <div>
-                    <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Cajas</label>
+                    <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">{t('wms_boxes')}</label>
                     <input
                       type="number"
                       min="0"
@@ -1348,7 +1357,7 @@ export const InventoryModule = ({ initialCustomer = '', currentUser = null }) =>
                   </div>
                 )}
                 <div>
-                  <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">Unidades *</label>
+                  <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground block mb-1">{t('wms_label_units')} *</label>
                   <input
                     type="number"
                     min="1"
@@ -1366,15 +1375,15 @@ export const InventoryModule = ({ initialCustomer = '', currentUser = null }) =>
                 <div className="space-y-2.5">
                   <div className="flex items-center justify-between border-t border-border/30 pt-3">
                     <div>
-                      <span className="text-xs font-black uppercase tracking-widest text-foreground">Items del estilo</span>
-                      <p className="text-[11px] text-muted-foreground">Agrega un renglón por cada talla / color.</p>
+                      <span className="text-xs font-black uppercase tracking-widest text-foreground">{t('wms_inv_style_items')}</span>
+                      <p className="text-[11px] text-muted-foreground">{t('wms_inv_style_items_hint')}</p>
                     </div>
                     <button
                       type="button" onClick={addStyleItem} disabled={savingManual}
                       className="text-[11px] font-black uppercase tracking-widest text-emerald-600 hover:text-emerald-500 flex items-center gap-1 bg-emerald-500/10 border border-emerald-500/30 rounded-lg px-2.5 py-1.5 disabled:opacity-50"
                       data-testid="manual-add-item"
                     >
-                      <Plus className="w-3.5 h-3.5" /> Agregar item
+                      <Plus className="w-3.5 h-3.5" /> {t('wms_add_item')}
                     </button>
                   </div>
 
@@ -1386,39 +1395,39 @@ export const InventoryModule = ({ initialCustomer = '', currentUser = null }) =>
                         <div className="flex items-center justify-between">
                           <span className="text-[11px] font-black uppercase tracking-widest text-emerald-600 flex items-center gap-1.5">
                             <span className="w-5 h-5 rounded-full bg-emerald-500 text-white flex items-center justify-center text-[10px]">{i + 1}</span>
-                            Item {i + 1}
+                            {t('wms_inv_item_n', { n: i + 1 })}
                           </span>
                           {styleItems.length > 1 && (
                             <button type="button" onClick={() => removeStyleItem(i)} disabled={savingManual}
                               className="text-[10px] font-bold uppercase tracking-widest text-rose-500 hover:text-rose-400 flex items-center gap-1 disabled:opacity-50"
-                              title="Quitar item">
-                              <X className="w-3.5 h-3.5" /> Quitar
+                              title={t('wms_inv_remove_item')}>
+                              <X className="w-3.5 h-3.5" /> {t('wms_inv_remove')}
                             </button>
                           )}
                         </div>
                         <div className="grid grid-cols-2 gap-2.5">
                           <div>
-                            <label className={lbl}>Color *</label>
-                            <Typeahead value={it.color} onChange={v => updateStyleItem(i, { color: v })} options={styleInfo?.colors || EMPTY} placeholder="Escribe o elige" testid={`item-color-${i}`} />
+                            <label className={lbl}>{t('wms_label_color')} *</label>
+                            <Typeahead value={it.color} onChange={v => updateStyleItem(i, { color: v })} options={styleInfo?.colors || EMPTY} placeholder={t('wms_inv_ph_type_or_pick')} testid={`item-color-${i}`} />
                           </div>
                           <div>
-                            <label className={lbl}>Talla *</label>
-                            <Typeahead value={it.size} onChange={v => updateStyleItem(i, { size: v })} options={sizeOptions} placeholder="Escribe o elige" testid={`item-size-${i}`} />
+                            <label className={lbl}>{t('wms_label_size')} *</label>
+                            <Typeahead value={it.size} onChange={v => updateStyleItem(i, { size: v })} options={sizeOptions} placeholder={t('wms_inv_ph_type_or_pick')} testid={`item-size-${i}`} />
                           </div>
                           <div>
-                            <label className={lbl}>Zona</label>
-                            <Typeahead value={it.zone} onChange={v => updateStyleItem(i, { zone: v, location: '' })} options={zoneOptions} placeholder="Opcional" testid={`item-zone-${i}`} />
+                            <label className={lbl}>{t('wms_zone')}</label>
+                            <Typeahead value={it.zone} onChange={v => updateStyleItem(i, { zone: v, location: '' })} options={zoneOptions} placeholder={t('wms_optional_word')} testid={`item-zone-${i}`} />
                           </div>
                           <div>
-                            <label className={lbl}>Ubicación *</label>
-                            <Typeahead value={it.location} onChange={v => updateStyleItem(i, { location: v, zone: locZoneMap[v] || it.zone })} options={itLocOptions} placeholder="Escribe o elige" testid={`item-loc-${i}`} />
+                            <label className={lbl}>{t('location')} *</label>
+                            <Typeahead value={it.location} onChange={v => updateStyleItem(i, { location: v, zone: locZoneMap[v] || it.zone })} options={itLocOptions} placeholder={t('wms_inv_ph_type_or_pick')} testid={`item-loc-${i}`} />
                           </div>
                           <div>
-                            <label className={lbl}>Cajas</label>
+                            <label className={lbl}>{t('wms_boxes')}</label>
                             <input type="number" min="0" value={it.total_boxes} onChange={e => updateStyleItem(i, { total_boxes: e.target.value })} className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm font-mono tabular-nums" />
                           </div>
                           <div>
-                            <label className={lbl}>Unidades *</label>
+                            <label className={lbl}>{t('wms_label_units')} *</label>
                             <input type="number" min="1" value={it.total_units} onChange={e => updateStyleItem(i, { total_units: e.target.value })} className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm font-mono tabular-nums font-bold" />
                           </div>
                         </div>
@@ -1429,7 +1438,7 @@ export const InventoryModule = ({ initialCustomer = '', currentUser = null }) =>
                   {savingManual && (
                     <div>
                       <div className="flex justify-between text-[11px] font-bold text-muted-foreground mb-1">
-                        <span>Creando items…</span>
+                        <span>{t('wms_inv_creating_items')}</span>
                         <span className="font-mono">{multiDone} / {styleItems.filter(it => it.color && it.size && it.location && (Number(it.total_units) || 0) > 0).length}</span>
                       </div>
                       <div className="w-full h-2.5 bg-secondary rounded-full overflow-hidden">
@@ -1448,7 +1457,7 @@ export const InventoryModule = ({ initialCustomer = '', currentUser = null }) =>
                 disabled={savingManual}
                 className="px-4 py-2 text-xs font-bold uppercase tracking-widest text-muted-foreground hover:text-foreground transition-all"
               >
-                Cancelar
+                {t('cancel')}
               </button>
               <button
                 onClick={multiMode && manualOp === 'add' ? submitMultiAdd : submitManualAdd}
@@ -1457,7 +1466,7 @@ export const InventoryModule = ({ initialCustomer = '', currentUser = null }) =>
                 data-testid="manual-submit-btn"
               >
                 {savingManual ? <Loader2 className="w-4 h-4 animate-spin" /> : (manualOp === 'remove' ? <Minus className="w-4 h-4" /> : <Plus className="w-4 h-4" />)}
-                {manualOp === 'remove' ? 'Sacar' : (multiMode ? 'Crear estilo' : 'Guardar')}
+                {manualOp === 'remove' ? t('wms_inv_remove_btn') : (multiMode ? t('wms_inv_create_style') : t('save'))}
               </button>
             </div>
           </div>

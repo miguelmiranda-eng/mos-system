@@ -20,6 +20,7 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import { toast } from "sonner";
 import { Undo2, Plus, Loader2, MapPin, Printer, X, PackageCheck } from "lucide-react";
 import SearchableSelect from "../SearchableSelect";
+import { useLang } from "../../contexts/LanguageContext";
 import { fetcher, poster, logLoadError, useWmsSizes, useWmsCatalogs, mergeUnique, API } from "./lib";
 import { Card, Btn, Chip, EmptyState, SoftAlert, cls } from "./ui";
 
@@ -33,6 +34,7 @@ const EMPTY = {
 const MAX_CAJAS = 100;
 
 export default function ReturnReceiving() {
+  const { t } = useLang();
   const cat = useWmsCatalogs();
   const { all: ALL_SIZES } = useWmsSizes();
 
@@ -98,11 +100,11 @@ export default function ReturnReceiving() {
       ? `${API}/labels/box/${encodeURIComponent(limpios[0])}`
       : `${API}/labels/boxes?box_ids=${limpios.map(encodeURIComponent).join(",")}`;
     const w = window.open(url, "_blank");
-    if (!w) toast.error("El navegador bloqueó la ventana de impresión");
+    if (!w) toast.error(t('wms_popup_err'));
   };
 
   const guardar = async () => {
-    if (!completo) { toast.error("Completa todos los campos"); return; }
+    if (!completo) { toast.error(t('wms_ret_fill_all')); return; }
     setSaving(true);
     try {
       const res = await poster("/returns/receive", { ...form, units, box_count: cajas });
@@ -112,8 +114,8 @@ export default function ReturnReceiving() {
         // `box_ids` trae las N para imprimir de un solo tirón.
         const ids = data.box_ids?.length ? data.box_ids : [data.box_id];
         toast.success(ids.length === 1
-          ? `Caja ${ids[0]} generada · ${units} u`
-          : `${ids.length} cajas generadas · ${units} u c/u · ${(units * ids.length).toLocaleString()} u total`);
+          ? t('wms_ret_box_generated', { box: ids[0], units })
+          : t('wms_ret_boxes_generated', { n: ids.length, units, total: (units * ids.length).toLocaleString() }));
         abrirEtiquetas(ids);
         // El cliente se conserva: casi siempre se capturan varios renglones del
         // mismo cliente seguidos.
@@ -121,9 +123,9 @@ export default function ReturnReceiving() {
         loadPending();
       } else {
         const err = await res.json().catch(() => ({}));
-        toast.error(err.detail || "No se pudo registrar el retorno");
+        toast.error(err.detail || t('wms_ret_register_err'));
       }
-    } catch { toast.error("Error de conexión"); }
+    } catch { toast.error(t('wms_conn_error')); }
     finally { setSaving(false); }
   };
 
@@ -145,16 +147,16 @@ export default function ReturnReceiving() {
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
-        toast.success(data.message || `${seleccionadas.length} cajas ubicadas`);
+        toast.success(data.message || t('wms_ret_boxes_located', { n: seleccionadas.length }));
         if (data.failed?.length) {
-          toast.error(`${data.failed.length} con error: ${data.failed[0]?.reason || ""}`);
+          toast.error(t('wms_ret_n_with_error', { n: data.failed.length, reason: data.failed[0]?.reason || "" }));
         }
         setSelected([]); setMoveOpen(false); setDest("");
         loadPending();
       } else {
-        toast.error(data.detail || "No se pudieron mover las cajas");
+        toast.error(data.detail || t('wms_ret_move_err'));
       }
-    } catch { toast.error("Error de conexión"); }
+    } catch { toast.error(t('wms_conn_error')); }
     finally { setMoving(false); }
   };
 
@@ -166,24 +168,22 @@ export default function ReturnReceiving() {
 
   return (
     <div className="space-y-5" data-testid="return-receiving">
-      <SoftAlert tone="info" title="Material que regresa de producción">
-        Se genera una etiqueta nueva marcada como retorno y la caja queda en acopio
-        {staging ? <> en <span className="font-mono font-medium">{staging}</span></> : null}
-        {" "}hasta que la mandes a su ubicación. Todos los datos salen del catálogo de
-        Configuración: el país de origen y la composición son obligatorios porque son
-        parte de la identidad del lote.
+      <SoftAlert tone="info" title={t('wms_ret_alert_title')}>
+        {t('wms_ret_alert_body_1')}
+        {staging ? <> {t('wms_ret_alert_in')} <span className="font-mono font-medium">{staging}</span></> : null}
+        {" "}{t('wms_ret_alert_body_2')}
       </SoftAlert>
 
       {/* ── Captura ─────────────────────────────────────────────────────── */}
       {!showForm ? (
         <Btn variant="primary" onClick={() => setShowForm(true)} data-testid="ret-open-form">
-          <Undo2 className="w-4 h-4" /> Recibir material de retorno
+          <Undo2 className="w-4 h-4" /> {t('wms_ret_receive_btn')}
         </Btn>
       ) : (
         <Card className="p-5 space-y-4" data-testid="ret-form">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-semibold flex items-center gap-2">
-              <Undo2 className="w-4 h-4 text-muted-foreground" /> Recibir material de retorno
+              <Undo2 className="w-4 h-4 text-muted-foreground" /> {t('wms_ret_receive_btn')}
             </h3>
             <Btn variant="ghost" onClick={() => { setShowForm(false); setForm(EMPTY); }}>
               <X className="w-4 h-4" />
@@ -191,47 +191,47 @@ export default function ReturnReceiving() {
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            <Field label="Cliente">
+            <Field label={t('wms_label_customer')}>
               <SearchableSelect options={cat.customers} value={form.customer}
                 onChange={v => setForm(p => ({ ...p, customer: v, style: "", color: "" }))}
-                placeholder="Cliente…" testId="ret-customer" allowCreate={false} />
+                placeholder={t('wms_ret_ph_customer')} testId="ret-customer" allowCreate={false} />
             </Field>
-            <Field label="Estilo">
+            <Field label={t('wms_label_style')}>
               <SearchableSelect options={styleOptions} value={form.style} onChange={set("style")}
                 placeholder={form.customer && styleOptions.length === 0
-                  ? "Cliente sin catálogo — pídele al líder" : "Estilo…"}
+                  ? t('wms_customer_no_catalog') : t('wms_ret_ph_style')}
                 testId="ret-style" allowCreate={false}
                 disabled={!form.customer || styleOptions.length === 0} />
             </Field>
-            <Field label="Color">
+            <Field label={t('wms_label_color')}>
               <SearchableSelect options={colorOptions} value={form.color} onChange={set("color")}
-                placeholder="Color…" testId="ret-color" allowCreate={false}
+                placeholder={t('wms_ret_ph_color')} testId="ret-color" allowCreate={false}
                 disabled={!form.customer} />
             </Field>
-            <Field label="Talla">
+            <Field label={t('wms_label_size')}>
               <SearchableSelect options={sizeOptions} value={form.size} onChange={set("size")}
-                placeholder="Talla…" testId="ret-size" allowCreate={false} />
+                placeholder={t('wms_ret_ph_size')} testId="ret-size" allowCreate={false} />
             </Field>
-            <Field label="Cantidad por caja">
+            <Field label={t('wms_ret_units_per_box')}>
               <input type="number" min="1" inputMode="numeric" className={cls.input}
                 value={form.units} onChange={e => set("units")(e.target.value)}
-                placeholder="Piezas…" data-testid="ret-units" />
+                placeholder={t('wms_ret_ph_pieces')} data-testid="ret-units" />
             </Field>
             {/* Varias cajas idénticas en un solo movimiento: se mintea un LPN
                 por caja, cada uno con su etiqueta. */}
-            <Field label="Cajas">
+            <Field label={t('wms_boxes')}>
               <input type="number" min="1" max={MAX_CAJAS} inputMode="numeric" className={cls.input}
                 value={form.box_count} onChange={e => set("box_count")(e.target.value)}
                 placeholder="1" data-testid="ret-box-count" />
             </Field>
-            <Field label="País de origen">
+            <Field label={t('wms_label_coo')}>
               <SearchableSelect options={cat.countries} value={form.country_of_origin}
-                onChange={set("country_of_origin")} placeholder="País…"
+                onChange={set("country_of_origin")} placeholder={t('wms_ret_ph_country')}
                 testId="ret-country" allowCreate={false} />
             </Field>
-            <Field label="Composición">
+            <Field label={t('wms_ret_composition')}>
               <SearchableSelect options={cat.fabrics} value={form.fabric_content}
-                onChange={set("fabric_content")} placeholder="Composición…"
+                onChange={set("fabric_content")} placeholder={t('wms_ret_ph_composition')}
                 testId="ret-fabric" allowCreate={false} />
             </Field>
           </div>
@@ -240,20 +240,20 @@ export default function ReturnReceiving() {
             <Btn variant="primary" onClick={guardar} disabled={!completo || saving}
               data-testid="ret-submit">
               {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-              {cajas > 1 ? `Generar ${cajas} cajas` : "Generar caja"}
+              {cajas > 1 ? t('wms_ret_generate_n_boxes', { n: cajas }) : t('wms_ret_generate_box')}
             </Btn>
             {!completo ? (
               <span className="text-xs text-muted-foreground">
                 {cajas > MAX_CAJAS
-                  ? `Máximo ${MAX_CAJAS} cajas por captura`
-                  : "Faltan datos — todos los campos son obligatorios"}
+                  ? t('wms_ret_max_boxes', { max: MAX_CAJAS })
+                  : t('wms_ret_missing_data')}
               </span>
             ) : cajas > 1 ? (
               <span className="text-xs text-muted-foreground" data-testid="ret-total-preview">
-                {cajas} cajas × {units.toLocaleString()} u ={" "}
+                {t('wms_ret_preview_a', { boxes: cajas, units: units.toLocaleString() })}{" "}
                 <strong className="text-foreground tabular-nums">
                   {(cajas * units).toLocaleString()}
-                </strong>{" "}u — se imprimen {cajas} etiquetas
+                </strong>{" "}{t('wms_ret_preview_b', { n: cajas })}
               </span>
             ) : null}
           </div>
@@ -265,8 +265,8 @@ export default function ReturnReceiving() {
         <div className="flex items-center justify-between px-4 py-3 border-b border-border">
           <div className="flex items-center gap-2">
             <PackageCheck className="w-4 h-4 text-muted-foreground" />
-            <span className="text-sm font-semibold">En acopio</span>
-            <Chip>{pending.length} cajas</Chip>
+            <span className="text-sm font-semibold">{t('wms_ret_staging_title')}</span>
+            <Chip>{t('wms_boxes_count', { n: pending.length })}</Chip>
             <Chip tone="info">
               {pending.reduce((s, b) => s + (parseInt(b.units, 10) || 0), 0).toLocaleString()} u
             </Chip>
@@ -277,10 +277,10 @@ export default function ReturnReceiving() {
                   se atoró la impresora o se despegó la etiqueta había que sacar
                   las cajas una por una. */}
               <Btn onClick={() => abrirEtiquetas(selected)} data-testid="ret-print-many">
-                <Printer className="w-4 h-4" /> Etiquetas ({selected.length})
+                <Printer className="w-4 h-4" /> {t('wms_ret_labels_n', { n: selected.length })}
               </Btn>
               <Btn variant="primary" onClick={() => setMoveOpen(true)} data-testid="ret-move-open">
-                <MapPin className="w-4 h-4" /> Enviar a ubicación ({selected.length})
+                <MapPin className="w-4 h-4" /> {t('wms_ret_send_to_loc_n', { n: selected.length })}
               </Btn>
             </div>
           )}
@@ -291,8 +291,8 @@ export default function ReturnReceiving() {
             <Loader2 className="w-5 h-5 animate-spin" />
           </div>
         ) : pending.length === 0 ? (
-          <EmptyState art="rack" title="Sin material en acopio"
-            hint="Lo que recibas de retorno aparece aquí hasta que lo mandes a su ubicación." />
+          <EmptyState art="rack" title={t('wms_ret_empty_title')}
+            hint={t('wms_ret_empty_hint')} />
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
@@ -300,16 +300,16 @@ export default function ReturnReceiving() {
                 <tr>
                   <th className="px-3 py-2.5 w-10">
                     <input type="checkbox" checked={allSel} onChange={toggleAll}
-                      aria-label="Seleccionar todas" data-testid="ret-select-all"
+                      aria-label={t('select_all')} data-testid="ret-select-all"
                       className="rounded border-input" />
                   </th>
-                  <th className={cls.th}>Caja</th>
-                  <th className={cls.th}>Cliente</th>
-                  <th className={cls.th}>Estilo</th>
-                  <th className={cls.th}>Color</th>
-                  <th className={cls.th}>Talla</th>
-                  <th className={`${cls.th} text-right`}>Unidades</th>
-                  <th className={cls.th}>Origen</th>
+                  <th className={cls.th}>{t('wms_box')}</th>
+                  <th className={cls.th}>{t('wms_label_customer')}</th>
+                  <th className={cls.th}>{t('wms_label_style')}</th>
+                  <th className={cls.th}>{t('wms_label_color')}</th>
+                  <th className={cls.th}>{t('wms_label_size')}</th>
+                  <th className={`${cls.th} text-right`}>{t('wms_label_units')}</th>
+                  <th className={cls.th}>{t('wms_origin')}</th>
                   <th className={cls.th}></th>
                 </tr>
               </thead>
@@ -321,7 +321,7 @@ export default function ReturnReceiving() {
                     <td className={cls.td}>
                       <input type="checkbox" checked={selected.includes(b.box_id)}
                         onChange={() => toggle(b.box_id)} className="rounded border-input"
-                        aria-label={`Seleccionar ${b.box_id}`}
+                        aria-label={t('wms_select_box_aria', { box: b.box_id })}
                         data-testid={`ret-check-${b.box_id}`} />
                     </td>
                     <td className={`${cls.td} font-mono text-xs`}>{b.box_id}</td>
@@ -334,7 +334,7 @@ export default function ReturnReceiving() {
                     </td>
                     <td className={`${cls.td} text-xs text-muted-foreground`}>{b.country_of_origin}</td>
                     <td className={`${cls.td} text-right`}>
-                      <Btn variant="ghost" onClick={() => imprimir(b)} title="Imprimir etiqueta">
+                      <Btn variant="ghost" onClick={() => imprimir(b)} title={t('wms_print_label')}>
                         <Printer className="w-3.5 h-3.5" />
                       </Btn>
                     </td>
@@ -353,27 +353,27 @@ export default function ReturnReceiving() {
           <Card className="w-full max-w-sm p-5 space-y-4" onClick={e => e.stopPropagation()}
             data-testid="ret-move-modal">
             <h3 className="text-sm font-semibold flex items-center gap-2">
-              <MapPin className="w-4 h-4 text-muted-foreground" /> Enviar a ubicación
+              <MapPin className="w-4 h-4 text-muted-foreground" /> {t('wms_ret_send_to_loc')}
             </h3>
 
             <SearchableSelect options={locNames} value={dest} onChange={setDest}
-              placeholder="Buscar ubicación…" testId="ret-dest" allowCreate={false} />
+              placeholder={t('wms_search_location_ph')} testId="ret-dest" allowCreate={false} />
 
             <p className="text-sm text-muted-foreground" data-testid="ret-move-confirm-text">
-              Moverás <strong className="text-foreground">{seleccionadas.length}</strong>
-              {seleccionadas.length === 1 ? " caja" : " cajas"}
-              {" "}(<span className="tabular-nums">{unidadesSel.toLocaleString()}</span> u) a{" "}
+              {t('wms_ret_move_confirm_a')} <strong className="text-foreground">{seleccionadas.length}</strong>
+              {" "}{seleccionadas.length === 1 ? t('wms_box_lower') : t('wms_boxes_lower')}
+              {" "}(<span className="tabular-nums">{unidadesSel.toLocaleString()}</span> u) {t('wms_ret_move_confirm_to')}{" "}
               <strong className="text-foreground font-mono">{dest || "…"}</strong>
             </p>
 
             <div className="flex justify-end gap-2">
               <Btn variant="ghost" onClick={() => setMoveOpen(false)} disabled={moving}>
-                Cancelar
+                {t('cancel')}
               </Btn>
               <Btn variant="primary" onClick={mover} disabled={!dest || moving}
                 data-testid="ret-move-confirm">
                 {moving ? <Loader2 className="w-4 h-4 animate-spin" /> : <MapPin className="w-4 h-4" />}
-                Confirmar
+                {t('confirm')}
               </Btn>
             </div>
           </Card>

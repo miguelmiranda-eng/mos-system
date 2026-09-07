@@ -2,33 +2,34 @@ import { useState, useRef } from "react";
 import { createPortal } from "react-dom";
 import { toast } from "sonner";
 import { ScanLine, X, Loader2, MapPin, Package, History, AlertTriangle, Printer } from "lucide-react";
+import { useLang } from "../../contexts/LanguageContext";
 import { fetcher, cleanScan, API } from "./lib";
 import { Chip } from "./ui";
 
-// Friendly labels for the movement types a box's timeline can surface.
-const MV_TYPE_LABELS = {
-  receiving: "Recepción", receiving_update: "Recepción editada",
-  putaway: "Ubicado (putaway)", putaway_bulk: "Ubicado en lote",
-  box_edited: "Caja editada", box_deleted: "Caja eliminada",
-  inventory_adjust_box: "Ajuste por caja", lpn_reconciled: "LPN reconciliado",
-  bulk_relocation: "Reubicación masiva", transit_relocation: "Reubicación de tránsito",
-  edit_finished_good: "Producto terminado editado", production_move: "Movido a producción",
-  shipment: "Embarque", allocation: "Asignación", deallocate: "Desasignación",
-  pick_ticket_created: "Pick ticket creado", pick_confirmed: "Surtido confirmado",
-  pick_progress: "Avance de surtido", neck_cut_delivery: "Surtido a producción (neck)",
-  manual_inventory_add: "Entrada manual", manual_inventory_remove: "Salida manual",
+// Friendly labels (i18n keys) for the movement types a box's timeline can surface.
+const MV_TYPE_KEYS = {
+  receiving: "wms_mv_receiving", receiving_update: "wms_bs_mv_receiving_update",
+  putaway: "wms_bs_mv_putaway", putaway_bulk: "wms_bs_mv_putaway_bulk",
+  box_edited: "wms_bs_mv_box_edited", box_deleted: "wms_bs_mv_box_deleted",
+  inventory_adjust_box: "wms_bs_mv_inventory_adjust_box", lpn_reconciled: "wms_bs_mv_lpn_reconciled",
+  bulk_relocation: "wms_bs_mv_bulk_relocation", transit_relocation: "wms_bs_mv_transit_relocation",
+  edit_finished_good: "wms_bs_mv_edit_finished_good", production_move: "wms_bs_mv_production_move",
+  shipment: "wms_mv_shipment", allocation: "wms_bs_mv_allocation", deallocate: "wms_mv_deallocate",
+  pick_ticket_created: "wms_bs_mv_pick_ticket_created", pick_confirmed: "wms_bs_mv_pick_confirmed",
+  pick_progress: "wms_bs_mv_pick_progress", neck_cut_delivery: "wms_bs_mv_neck_cut_delivery",
+  manual_inventory_add: "wms_bs_mv_manual_inventory_add", manual_inventory_remove: "wms_bs_mv_manual_inventory_remove",
   // Faltaban: sin ellos el descuento por surtido (el evento que baja las piezas
   // de la caja al surtir una orden) salía como chip crudo "pick deduction", y el
   // resto de eventos de conteo/generación sin etiqueta legible.
-  pick_deduction: "Surtido a orden", exit_to_production: "Salida a producción",
-  cycle_count_shrink: "Merma (conteo cíclico)", cycle_count_manual_discard: "Descartada (conteo)",
-  cycle_count_manual_create: "Alta por conteo", cycle_count_bind_box: "Ligada por conteo (LPN físico)",
-  box_generated: "Caja generada", box_style_restored: "Estilo restaurado",
+  pick_deduction: "wms_bs_mv_pick_deduction", exit_to_production: "wms_bs_mv_exit_to_production",
+  cycle_count_shrink: "wms_bs_mv_cycle_count_shrink", cycle_count_manual_discard: "wms_bs_mv_cycle_count_manual_discard",
+  cycle_count_manual_create: "wms_bs_mv_cycle_count_manual_create", cycle_count_bind_box: "wms_bs_mv_cycle_count_bind_box",
+  box_generated: "wms_bs_mv_box_generated", box_style_restored: "wms_bs_mv_box_style_restored",
 };
 
 // `ctx` es la caja que se está viendo (data): sirve para localizar, dentro de un
 // surtido en lote, la línea que corresponde a ESTA caja.
-const summarize = (m, ctx) => {
+const summarize = (m, ctx, t) => {
   const d = m.details || {};
   const parts = [];
 
@@ -50,7 +51,7 @@ const summarize = (m, ctx) => {
     }
     if (!taken && d.qty != null) taken = Number(d.qty) || 0;
     if (taken != null) parts.push(`−${taken} u`);
-    if (d.order_number) parts.push(`orden ${d.order_number}`);
+    if (d.order_number) parts.push(t("wms_bs_order_n", { n: d.order_number }));
     if (d.reason) parts.push(`“${d.reason}”`);
     return parts.join(" · ");
   }
@@ -72,6 +73,7 @@ const summarize = (m, ctx) => {
 // current location, customer, content and full movement timeline (Case# 003/004
 // surfaced everywhere). Read-only; available in every module.
 export function BoxSearchBar({ compact = false }) {
+  const { t } = useLang();
   const [code, setCode] = useState("");
   const [open, setOpen] = useState(false);
   const [data, setData] = useState(null);
@@ -90,7 +92,7 @@ export function BoxSearchBar({ compact = false }) {
       setData(res);
     } catch {
       setData(null);
-      toast.error("No se pudo obtener la caja");
+      toast.error(t("wms_bs_fetch_err"));
     } finally {
       setLoading(false);
     }
@@ -106,7 +108,7 @@ export function BoxSearchBar({ compact = false }) {
           ref={inputRef}
           value={code}
           onChange={(e) => setCode(e.target.value.toUpperCase())}
-          placeholder="Buscar caja / LPN…"
+          placeholder={t("wms_bs_placeholder")}
           data-testid="wms-global-box-search"
           className="w-full h-9 pl-8 pr-7 bg-card border border-input rounded-md text-sm font-mono font-medium focus:outline-none focus:ring-2 focus:ring-ring/25 focus:border-ring placeholder:font-sans placeholder:font-medium placeholder:text-muted-foreground/60"
         />
@@ -130,7 +132,7 @@ export function BoxSearchBar({ compact = false }) {
             className="bg-card border border-border rounded-lg w-full max-w-2xl max-h-[80vh] flex flex-col shadow-xl animate-in zoom-in-95 duration-150">
             <div className="flex items-center justify-between p-4 border-b border-border/20">
               <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
-                <Package className="w-4 h-4 text-muted-foreground" /> Caja / LPN
+                <Package className="w-4 h-4 text-muted-foreground" /> {t("wms_bs_box_lpn")}
               </div>
               <button onClick={close} className="p-1.5 hover:bg-secondary rounded-lg transition-all">
                 <X className="w-5 h-5 text-muted-foreground" />
@@ -141,11 +143,11 @@ export function BoxSearchBar({ compact = false }) {
               {loading ? (
                 <div className="flex flex-col items-center justify-center py-16 gap-3 text-muted-foreground">
                   <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
-                  <span className="text-xs font-medium">Buscando…</span>
+                  <span className="text-xs font-medium">{t("wms_searching")}</span>
                 </div>
               ) : !data ? (
                 <div className="text-center py-12">
-                  <p className="text-sm font-semibold text-foreground/80">Sin resultados</p>
+                  <p className="text-sm font-semibold text-foreground/80">{t("no_results")}</p>
                 </div>
               ) : (
                 <div className="space-y-4">
@@ -157,12 +159,10 @@ export function BoxSearchBar({ compact = false }) {
                       <AlertTriangle className="w-5 h-5 text-amber-500 flex-shrink-0 mt-0.5" />
                       <div className="text-xs leading-relaxed">
                         <div className="font-semibold text-amber-600 dark:text-amber-400 uppercase tracking-wide">
-                          Inventario no confiable
+                          {t("wms_bs_untrusted_title")}
                         </div>
                         <div className="text-muted-foreground mt-0.5">
-                          Viene de la carga inicial de Excel: su número, sus piezas y su
-                          lote pueden no coincidir con el cartón físico. Esta ubicación
-                          debe auditarse en conteo cíclico.
+                          {t("wms_bs_untrusted_body")}
                         </div>
                       </div>
                     </div>
@@ -171,7 +171,7 @@ export function BoxSearchBar({ compact = false }) {
                   <div className="bg-muted/30 border border-border rounded-lg p-4">
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
-                        <div className="text-xs font-medium text-muted-foreground">Caja</div>
+                        <div className="text-xs font-medium text-muted-foreground">{t("wms_box")}</div>
                         <div className="text-lg font-mono font-semibold truncate">{data.box_id}</div>
                         {data.found && (
                           <div className="text-sm font-medium mt-0.5 truncate">
@@ -182,21 +182,21 @@ export function BoxSearchBar({ compact = false }) {
                       {data.found && (
                         <div className="text-right flex-shrink-0">
                           <div className="text-2xl font-semibold tabular-nums leading-none">{data.box?.units ?? data.box?.qty ?? 0}</div>
-                          <div className="text-xs text-muted-foreground">unidades</div>
+                          <div className="text-xs text-muted-foreground">{t("wms_bs_units_lc")}</div>
                         </div>
                       )}
                     </div>
                     {data.found ? (
                       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-3 pt-3 border-t border-border/60 text-xs">
                         <span className="inline-flex items-center gap-1 font-mono font-medium text-foreground">
-                          <MapPin className="w-3.5 h-3.5 text-muted-foreground" /> {data.box?.location || "sin ubicación"}
+                          <MapPin className="w-3.5 h-3.5 text-muted-foreground" /> {data.box?.location || t("wms_bs_no_location")}
                         </span>
-                        {data.box?.customer && <span className="text-muted-foreground">Cliente: <b className="text-foreground">{data.box.customer}</b></span>}
-                        {(data.box?.status || data.box?.state) && <span className="text-muted-foreground">Estado: <b className="text-foreground">{data.box.status || data.box.state}</b></span>}
+                        {data.box?.customer && <span className="text-muted-foreground">{t("client")}: <b className="text-foreground">{data.box.customer}</b></span>}
+                        {(data.box?.status || data.box?.state) && <span className="text-muted-foreground">{t("status")}: <b className="text-foreground">{data.box.status || data.box.state}</b></span>}
                       </div>
                     ) : (
                       <div className="text-xs font-medium text-amber-600 dark:text-amber-400 mt-2 flex items-center gap-1">
-                        <AlertTriangle className="w-3.5 h-3.5" /> La caja ya no existe (eliminada/embarcada). Mostrando su historial.
+                        <AlertTriangle className="w-3.5 h-3.5" /> {t("wms_bs_box_gone")}
                       </div>
                     )}
                     {data.found && (
@@ -205,7 +205,7 @@ export function BoxSearchBar({ compact = false }) {
                         className="mt-3 w-full inline-flex items-center justify-center gap-2 px-3 py-2 bg-primary text-primary-foreground rounded-md text-sm font-medium hover:opacity-90 active:scale-95 transition-all"
                         data-testid="box-reprint-label"
                       >
-                        <Printer className="w-4 h-4" /> Reimprimir etiqueta
+                        <Printer className="w-4 h-4" /> {t("wms_bs_reprint_label")}
                       </button>
                     )}
                   </div>
@@ -213,7 +213,7 @@ export function BoxSearchBar({ compact = false }) {
                   {/* History */}
                   <div>
                     <div className="text-xs font-medium text-muted-foreground mb-2 flex items-center gap-2">
-                      <History className="w-3.5 h-3.5" /> Movimientos ({data.box_event_count || 0})
+                      <History className="w-3.5 h-3.5" /> {t("wms_bs_movements_n", { n: data.box_event_count || 0 })}
                     </div>
                     {data.box_events?.length ? (
                       <div className="space-y-0">
@@ -221,18 +221,18 @@ export function BoxSearchBar({ compact = false }) {
                           <div key={m.movement_id || i} className="flex items-start gap-3 py-2.5 border-b border-border/60 last:border-0">
                             <div className="min-w-0 flex-1">
                               <div className="text-sm flex items-center gap-2 flex-wrap">
-                                <Chip>{MV_TYPE_LABELS[m.type] || m.type?.replace(/_/g, " ")}</Chip>
-                                {summarize(m, data) && <span className="text-xs text-muted-foreground font-mono">{summarize(m, data)}</span>}
+                                <Chip>{MV_TYPE_KEYS[m.type] ? t(MV_TYPE_KEYS[m.type]) : m.type?.replace(/_/g, " ")}</Chip>
+                                {summarize(m, data, t) && <span className="text-xs text-muted-foreground font-mono">{summarize(m, data, t)}</span>}
                               </div>
                               <div className="text-xs text-muted-foreground mt-0.5">
-                                {new Date(m.created_at).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })} · {m.user_name || m.user_id || "Sistema"}
+                                {new Date(m.created_at).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })} · {m.user_name || m.user_id || t("wms_mv_system")}
                               </div>
                             </div>
                           </div>
                         ))}
                       </div>
                     ) : (
-                      <p className="text-sm text-muted-foreground italic py-3 text-center">Sin movimientos registrados.</p>
+                      <p className="text-sm text-muted-foreground italic py-3 text-center">{t("wms_no_movements")}</p>
                     )}
                   </div>
                 </div>

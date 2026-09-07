@@ -2,7 +2,8 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../App";
 import { Toaster, toast } from "sonner";
-import { Camera, ChevronLeft, Loader2, Trash2, CheckCircle2, Images } from "lucide-react";
+import { Camera, ChevronLeft, Loader2, Trash2, CheckCircle2, Images, Languages } from "lucide-react";
+import { useLang } from "../../contexts/LanguageContext";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api/wms`;
 const fetcher = (u) => fetch(`${API}${u}`, { credentials: "include" }).then(r => (r.ok ? r.json() : Promise.reject(r)));
@@ -25,6 +26,7 @@ const buzz = (p) => { if (navigator.vibrate) navigator.vibrate(p); };
 export default function PdaPhoto() {
   const navigate = useNavigate();
   const { user } = useAuth();
+  const { t, lang, toggleLang } = useLang();
 
   const [recent, setRecent] = useState([]);       // últimas fotos (para verlas)
   const [total, setTotal] = useState(0);          // total global guardado
@@ -59,7 +61,7 @@ export default function PdaPhoto() {
     try {
       const res = await uploader("/recon/photo/archive", file);
       const d = await res.json().catch(() => ({}));
-      if (!res.ok) { toast.error(d.detail || "No se pudo guardar la foto"); buzz([120, 60, 120]); return; }
+      if (!res.ok) { toast.error(d.detail || t('pda_photo_save_err')); buzz([120, 60, 120]); return; }
       setRecent(p => [d.photo, ...p].slice(0, 24));
       setTotal(d.total || 0);
       setPackingNo(d.packing_no || 1);
@@ -67,17 +69,17 @@ export default function PdaPhoto() {
       setPackingSize(d.packing_size || 550);
       setLastId(d.photo?.photo_id || null);
       buzz(60);
-    } catch { toast.error("Error de conexión"); buzz([120, 60, 120]); }
+    } catch { toast.error(t('ceo_err_connection')); buzz([120, 60, 120]); }
     finally { setBusy(false); }
   };
 
   const del = async (photo_id) => {
     try {
       const res = await fetch(`${API}/recon/photo/archive/${photo_id}`, { method: "DELETE", credentials: "include" });
-      if (!res.ok) { const d = await res.json().catch(() => ({})); toast.error(d.detail || "No se pudo borrar"); return; }
+      if (!res.ok) { const d = await res.json().catch(() => ({})); toast.error(d.detail || t('pda_photo_delete_err')); return; }
       setRecent(p => p.filter(x => x.photo_id !== photo_id));
       load();
-    } catch { toast.error("Error de conexión"); }
+    } catch { toast.error(t('ceo_err_connection')); }
   };
 
   const pct = Math.min(100, Math.round((enPacking / (packingSize || 550)) * 100));
@@ -93,20 +95,24 @@ export default function PdaPhoto() {
           <Camera className="w-5 h-5 text-sky-300" />
         </div>
         <div className="flex-1 min-w-0 leading-tight">
-          <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">Inventario por foto</div>
-          <div className="text-sm font-black truncate">{user?.name || "Contador"}</div>
+          <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">{t('wms_photo_inventory')}</div>
+          <div className="text-sm font-black truncate">{user?.name || t('pda_counter_name')}</div>
         </div>
         <div className="text-right leading-tight shrink-0">
           <div className="text-lg font-black text-sky-300">{total}</div>
-          <div className="text-[9px] font-black uppercase tracking-widest text-slate-500">fotos</div>
+          <div className="text-[9px] font-black uppercase tracking-widest text-slate-500">{t('pda_photos')}</div>
         </div>
+        <button onClick={toggleLang} title={t('wms_lang_toggle')} data-testid="pda-lang-toggle"
+          className="p-2 rounded-xl text-slate-300 active:bg-white/10 text-[11px] font-black flex items-center gap-1 shrink-0">
+          <Languages className="w-5 h-5" />{lang === 'es' ? 'EN' : 'ES'}
+        </button>
       </header>
 
       <main className="p-4 max-w-md mx-auto space-y-4">
         {/* Progreso del packing en curso (segmenta cada 550) */}
         <div className="rounded-2xl bg-white/5 border border-white/10 p-4">
           <div className="flex items-center justify-between mb-2">
-            <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">Packing en curso</div>
+            <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">{t('pda_packing_in_progress')}</div>
             <div className="text-sm font-black text-sky-300">#{packingNo}</div>
           </div>
           <div className="h-2 rounded-full bg-white/10 overflow-hidden">
@@ -122,19 +128,19 @@ export default function PdaPhoto() {
         <button onClick={() => camRef.current?.click()} disabled={busy}
           className="w-full py-8 rounded-3xl bg-sky-500 text-black font-black uppercase tracking-widest active:bg-sky-600 disabled:opacity-50 flex flex-col items-center justify-center gap-2 shadow-[0_0_30px_rgba(14,165,233,0.3)]">
           {busy ? <Loader2 className="w-10 h-10 animate-spin" /> : <Camera className="w-10 h-10" />}
-          <span className="text-lg">{busy ? "Guardando…" : "Tomar foto"}</span>
+          <span className="text-lg">{busy ? t('pda_saving') : t('pda_take_photo')}</span>
           <span className="text-[10px] font-bold normal-case tracking-normal opacity-70">
-            Se guarda sola · toma la siguiente
+            {t('pda_photo_auto_hint')}
           </span>
         </button>
 
         {/* Galería de lo recién guardado — el operador VE que quedó */}
         <div className="rounded-2xl bg-white/5 border border-white/10 p-3">
           <div className="flex items-center gap-2 mb-2 text-[10px] font-black uppercase tracking-widest text-slate-400">
-            <Images className="w-4 h-4" /> Guardadas recientes
+            <Images className="w-4 h-4" /> {t('pda_recent_saved')}
           </div>
           {recent.length === 0 ? (
-            <div className="py-6 text-center text-sm text-slate-500">Aún no hay fotos. Toca "Tomar foto".</div>
+            <div className="py-6 text-center text-sm text-slate-500">{t('pda_no_photos')}</div>
           ) : (
             <div className="grid grid-cols-3 gap-2">
               {recent.map(ph => (

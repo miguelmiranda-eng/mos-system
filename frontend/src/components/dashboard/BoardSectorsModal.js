@@ -102,7 +102,7 @@ export const BoardSectorsModal = ({ isOpen, onClose, boards = [], sectors, onSav
               >
                 <option value={SUELTO}>{t('dash_no_sector')}</option>
                 {SECTOR_META.map(meta => (
-                  <option key={meta.id} value={meta.id}>{meta.label}</option>
+                  <option key={meta.id} value={meta.id}>{t(meta.labelKey)}</option>
                 ))}
               </select>
             </div>
@@ -115,7 +115,7 @@ export const BoardSectorsModal = ({ isOpen, onClose, boards = [], sectors, onSav
         <p className="text-[12px] text-muted-foreground">
           {t('dash_sectors_hint')}
           {' '}
-          {SECTOR_META.map(meta => `${meta.label}: ${contarEn(meta.id)}`).join(' · ')}
+          {SECTOR_META.map(meta => `${t(meta.labelKey)}: ${contarEn(meta.id)}`).join(' · ')}
         </p>
 
         <div className="flex items-center justify-between gap-2 pt-2 border-t border-border">

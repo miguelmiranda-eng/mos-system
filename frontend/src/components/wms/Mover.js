@@ -4,6 +4,7 @@ import {
   ScanLine, MapPin, Boxes, Package, Layers, ArrowRight, Loader2,
   CheckCircle2, RotateCcw, Search, X, Move, Tag, Scale, Printer,
 } from "lucide-react";
+import { useLang } from "../../contexts/LanguageContext";
 import { fetcher, poster, cleanScan, logLoadError, API, useWmsSizes, useWmsCatalogs, mergeUnique } from "./lib";
 import SearchableSelect from "../SearchableSelect";
 import BulkInventoryAdjust from "./BulkInventoryAdjust";
@@ -82,6 +83,7 @@ function ModeButton({ icon: Icon, title, subtitle, color, onClick, testid }) {
 }
 
 export function MoverModule({ currentUser }) {
+  const { t } = useLang();
   // Top-level mode: the classic origin→destination move, a box-first inventory
   // adjustment (Case# 002), or the bulk Excel inventory adjustment (admin L3+).
   const [topMode, setTopMode] = useState("move"); // 'move' | 'adjust' | 'bulk'
@@ -164,19 +166,19 @@ export function MoverModule({ currentUser }) {
     setAdjLookup(true);
     try {
       const box = await fetcher(`/boxes/${encodeURIComponent(code)}`);
-      if (!box || !box.box_id) { toast.error(`Caja ${code} no existe`); return; }
+      if (!box || !box.box_id) { toast.error(t('wms_box_not_exists', { box: code })); return; }
       setAdjBox(box);
       setAdjCount(String(box.units ?? box.qty ?? 0));
       setAdjReason("");
     } catch {
-      toast.error(`Caja ${code} no encontrada`);
+      toast.error(t('wms_box_not_found', { box: code }));
     } finally { setAdjLookup(false); }
   };
 
   const submitAdjust = async () => {
     const counted = parseInt(adjCount, 10);
-    if (!(counted >= 0)) { toast.error("Captura las unidades contadas"); return; }
-    if (!adjReason.trim()) { toast.error("El motivo es obligatorio"); return; }
+    if (!(counted >= 0)) { toast.error(t("wms_adj_count_req")); return; }
+    if (!adjReason.trim()) { toast.error(t("wms_adj_reason_req")); return; }
     setAdjSubmitting(true);
     try {
       const res = await poster(`/boxes/${encodeURIComponent(adjBox.box_id)}/adjust`, {
@@ -186,17 +188,17 @@ export function MoverModule({ currentUser }) {
         const data = await res.json().catch(() => ({}));
         const d = data.delta_units ?? 0;
         toast.success(
-          `Caja ${data.box_id}: ${data.old_units} → ${data.new_units} u (${d > 0 ? "+" : ""}${d})`
-            + (data.box_deleted ? " · caja vaciada y eliminada" : "")
+          t("wms_adj_done", { box: data.box_id, old: data.old_units, new: data.new_units, delta: `${d > 0 ? "+" : ""}${d}` })
+            + (data.box_deleted ? t("wms_adj_box_removed_suffix") : "")
         );
         resetAdjust();
         adjScanRef.current?.focus();
       } else {
         const err = await res.json().catch(() => ({}));
-        toast.error(err.detail || "No se pudo ajustar la caja");
+        toast.error(err.detail || t("wms_adj_err"));
       }
     } catch {
-      toast.error("Error de conexión");
+      toast.error(t("wms_err_connection"));
     } finally { setAdjSubmitting(false); }
   };
 
@@ -262,17 +264,13 @@ export function MoverModule({ currentUser }) {
   const printBox = (boxId) => window.open(`${API}/labels/box/${encodeURIComponent(boxId)}`, '_blank');
   const handleGenerateBox = async () => {
     if (!genForm.style.trim() || !genForm.location.trim() || !(Number(genForm.units) > 0)) {
-      toast.error('Estilo, unidades (>0) y ubicación son requeridos'); return;
+      toast.error(t('wms_gen_req')); return;
     }
     // El lote no bloquea —en piso puede tocar material sin etiqueta legible—
     // pero se avisa qué se pierde: una caja sin país ni composición no casa con
     // su renglón de inventario, y el país es requisito de etiquetado al exportar.
     if (!genForm.country_of_origin.trim() || !genForm.fabric_content.trim()) {
-      const seguir = window.confirm(
-        'La caja se creará SIN país de origen o sin contenido de tela.\n\n' +
-        'Esos campos son la identidad del lote: sin ellos la caja no se puede casar ' +
-        'con su renglón de inventario, y el país es requisito de etiquetado para ' +
-        'exportación.\n\n¿Continuar de todas formas?');
+      const seguir = window.confirm(t('wms_gen_missing_lot_confirm'));
       if (!seguir) return;
     }
     setGenSubmitting(true);
@@ -280,16 +278,16 @@ export function MoverModule({ currentUser }) {
       const res = await poster('/boxes/generate', { ...genForm, units: Number(genForm.units) });
       if (res.ok) {
         const data = await res.json();
-        toast.success(`Caja ${data.box_id} generada — imprimiendo etiqueta`);
+        toast.success(t('wms_gen_done', { box: data.box_id }));
         setGenLastBox(data.box_id);
         printBox(data.box_id);
         // Keep location/customer for batch tagging; clear the per-box fields.
         setGenForm(f => ({ ...f, style: '', color: '', size: '', units: '' }));
       } else {
         const err = await res.json().catch(() => ({}));
-        toast.error(err.detail || 'No se pudo generar la caja');
+        toast.error(err.detail || t('wms_gen_err'));
       }
-    } catch { toast.error('Error de conexión'); }
+    } catch { toast.error(t('wms_err_connection')); }
     finally { setGenSubmitting(false); }
   };
 
@@ -300,29 +298,29 @@ export function MoverModule({ currentUser }) {
       const res = await promise;
       if (res.ok) {
         const data = await res.json().catch(() => ({}));
-        toast.success(data.message || `${label} completado`);
+        toast.success(data.message || t("wms_move_done", { label }));
         // Stay on the same origin and refresh so the operator can keep working
         // in the same bin; clear the per-move selection.
         setMode(null); setSelectedBoxes([]); setForeignBoxes([]); setPendingForeign(null); setSelectedLine(null); setSelectedUnitBox(null); setQty(""); setPhysicalLpn(""); setDest("");
         await loadContents(origin);
       } else {
         const err = await res.json().catch(() => ({}));
-        toast.error(err.detail || `No se pudo completar: ${label}`);
+        toast.error(err.detail || t("wms_move_fail", { label }));
       }
     } catch {
-      toast.error("Error de conexión");
+      toast.error(t("wms_err_connection"));
     } finally {
       setSubmitting(false);
     }
   };
 
-  const moveAll = () => doMove("Mover toda la ubicación",
+  const moveAll = () => doMove(t("wms_move_all_loc"),
     poster("/move-location", { from: origin, to: cleanScan(dest) }));
 
-  const moveBoxes = () => doMove("Mover cajas",
+  const moveBoxes = () => doMove(t("wms_move_boxes"),
     poster("/boxes/relocate", { box_ids: selectedBoxes, to: cleanScan(dest) }));
 
-  const moveUnits = () => doMove("Mover unidades", poster("/move-units", {
+  const moveUnits = () => doMove(t("wms_move_units"), poster("/move-units", {
     // Send the SAME identifier the row shows (style first): Excel-imported rows
     // can carry sku="None" with the real value in `style`. The backend matches
     // on sku OR style, so style is the safe, consistent key.
@@ -335,7 +333,7 @@ export function MoverModule({ currentUser }) {
 
   // Reconcile a migrated generic LPN with the box's real physical license plate,
   // correcting its quantity and moving it to the destination in one shot.
-  const moveReconcile = () => doMove("Reconciliar LPN", poster("/boxes/reconcile-lpn", {
+  const moveReconcile = () => doMove(t("wms_reconcile_lpn"), poster("/boxes/reconcile-lpn", {
     location: origin, destination: cleanScan(dest),
     sku: selectedLine.style || selectedLine.sku, color: selectedLine.color || "",
     size: selectedLine.size || "",
@@ -362,7 +360,7 @@ export function MoverModule({ currentUser }) {
     try {
       const box = await fetcher(`/boxes/${encodeURIComponent(code)}`);
       clearBoxInput();
-      if (!box || !box.box_id) { toast.error(`Caja ${code} no existe`); return; }
+      if (!box || !box.box_id) { toast.error(t('wms_box_not_exists', { box: code })); return; }
       if ((box.location || "").toUpperCase() === origin.toUpperCase()) {
         addForeignBox(box); // belongs here but wasn't in the loaded list
       } else {
@@ -370,7 +368,7 @@ export function MoverModule({ currentUser }) {
       }
     } catch {
       clearBoxInput();
-      toast.error(`Caja ${code} no encontrada`);
+      toast.error(t('wms_box_not_found', { box: code }));
     } finally { setScanLookup(false); }
   };
 
@@ -389,14 +387,14 @@ export function MoverModule({ currentUser }) {
         {/* El shell ya dice "MOVER"; esto dice en cuál de sus cuatro modos
             estás parado, que es lo único que el encabezado no puede saber. */}
         <ModuleToolbar
-          context={topMode === "bulk" ? "Ajuste Masivo" : topMode === "adjust" ? "Ajustar Caja" : topMode === "generate" ? "Generar Caja" : "Mover Material"}
+          context={topMode === "bulk" ? t("wms_bulk_adjust") : topMode === "adjust" ? t("wms_adjust_box") : topMode === "generate" ? t("wms_generate_box") : t("wms_move_material")}
           hint={topMode === "bulk"
-            ? "Sube el Excel para ajustar inventario en bloque"
+            ? t("wms_bulk_adjust_hint")
             : topMode === "adjust"
-              ? "Escanea una caja y captura su conteo real"
+              ? t("wms_adjust_box_hint")
               : topMode === "generate"
-                ? "Crea un número de caja para material de producción e imprímelo"
-                : "Escanea una ubicación y elige qué mover"}
+                ? t("wms_generate_box_hint")
+                : t("wms_move_material_hint")}
         />
 
         {/* Top-level toggle: move vs adjust-by-box (Case# 002) vs bulk (admin L3+) */}
@@ -405,28 +403,28 @@ export function MoverModule({ currentUser }) {
             onClick={() => { if (topMode !== "move") { resetAdjust(); setTopMode("move"); } }}
             data-testid="mover-top-move"
             className={`flex items-center justify-center gap-2 py-2 rounded-md text-sm font-medium transition-colors ${topMode === "move" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}>
-            <Move className="w-4 h-4" /> Mover
+            <Move className="w-4 h-4" /> {t("wms_move")}
           </button>
           {canAdjust && (
           <button
             onClick={() => { if (topMode !== "adjust") { resetAll(); setTopMode("adjust"); } }}
             data-testid="mover-top-adjust"
             className={`flex items-center justify-center gap-2 py-2 rounded-md text-sm font-medium transition-colors ${topMode === "adjust" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}>
-            <Scale className="w-4 h-4" /> Ajustar caja
+            <Scale className="w-4 h-4" /> {t("wms_adjust_box")}
           </button>
           )}
           <button
             onClick={() => { if (topMode !== "generate") { resetAll(); resetAdjust(); setTopMode("generate"); } }}
             data-testid="mover-top-generate"
             className={`flex items-center justify-center gap-2 py-2 rounded-md text-sm font-medium transition-colors ${topMode === "generate" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}>
-            <Tag className="w-4 h-4" /> Generar caja
+            <Tag className="w-4 h-4" /> {t("wms_generate_box")}
           </button>
           {canBulk && (
             <button
               onClick={() => { if (topMode !== "bulk") { resetAll(); resetAdjust(); setTopMode("bulk"); } }}
               data-testid="mover-top-bulk"
               className={`flex items-center justify-center gap-2 py-2 rounded-md text-sm font-medium transition-colors ${topMode === "bulk" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}>
-              <Boxes className="w-4 h-4" /> Ajuste masivo
+              <Boxes className="w-4 h-4" /> {t("wms_bulk_adjust")}
             </button>
           )}
         </div>
@@ -437,56 +435,56 @@ export function MoverModule({ currentUser }) {
         ) : topMode === "generate" ? (
           <div className="bg-card border border-border rounded-lg p-5 space-y-4">
             <div className="text-sm font-semibold text-foreground flex items-center gap-2">
-              <Tag className="w-5 h-5 text-muted-foreground" /> Generar caja para material de producción
+              <Tag className="w-5 h-5 text-muted-foreground" /> {t("wms_gen_title")}
             </div>
             <p className="text-xs text-muted-foreground">
-              Material que llega de producción sin etiqueta: crea su número de caja (LPN), imprímelo y pégalo en la caja física. Después podrás moverla o ajustarla normalmente.
+              {t("wms_gen_desc")}
             </p>
             <div className="grid grid-cols-2 gap-3">
               <SearchableSelect options={genStyleOptions} value={genForm.style}
                 onChange={v => setGenForm(f => ({ ...f, style: v }))}
-                placeholder="Estilo * (solo catálogo)" testId="gen-style" allowCreate={false} />
+                placeholder={t("wms_gen_style_ph")} testId="gen-style" allowCreate={false} />
               <SearchableSelect options={genColorOptions} value={genForm.color}
                 onChange={v => setGenForm(f => ({ ...f, color: v }))}
-                placeholder="Color (solo catálogo)" testId="gen-color" allowCreate={false} />
+                placeholder={t("wms_gen_color_ph")} testId="gen-color" allowCreate={false} />
               <SearchableSelect options={genSizeOptions} value={genForm.size}
                 onChange={v => setGenForm(f => ({ ...f, size: v }))}
-                placeholder="Talla (solo catálogo)" testId="gen-size" allowCreate={false} />
+                placeholder={t("wms_gen_size_ph")} testId="gen-size" allowCreate={false} />
               <input type="number" min="1" value={genForm.units} onChange={e => setGenForm(f => ({ ...f, units: e.target.value }))}
-                placeholder="Unidades *" data-testid="gen-units"
+                placeholder={t("wms_gen_units_ph")} data-testid="gen-units"
                 className="h-12 px-3 bg-card border border-input rounded-md text-lg font-medium tabular-nums focus:outline-none focus:ring-2 focus:ring-ring/25 focus:border-ring transition-colors" />
               <SearchableSelect options={genCustomerOptions} value={genForm.customer}
                 onChange={v => setGenForm(f => ({ ...f, customer: v }))}
-                placeholder="Cliente (solo catálogo)" testId="gen-customer" allowCreate={false} />
+                placeholder={t("wms_gen_customer_ph")} testId="gen-customer" allowCreate={false} />
               <SearchableSelect options={locNames} value={genForm.location}
                 onChange={v => setGenForm(f => ({ ...f, location: v }))}
-                placeholder="Ubicación * (existente)" testId="gen-location" allowCreate={false} />
+                placeholder={t("wms_gen_location_ph")} testId="gen-location" allowCreate={false} />
               {/* El LOTE. Sólo catálogo, como el resto: con texto libre vuelven a
                   entrar valores como 'WASH COLD' en el campo país, que hubo que
                   limpiar de 748 cajas. Se conservan al generar la siguiente caja
                   (igual que ubicación y cliente) porque un lote se etiqueta en tanda. */}
               <SearchableSelect options={genCountryOptions} value={genForm.country_of_origin}
                 onChange={v => setGenForm(f => ({ ...f, country_of_origin: v }))}
-                placeholder="País de origen * (solo catálogo)" testId="gen-coo" allowCreate={false} />
+                placeholder={t("wms_gen_coo_ph")} testId="gen-coo" allowCreate={false} />
               <SearchableSelect options={genFabricOptions} value={genForm.fabric_content}
                 onChange={v => setGenForm(f => ({ ...f, fabric_content: v }))}
-                placeholder="Contenido de tela * (solo catálogo)" testId="gen-fabric" allowCreate={false} />
+                placeholder={t("wms_gen_fabric_ph")} testId="gen-fabric" allowCreate={false} />
             </div>
             <button onClick={handleGenerateBox} disabled={genSubmitting} data-testid="gen-submit"
               className="w-full h-14 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 flex items-center justify-center gap-2 disabled:opacity-50 transition-colors">
               {genSubmitting ? <Loader2 className="w-5 h-5 animate-spin" /> : <Printer className="w-5 h-5" />}
-              Generar e imprimir etiqueta
+              {t("wms_gen_submit")}
             </button>
             {genLastBox && (
               <SoftAlert
                 tone="success"
                 action={
                   <button onClick={() => printBox(genLastBox)} className="flex items-center gap-1 text-xs font-medium text-primary hover:underline">
-                    <Printer className="w-3.5 h-3.5" /> Reimprimir
+                    <Printer className="w-3.5 h-3.5" /> {t("wms_reprint")}
                   </button>
                 }
               >
-                Última caja: <span className="font-mono font-medium text-foreground">{genLastBox}</span>
+                {t("wms_last_box")} <span className="font-mono font-medium text-foreground">{genLastBox}</span>
               </SoftAlert>
             )}
           </div>
@@ -494,22 +492,22 @@ export function MoverModule({ currentUser }) {
           !adjBox ? (
             <div className="bg-card border border-border rounded-lg p-5 space-y-3">
               <div className="text-sm font-semibold text-foreground flex items-center gap-2">
-                <ScanLine className="w-5 h-5 text-muted-foreground" /> Escanea el número de caja
+                <ScanLine className="w-5 h-5 text-muted-foreground" /> {t("wms_scan_box_number")}
               </div>
               <form onSubmit={(e) => { e.preventDefault(); lookupAdjBox(adjScan); }} className="flex items-center gap-2">
                 <input
                   ref={adjScanRef} autoFocus value={adjScan}
                   onChange={(e) => setAdjScan(e.target.value.toUpperCase())}
-                  placeholder="Ej. BOX-000143 · LPN…"
+                  placeholder={t("wms_scan_box_ph")}
                   data-testid="mover-adjust-scan"
                   className="flex-1 h-14 px-4 bg-card border border-input rounded-lg text-lg font-mono placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-ring/25 focus:border-ring transition-colors" />
                 <button type="submit" disabled={adjLookup || !adjScan.trim()}
                   className="h-14 px-5 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 disabled:opacity-50 transition-colors">
-                  {adjLookup ? <Loader2 className="w-5 h-5 animate-spin" /> : "Buscar"}
+                  {adjLookup ? <Loader2 className="w-5 h-5 animate-spin" /> : t("search")}
                 </button>
               </form>
               <p className="text-xs text-muted-foreground">
-                El ajuste queda enlazado al número de caja y se registra en su historial de movimientos.
+                {t("wms_adj_note")}
               </p>
             </div>
           ) : (
@@ -518,23 +516,23 @@ export function MoverModule({ currentUser }) {
               <div className="bg-card border border-border rounded-lg p-4 space-y-3">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <div className="text-xs font-medium text-muted-foreground">Caja</div>
+                    <div className="text-xs font-medium text-muted-foreground">{t("wms_box_label")}</div>
                     <div className="text-lg font-mono font-semibold truncate">{adjBox.box_id}</div>
                     <div className="text-xs text-muted-foreground mt-0.5 truncate">
                       {(adjBox.style || adjBox.sku)} · {adjBox.color} · {adjBox.size}
                     </div>
                     <div className="text-xs text-muted-foreground flex items-center gap-1 mt-1">
                       <MapPin className="w-3.5 h-3.5 text-muted-foreground" />
-                      {adjBox.location || "sin ubicación"}
+                      {adjBox.location || t("wms_no_location_lc")}
                     </div>
                   </div>
                   <div className="text-right flex-shrink-0">
                     <div className="text-2xl font-semibold tabular-nums leading-none">{adjBox.units ?? adjBox.qty ?? 0}</div>
-                    <div className="text-xs text-muted-foreground">u actuales</div>
+                    <div className="text-xs text-muted-foreground">{t("wms_units_current")}</div>
                   </div>
                 </div>
                 <button onClick={resetAdjust} className="text-xs font-medium text-primary flex items-center gap-1">
-                  <RotateCcw className="w-3.5 h-3.5" /> Cambiar caja
+                  <RotateCcw className="w-3.5 h-3.5" /> {t("wms_change_box")}
                 </button>
               </div>
 
@@ -542,7 +540,7 @@ export function MoverModule({ currentUser }) {
               <div className="bg-card border border-border rounded-lg p-5 space-y-4">
                 <div>
                   <label className="text-xs font-medium text-muted-foreground">
-                    Unidades reales contadas
+                    {t("wms_adj_counted_label")}
                   </label>
                   <input type="number" min="0" value={adjCount}
                     onChange={(e) => setAdjCount(e.target.value)}
@@ -550,20 +548,20 @@ export function MoverModule({ currentUser }) {
                     className="mt-1 w-full h-16 px-4 bg-card border border-input rounded-lg text-3xl font-semibold tabular-nums text-center focus:outline-none focus:ring-2 focus:ring-ring/25 focus:border-ring transition-colors" />
                   {adjCount !== "" && !Number.isNaN(parseInt(adjCount, 10)) && (() => {
                     const d = parseInt(adjCount, 10) - (adjBox.units ?? adjBox.qty ?? 0);
-                    if (d === 0) return <p className="text-xs text-muted-foreground mt-1 text-center">Sin cambio</p>;
+                    if (d === 0) return <p className="text-xs text-muted-foreground mt-1 text-center">{t("wms_no_change")}</p>;
                     return (
                       <p className={`text-xs font-medium mt-1 text-center ${d > 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}>
-                        {d > 0 ? "+" : ""}{d} unidades{parseInt(adjCount, 10) === 0 ? " · la caja se eliminará" : ""}
+                        {d > 0 ? "+" : ""}{d} {t("wms_units_lc")}{parseInt(adjCount, 10) === 0 ? t("wms_box_will_delete_suffix") : ""}
                       </p>
                     );
                   })()}
                 </div>
                 <div>
                   <label className="text-xs font-medium text-muted-foreground">
-                    Motivo del ajuste <span className="text-red-600 dark:text-red-400">*</span>
+                    {t("wms_adj_reason_label")} <span className="text-red-600 dark:text-red-400">*</span>
                   </label>
                   <textarea value={adjReason} onChange={(e) => setAdjReason(e.target.value)}
-                    rows={2} placeholder="Ej. Conteo físico, caja dañada, error de captura…"
+                    rows={2} placeholder={t("wms_adj_reason_ph")}
                     data-testid="mover-adjust-reason"
                     className="mt-1 w-full px-4 py-3 bg-card border border-input rounded-lg text-sm placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-ring/25 focus:border-ring transition-colors resize-none" />
                 </div>
@@ -573,7 +571,7 @@ export function MoverModule({ currentUser }) {
                   data-testid="mover-adjust-confirm"
                   className="w-full h-14 rounded-md bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium flex items-center justify-center gap-2 transition-colors">
                   {adjSubmitting ? <Loader2 className="w-5 h-5 animate-spin" /> : <Scale className="w-5 h-5" />}
-                  Confirmar ajuste
+                  {t("wms_adj_confirm")}
                 </button>
               </div>
             </div>
@@ -583,12 +581,12 @@ export function MoverModule({ currentUser }) {
           <div className="bg-card border border-border rounded-lg p-5 space-y-3">
             <div className="text-sm font-semibold text-foreground flex items-center gap-2">
               <span className="w-6 h-6 rounded-full bg-primary text-primary-foreground text-xs flex items-center justify-center font-semibold">1</span>
-              Escanea la ubicación de origen
+              {t("wms_scan_origin")}
             </div>
             <LocationInput
               value={originInput} onChange={setOriginInput}
               onSubmit={setOriginAndLoad} onPick={setOriginAndLoad}
-              locations={locNames} autoFocus placeholder="Ej. RP10-A26 · CARRO 1"
+              locations={locNames} autoFocus placeholder={t("wms_origin_ph")}
               testid="mover-origin-input"
             />
           </div>
@@ -599,18 +597,18 @@ export function MoverModule({ currentUser }) {
               <div className="flex items-center gap-3 min-w-0">
                 <MapPin className="w-6 h-6 text-muted-foreground flex-shrink-0" />
                 <div className="min-w-0">
-                  <div className="text-xs font-medium text-muted-foreground">Origen</div>
+                  <div className="text-xs font-medium text-muted-foreground">{t("wms_origin")}</div>
                   <div className="text-lg font-mono font-semibold truncate">{origin}</div>
                 </div>
               </div>
               <div className="flex items-center gap-4">
                 <div className="text-right">
                   <div className="text-lg font-semibold tabular-nums leading-none">{loading ? "…" : totalUnits}</div>
-                  <div className="text-xs text-muted-foreground">unidades</div>
+                  <div className="text-xs text-muted-foreground">{t("wms_units_lc")}</div>
                 </div>
                 <button onClick={resetAll}
                   className="p-2.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
-                  title="Cambiar ubicación" data-testid="mover-reset">
+                  title={t("wms_change_location")} data-testid="mover-reset">
                   <RotateCcw className="w-5 h-5" />
                 </button>
               </div>
@@ -619,30 +617,30 @@ export function MoverModule({ currentUser }) {
             {loading ? (
               <div className="flex items-center justify-center py-16"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>
             ) : contents.boxes.length === 0 && contents.lines.length === 0 ? (
-              <EmptyState art="rack" title="Esta ubicación está vacía"
-                hint={`No hay cajas ni inventario en ${origin}.`} />
+              <EmptyState art="rack" title={t("wms_loc_empty_title")}
+                hint={t("wms_loc_empty_hint", { location: origin })} />
             ) : !mode ? (
               /* STEP 2 — choose mode */
               <div className="space-y-3">
                 <div className="text-sm font-semibold text-foreground flex items-center gap-2">
                   <span className="w-6 h-6 rounded-full bg-primary text-primary-foreground text-xs flex items-center justify-center font-semibold">2</span>
-                  ¿Qué quieres mover?
+                  {t("wms_what_to_move")}
                 </div>
                 <ModeButton icon={Layers} color="text-amber-400" testid="mover-mode-all"
-                  title="Toda la ubicación"
-                  subtitle={`${contents.boxes.length} caja(s) · ${totalUnits} unidades → otra ubicación`}
+                  title={t("wms_mode_all")}
+                  subtitle={t("wms_mode_all_sub", { n: contents.boxes.length, units: totalUnits })}
                   onClick={() => setMode("all")} />
                 <ModeButton icon={Boxes} color="text-blue-400" testid="mover-mode-box"
-                  title="Una o varias cajas"
-                  subtitle="Escanea o elige cajas específicas"
+                  title={t("wms_mode_box")}
+                  subtitle={t("wms_mode_box_sub")}
                   onClick={() => setMode("box")} />
                 <ModeButton icon={Package} color="text-emerald-400" testid="mover-mode-units"
-                  title="Unidades (consolidar)"
-                  subtitle="Mueve una cantidad de un SKU"
+                  title={t("wms_mode_units")}
+                  subtitle={t("wms_mode_units_sub")}
                   onClick={() => setMode("units")} />
                 <ModeButton icon={Tag} color="text-fuchsia-400" testid="mover-mode-reconcile"
-                  title="Reconciliar LPN / Etiqueta"
-                  subtitle="Casa el LPN físico de una caja migrada"
+                  title={t("wms_mode_reconcile")}
+                  subtitle={t("wms_mode_reconcile_sub")}
                   onClick={() => setMode("reconcile")} />
               </div>
             ) : (
@@ -650,20 +648,20 @@ export function MoverModule({ currentUser }) {
               <div className="space-y-4">
                 <button onClick={() => { setMode(null); setSelectedBoxes([]); setSelectedLine(null); setSelectedUnitBox(null); setQty(""); setPhysicalLpn(""); setDest(""); }}
                   className="text-xs font-medium text-primary flex items-center gap-1">
-                  <X className="w-3.5 h-3.5" /> Cambiar tipo de movimiento
+                  <X className="w-3.5 h-3.5" /> {t("wms_change_move_type")}
                 </button>
 
                 {/* MODE: ALL */}
                 {mode === "all" && (
                   <div className="bg-card border border-border rounded-lg p-5 space-y-4">
                     <p className="text-sm">
-                      Vas a mover <strong>todo</strong> el contenido de <span className="font-mono font-medium">{origin}</span>
-                      {" "}({contents.boxes.length} cajas, {totalUnits} unidades) a otra ubicación.
+                      {t("wms_move_all_text_1")} <strong>{t("wms_move_all_text_all")}</strong> {t("wms_move_all_text_2")} <span className="font-mono font-medium">{origin}</span>
+                      {" "}{t("wms_move_all_text_3", { n: contents.boxes.length, units: totalUnits })}
                     </p>
                     <DestAndGo
                       dest={dest} setDest={setDest} locations={locNames}
                       disabled={submitting} onGo={moveAll}
-                      label={`Mover TODO a`} />
+                      label={t("wms_move_all_to")} />
                   </div>
                 )}
 
@@ -672,15 +670,15 @@ export function MoverModule({ currentUser }) {
                   <div className="space-y-3">
                     <div className="bg-card border border-border rounded-lg p-4 space-y-3">
                       <div className="text-xs font-medium text-muted-foreground flex items-center gap-2">
-                        <ScanLine className="w-4 h-4 text-muted-foreground" /> Escanea una caja para seleccionarla
+                        <ScanLine className="w-4 h-4 text-muted-foreground" /> {t("wms_scan_box_select")}
                       </div>
-                      <input ref={boxScanRef} autoFocus placeholder="Escanea BOX-…"
+                      <input ref={boxScanRef} autoFocus placeholder={t("wms_scan_box_ph2")}
                         onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); onBoxScan(e.currentTarget.value); } }}
                         data-testid="mover-box-scan"
                         className="w-full h-12 px-4 bg-card border border-input rounded-md font-mono placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-ring/25 focus:border-ring transition-colors" />
                       {scanLookup && (
                         <div className="text-xs text-muted-foreground flex items-center gap-2">
-                          <Loader2 className="w-3.5 h-3.5 animate-spin" /> Buscando caja…
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" /> {t("wms_searching_box")}
                         </div>
                       )}
                     </div>
@@ -691,10 +689,10 @@ export function MoverModule({ currentUser }) {
                         <div className="flex items-start gap-3">
                           <ScanLine className="w-5 h-5 text-amber-600 dark:text-amber-400 flex-shrink-0 mt-0.5" />
                           <div className="min-w-0 text-sm">
-                            La caja <span className="font-mono font-semibold">{pendingForeign.box_id}</span> no está en{" "}
+                            {t("wms_box_not_in_1")} <span className="font-mono font-semibold">{pendingForeign.box_id}</span> {t("wms_box_not_in_2")}{" "}
                             <span className="font-mono font-medium">{origin}</span>.
                             <div className="mt-1">
-                              Pertenece a <span className="font-mono font-semibold text-amber-700 dark:text-amber-300">{pendingForeign.location || "ubicación desconocida"}</span>
+                              {t("wms_belongs_to")} <span className="font-mono font-semibold text-amber-700 dark:text-amber-300">{pendingForeign.location || t("wms_unknown_location")}</span>
                               {" · "}{pendingForeign.style || pendingForeign.sku} · {pendingForeign.color} · {pendingForeign.size}
                               {" · "}{pendingForeign.units ?? pendingForeign.qty ?? 0} u
                             </div>
@@ -707,10 +705,10 @@ export function MoverModule({ currentUser }) {
                             data-testid="mover-foreign-yes"
                             className="flex-1"
                           >
-                            Sí, moverla
+                            {t("wms_yes_move_it")}
                           </Btn>
                           <Btn onClick={() => setPendingForeign(null)}>
-                            Cancelar
+                            {t("cancel")}
                           </Btn>
                         </div>
                       </div>
@@ -730,7 +728,7 @@ export function MoverModule({ currentUser }) {
                                 {b.box_id}
                                 {b._foreign && (
                                   <Chip tone="warning">
-                                    de {b.location}
+                                    {t("wms_from_lc")} {b.location}
                                   </Chip>
                                 )}
                               </div>
@@ -751,7 +749,7 @@ export function MoverModule({ currentUser }) {
                         <DestAndGo
                           dest={dest} setDest={setDest} locations={locNames}
                           disabled={submitting} onGo={moveBoxes}
-                          label={`Mover ${selectedBoxes.length} caja(s) a`} />
+                          label={t("wms_move_n_boxes_to", { n: selectedBoxes.length })} />
                       </div>
                     )}
                   </div>
@@ -763,7 +761,7 @@ export function MoverModule({ currentUser }) {
                     {!selectedLine ? (
                       <div className="space-y-2">
                         <div className="text-xs font-medium text-muted-foreground flex items-center gap-2">
-                          <Search className="w-4 h-4" /> Elige el SKU a mover
+                          <Search className="w-4 h-4" /> {t("wms_pick_sku")}
                         </div>
                         {contents.lines.map((r, i) => (
                           <button key={i} onClick={() => { setSelectedLine(r); setQty(String(r.units_on_hand || "")); }}
@@ -775,7 +773,7 @@ export function MoverModule({ currentUser }) {
                             </div>
                             <div className="text-right flex-shrink-0">
                               <div className="font-semibold tabular-nums">{r.units_on_hand}</div>
-                              <div className="text-[10px] text-muted-foreground">disp.</div>
+                              <div className="text-[10px] text-muted-foreground">{t("wms_avail_short")}</div>
                             </div>
                           </button>
                         ))}
@@ -788,7 +786,7 @@ export function MoverModule({ currentUser }) {
                             <div className="text-xs text-muted-foreground">{selectedLine.color} · {selectedLine.size}</div>
                           </div>
                           <button onClick={() => { setSelectedLine(null); setSelectedUnitBox(null); setQty(""); }}
-                            className="text-xs font-medium text-primary">Cambiar</button>
+                            className="text-xs font-medium text-primary">{t("wms_change")}</button>
                         </div>
 
                         {!selectedUnitBox ? (
@@ -804,11 +802,11 @@ export function MoverModule({ currentUser }) {
                             return (
                               <div className="space-y-2">
                                 <div className="text-xs font-medium text-muted-foreground flex items-center gap-2">
-                                  <ScanLine className="w-4 h-4" /> Elige o escanea la caja a mover
+                                  <ScanLine className="w-4 h-4" /> {t("wms_pick_box_to_move")}
                                 </div>
                                 {boxes.length === 0 ? (
                                   <div className="text-sm text-muted-foreground p-3 rounded-lg border border-dashed border-border text-center">
-                                    Sin cajas con stock para este material en {origin}.
+                                    {t("wms_no_stock_boxes", { location: origin })}
                                   </div>
                                 ) : boxes.map(b => (
                                   <button key={b.box_id}
@@ -833,14 +831,14 @@ export function MoverModule({ currentUser }) {
                             <div className="flex items-center justify-between rounded-lg border border-primary/40 bg-primary/5 p-3">
                               <div className="min-w-0">
                                 <div className="font-mono font-semibold text-sm truncate">{selectedUnitBox.box_id}</div>
-                                <div className="text-xs text-muted-foreground">{selectedUnitBox.units ?? selectedUnitBox.qty ?? 0} u disponibles</div>
+                                <div className="text-xs text-muted-foreground">{t("wms_u_available", { n: selectedUnitBox.units ?? selectedUnitBox.qty ?? 0 })}</div>
                               </div>
                               <button onClick={() => { setSelectedUnitBox(null); setQty(""); }}
-                                className="text-xs font-medium text-primary">Cambiar caja</button>
+                                className="text-xs font-medium text-primary">{t("wms_change_box")}</button>
                             </div>
                             <div>
                               <label className="text-xs font-medium text-muted-foreground">
-                                Cantidad a mover (máx {selectedUnitBox.units ?? selectedUnitBox.qty ?? 0})
+                                {t("wms_qty_to_move", { max: selectedUnitBox.units ?? selectedUnitBox.qty ?? 0 })}
                               </label>
                               <div className="flex items-center gap-2 mt-1">
                                 <input type="number" min="1" max={selectedUnitBox.units ?? selectedUnitBox.qty ?? 0}
@@ -848,14 +846,14 @@ export function MoverModule({ currentUser }) {
                                   data-testid="mover-units-qty"
                                   className="flex-1 h-14 px-4 bg-card border border-input rounded-lg text-xl font-semibold tabular-nums text-center focus:outline-none focus:ring-2 focus:ring-ring/25 focus:border-ring transition-colors" />
                                 <button onClick={() => setQty(String(selectedUnitBox.units ?? selectedUnitBox.qty ?? 0))}
-                                  className="h-14 px-4 rounded-md bg-primary/10 text-primary text-sm font-medium hover:bg-primary/15 transition-colors">Todo</button>
+                                  className="h-14 px-4 rounded-md bg-primary/10 text-primary text-sm font-medium hover:bg-primary/15 transition-colors">{t("wms_all_btn")}</button>
                               </div>
                             </div>
                             <DestAndGo
                               dest={dest} setDest={setDest} locations={locNames}
                               disabled={submitting || !(parseInt(qty) > 0) || parseInt(qty) > (selectedUnitBox.units ?? selectedUnitBox.qty ?? 0)}
                               onGo={moveUnits}
-                              label={`Mover ${parseInt(qty) || 0} u a`} />
+                              label={t("wms_move_n_units_to", { n: parseInt(qty) || 0 })} />
                           </>
                         )}
                       </div>
@@ -869,7 +867,7 @@ export function MoverModule({ currentUser }) {
                     {!selectedLine ? (
                       <div className="space-y-2">
                         <div className="text-xs font-medium text-muted-foreground flex items-center gap-2">
-                          <Search className="w-4 h-4" /> Elige el producto a reconciliar
+                          <Search className="w-4 h-4" /> {t("wms_pick_product_reconcile")}
                         </div>
                         {contents.lines.map((r, i) => (
                           <button key={i} onClick={() => { setSelectedLine(r); setQty("72"); setPhysicalLpn(""); }}
@@ -883,7 +881,7 @@ export function MoverModule({ currentUser }) {
                             </div>
                             <div className="text-right flex-shrink-0">
                               <div className="font-semibold tabular-nums">{r.units_on_hand}</div>
-                              <div className="text-[10px] text-muted-foreground">disp.</div>
+                              <div className="text-[10px] text-muted-foreground">{t("wms_avail_short")}</div>
                             </div>
                           </button>
                         ))}
@@ -905,17 +903,17 @@ export function MoverModule({ currentUser }) {
                             )}
                           </div>
                           <button onClick={() => { setSelectedLine(null); setQty(""); setPhysicalLpn(""); }}
-                            className="text-xs font-medium text-primary flex-shrink-0">Cambiar</button>
+                            className="text-xs font-medium text-primary flex-shrink-0">{t("wms_change")}</button>
                         </div>
 
                         {/* Physical LPN scan */}
                         <div>
                           <label className="text-xs font-medium text-muted-foreground flex items-center gap-2">
-                            <ScanLine className="w-4 h-4 text-muted-foreground" /> Escanea el LPN físico de la caja
+                            <ScanLine className="w-4 h-4 text-muted-foreground" /> {t("wms_scan_physical_lpn")}
                           </label>
                           <input autoFocus value={physicalLpn}
                             onChange={(e) => setPhysicalLpn(e.target.value.toUpperCase())}
-                            placeholder="Ej. A2600510001"
+                            placeholder={t("wms_lpn_example")}
                             data-testid="mover-reconcile-lpn"
                             className="mt-1 w-full h-14 px-4 bg-card border border-input rounded-lg text-lg font-mono placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-ring/25 focus:border-ring transition-colors" />
                         </div>
@@ -923,7 +921,7 @@ export function MoverModule({ currentUser }) {
                         {/* Quantity (default 72, editable) */}
                         <div>
                           <label className="text-xs font-medium text-muted-foreground">
-                            Cantidad en la caja (default 72)
+                            {t("wms_qty_in_box_default")}
                           </label>
                           <input type="number" min="1" value={qty} onChange={(e) => setQty(e.target.value)}
                             data-testid="mover-reconcile-qty"
@@ -934,7 +932,7 @@ export function MoverModule({ currentUser }) {
                           dest={dest} setDest={setDest} locations={locNames}
                           disabled={submitting || !physicalLpn.trim() || !(parseInt(qty) > 0)}
                           onGo={moveReconcile}
-                          label={`Casar LPN y mover a`} />
+                          label={t("wms_match_lpn_move_to")} />
                       </div>
                     )}
                   </div>
@@ -950,15 +948,16 @@ export function MoverModule({ currentUser }) {
 
 // Shared destination input + confirm button used by every mode.
 function DestAndGo({ dest, setDest, locations, disabled, onGo, label }) {
+  const { t } = useLang();
   return (
     <div className="space-y-3">
       <div className="text-xs font-medium text-muted-foreground flex items-center gap-2">
         <span className="w-5 h-5 rounded-full bg-primary text-primary-foreground text-[10px] flex items-center justify-center font-semibold">3</span>
-        Escanea la ubicación DESTINO
+        {t("wms_scan_dest")}
       </div>
       <LocationInput
         value={dest} onChange={setDest} onSubmit={(v) => setDest(v)} onPick={(v) => setDest(v)}
-        locations={locations} placeholder="Ubicación destino" testid="mover-dest-input"
+        locations={locations} placeholder={t("wms_dest_loc")} testid="mover-dest-input"
       />
       <button onClick={onGo} disabled={disabled || !dest.trim()}
         data-testid="mover-confirm"

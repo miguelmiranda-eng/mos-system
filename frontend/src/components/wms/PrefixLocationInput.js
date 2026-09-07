@@ -1,7 +1,9 @@
 import { useState, useRef, useMemo } from "react";
 import { cls } from "./ui";
+import { useLang } from "../../contexts/LanguageContext";
 
 export const PrefixLocationInput = ({ locations = [], value, onChange }) => {
+  const { t } = useLang();
   const [query, setQuery] = useState(value || '');
   const [open, setOpen] = useState(false);
   const inputRef = useRef(null);
@@ -53,20 +55,20 @@ export const PrefixLocationInput = ({ locations = [], value, onChange }) => {
           onChange={e => handleInput(e.target.value)}
           onFocus={() => setOpen(true)}
           onBlur={() => setTimeout(() => setOpen(false), 150)}
-          placeholder="Ej: RP03, RP10..."
+          placeholder={t('wms_prefix_placeholder')}
           className={`${cls.input} font-mono uppercase placeholder:font-normal placeholder:normal-case`}
           autoComplete="off"
         />
         {query && matchCount > 0 && (
           <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs font-medium bg-muted text-muted-foreground px-1.5 py-0.5 rounded-md">
-            {matchCount} ubic.
+            {t('wms_prefix_match_count', { n: matchCount })}
           </span>
         )}
       </div>
       {open && suggestions.length > 0 && (
         <div className="absolute z-50 mt-1 w-full bg-card border border-border rounded-lg shadow-md overflow-hidden max-h-48 overflow-y-auto">
           <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground border-b border-border bg-muted/50">
-            Prefijos disponibles
+            {t('wms_prefix_available')}
           </div>
           {suggestions.map(prefix => {
             const cnt = locations.filter(l => l.toUpperCase().startsWith(prefix)).length;
@@ -77,7 +79,7 @@ export const PrefixLocationInput = ({ locations = [], value, onChange }) => {
                 className="w-full flex items-center justify-between px-3 py-2 text-sm hover:bg-muted transition-colors text-left"
               >
                 <span className="font-mono font-medium">{prefix}</span>
-                <span className="text-xs text-muted-foreground">{cnt} ubicaciones</span>
+                <span className="text-xs text-muted-foreground">{t('wms_prefix_loc_count', { n: cnt })}</span>
               </button>
             );
           })}

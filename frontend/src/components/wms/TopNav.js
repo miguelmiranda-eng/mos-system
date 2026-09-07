@@ -9,9 +9,10 @@
    filtrado por `filterModules`. Aquí no se decide quién ve qué. */
 
 import { useEffect, useRef, useState } from "react";
-import { ArrowLeft, X } from "lucide-react";
+import { ArrowLeft, X, Languages } from "lucide-react";
 import { badgeOf, groupBadge } from "./modules";
 import { ProsperMark } from "../ProsperMark";
+import { useLang } from "../../contexts/LanguageContext";
 
 /* Rótulo de la barra: la marca de Prosper + el nombre del sistema. Sin
    itálica ni Barlow — hereda Blinker, la tipografía del sitio. */
@@ -21,6 +22,24 @@ const Wordmark = () => (
     MOS <span className="text-primary ml-0.5">WMS</span>
   </span>
 );
+
+/* Conmutador ES/EN — mismo patrón que el Dashboard de oficina: muestra el
+   idioma DESTINO. Vive en la barra (visible en todo ancho) y en la hoja móvil. */
+export const LangToggle = ({ className = "" }) => {
+  const { t, lang, toggleLang } = useLang();
+  return (
+    <button
+      type="button"
+      onClick={toggleLang}
+      title={t('wms_lang_toggle')}
+      data-testid="wms-lang-toggle"
+      className={`h-8 px-2 rounded-md border border-border text-muted-foreground hover:text-foreground hover:bg-muted/60
+        text-[11px] font-bold flex items-center gap-1 transition-colors ${className}`}
+    >
+      <Languages className="w-4 h-4" /> {lang === 'es' ? 'EN' : 'ES'}
+    </button>
+  );
+};
 
 /* Insignia de contador. `soft` la usa el grupo, para que el número del módulo
    dentro del menú sea el que resalte. */
@@ -74,6 +93,7 @@ export function TopNav({
   onMobileClose,
   right,
 }) {
+  const { t } = useLang();
   const [open, setOpen] = useState(null);   // id del grupo abierto
   const barRef = useRef(null);
 
@@ -116,7 +136,7 @@ export function TopNav({
         </span>
 
         {/* Grupos — ocultos en pantallas angostas, donde manda la hoja */}
-        <nav className="hidden lg:flex items-center gap-0.5" aria-label="Módulos del WMS">
+        <nav className="hidden lg:flex items-center gap-0.5" aria-label={t('wms_nav_aria')}>
           {groups.map(g => {
             const isOpen = open === g.id;
             const isCurrent = activeGroup?.id === g.id;
@@ -160,7 +180,7 @@ export function TopNav({
           })}
         </nav>
 
-        <div className="ml-auto flex items-center gap-2">{right}</div>
+        <div className="ml-auto flex items-center gap-2">{right}<LangToggle /></div>
       </header>
 
       {/* Hoja de módulos — tabletas angostas y PDAs. Los grupos se vuelven
@@ -169,8 +189,9 @@ export function TopNav({
         <div className="fixed inset-0 z-50 bg-background overflow-y-auto p-4" data-testid="wms-nav-sheet">
           <div className="flex items-center mb-2">
             <Wordmark />
-            <button onClick={onMobileClose} title="Cerrar"
-              className="ml-auto p-2 rounded-md border border-border text-muted-foreground active:bg-muted">
+            <LangToggle className="ml-auto mr-2" />
+            <button onClick={onMobileClose} title={t('close')}
+              className="p-2 rounded-md border border-border text-muted-foreground active:bg-muted">
               <X className="w-5 h-5" />
             </button>
           </div>

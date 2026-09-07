@@ -48,7 +48,7 @@ export const AllocationModule = () => {
         setShowForm(false); setSelectedOrder(''); setItems([{ sku: '', color: '', size: '', qty: '', maxQty: 0 }]);
         loadAllocations(); loadInventory();
       } else { const err = await res.json().catch(() => ({})); toast.error(err.detail || t('wms_alloc_create_err')); }
-    } catch { toast.error(t('error_connection')); }
+    } catch { toast.error(t('wms_conn_err')); }
     finally { setLoading(false); }
   };
 
@@ -57,13 +57,13 @@ export const AllocationModule = () => {
     try {
       const res = await deleter(`/allocations/${id}`);
       if (res.ok) {
-        toast.success(t('wms_alloc_deleted') || 'Allocation eliminada');
+        toast.success(t('wms_alloc_deleted'));
         loadAllocations(); loadInventory();
       } else {
         toast.error(t('wms_alloc_del_err'));
       }
     }
-    catch { toast.error(t('error_connection')); }
+    catch { toast.error(t('wms_conn_err')); }
   };
 
   return (
@@ -72,7 +72,7 @@ export const AllocationModule = () => {
         right={
           <Btn variant="primary" onClick={() => setShowForm(!showForm)} data-testid="new-allocation-btn">
             <Plus className="w-4 h-4"
-      /> {t('wms_new_loc')}
+      /> {t('wms_new_alloc')}
           </Btn>
         }
       />
@@ -81,7 +81,7 @@ export const AllocationModule = () => {
           <div>
             <label className="text-xs font-medium text-muted-foreground block mb-1">{t('order')}</label>
             <select value={selectedOrder} onChange={e => setSelectedOrder(e.target.value)} className="w-full px-3 py-2 bg-background border border-border rounded text-sm text-foreground" data-testid="alloc-order-select">
-              <option value="">{t('select_order_placeholder')}</option>
+              <option value="">{t('wms_select_order')}</option>
               {orders.map(o => (
                 <option key={o.order_id} value={o.order_id}>
                   {o.order_number} - {o.client || o.customer || t('no_client')} ({o.wms_status || 'pending'})
@@ -89,32 +89,32 @@ export const AllocationModule = () => {
               ))}
             </select>
           </div>
-          <div className="text-xs font-medium text-muted-foreground">{t('items_to_allocate')}</div>
+          <div className="text-xs font-medium text-muted-foreground">{t('wms_items_to_assign')}</div>
           {items.map((item, i) => (
             <div key={i} className="grid grid-cols-6 gap-2 items-end">
               <div className="col-span-3">
                 <select value={item.sku ? `${item.sku}||${item.color}||${item.size}` : ''} onChange={e => selectInventoryItem(i, e.target.value)}
                   className="w-full px-2 py-1.5 bg-background border border-border rounded text-sm text-foreground" data-testid={`alloc-inv-${i}`}>
-                  <option value="">{t('select_inventory')}</option>
+                  <option value="">{t('wms_select_inv')}</option>
                   {availableInv.map(inv => (
                     <option key={`${inv.style || inv.sku}-${inv.color}-${inv.size}-${inv.inv_location || ''}`} value={`${inv.style || inv.sku}||${inv.color || ''}||${inv.size || ''}`}>
-                      {inv.customer ? `[${inv.customer}] ` : ''}{inv.style || inv.sku} {inv.color} {inv.size} ({t('avail')}: {inv.available})
+                      {inv.customer ? `[${inv.customer}] ` : ''}{inv.style || inv.sku} {inv.color} {inv.size} ({t('wms_avail')}: {inv.available})
                     </option>
                   ))}
                 </select>
               </div>
               <div className="text-xs text-muted-foreground truncate">
-                {item.maxQty > 0 && <span>{t('max')}: {item.maxQty}</span>}
+                {item.maxQty > 0 && <span>{t('wms_max')}: {item.maxQty}</span>}
               </div>
-              <input type="number" placeholder={t('qty')} value={item.qty} onChange={e => updateItem(i, 'qty', e.target.value)} min="1" max={item.maxQty || 99999}
+              <input type="number" placeholder={t('wms_qty')} value={item.qty} onChange={e => updateItem(i, 'qty', e.target.value)} min="1" max={item.maxQty || 99999}
                 className="px-2 py-1.5 bg-background border border-border rounded text-sm text-foreground" data-testid={`alloc-qty-${i}`} />
               <button onClick={() => removeItem(i)} className="p-1.5 text-muted-foreground hover:text-destructive"><Trash2 className="w-4 h-4" /></button>
             </div>
           ))}
-          <button onClick={addItem} className="text-xs text-primary hover:underline flex items-center gap-1"><Plus className="w-3 h-3" /> {t('add_item')}</button>
+          <button onClick={addItem} className="text-xs text-primary hover:underline flex items-center gap-1"><Plus className="w-3 h-3" /> {t('wms_add_item')}</button>
           <div className="flex gap-2">
             <Btn variant="primary" onClick={handleSubmit} disabled={loading} data-testid="alloc-submit">
-              {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Link2 className="w-4 h-4" />} {t('allocate_inventory')}
+              {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Link2 className="w-4 h-4" />} {t('wms_assign_inv')}
             </Btn>
             <Btn onClick={() => setShowForm(false)}>{t('cancel')}</Btn>
           </div>
@@ -140,7 +140,7 @@ export const AllocationModule = () => {
             </div>
           </div>
         ))}
-        {allocations.length === 0 && <div className="text-center text-muted-foreground text-sm py-8">{t('no_allocations')}</div>}
+        {allocations.length === 0 && <div className="text-center text-muted-foreground text-sm py-8">{t('wms_no_alloc')}</div>}
       </div>
     </div>
   );

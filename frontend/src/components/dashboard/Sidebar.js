@@ -78,7 +78,7 @@ const Sidebar = ({
   showTrash = false,
   showAnalytics = false
 }) => {
-  const { t } = useLang();
+  const { t, tName } = useLang();
   const isPicker = userRole === 'picker';
   const isSupersu = userRole === 'supersu';
   const machineBoards = boards.filter(b => b.startsWith('MAQUINA'));
@@ -155,7 +155,9 @@ const Sidebar = ({
           className={cn("flex-shrink-0 transition-transform", isActive ? "scale-110 opacity-100" : "opacity-60")}
           style={{ color: BOARD_COLORS[board]?.accent || (isDark ? '#888' : '#aaa') }}
         />
-        {(isOpen || !isCollapsed) && <span className="truncate">{toTitle(board)}</span>}
+        {/* El nombre del tablero es dato (llave en la base): no se traduce, se
+            muestra con un alias por idioma si existe (tName) y si no, como siempre. */}
+        {(isOpen || !isCollapsed) && <span className="truncate">{tName(board) || toTitle(board)}</span>}
       </button>
     );
   };
@@ -265,7 +267,7 @@ const Sidebar = ({
                     <CollapsibleTrigger asChild>
                       <button className={navItem(isGroupActive)}>
                         <GroupIcon size={15} className={iconCls(isGroupActive)} />
-                        <span className="flex-1 text-left">{group.label}</span>
+                        <span className="flex-1 text-left">{t(group.labelKey)}</span>
                         <ChevronDown size={13} className={cn("flex-shrink-0 transition-transform duration-150", isDark ? "text-white/20" : "text-neutral-400", isGroupOpen && "rotate-180")} />
                       </button>
                     </CollapsibleTrigger>
@@ -285,7 +287,7 @@ const Sidebar = ({
                     key={group.id}
                     onClick={() => { setIsCollapsed(false); setGroupOpen(group.id, true); }}
                     className={navItem(group.id === activeGroupId)}
-                    title={group.label}
+                    title={t(group.labelKey)}
                   >
                     <GroupIcon size={15} className={iconCls(group.id === activeGroupId)} />
                   </button>

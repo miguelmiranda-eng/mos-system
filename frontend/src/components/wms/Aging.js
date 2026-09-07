@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import { Clock, Loader2, Download, Search, X } from "lucide-react";
 import * as XLSX from "xlsx";
 import { toast } from "sonner";
+import { useLang } from "../../contexts/LanguageContext";
 import { fetcher, logLoadError } from "./lib";
 import { Btn, cls, tableCls, EmptyState } from "./ui";
 
@@ -47,6 +48,7 @@ const BucketCell = ({ bucket }) => {
 };
 
 export const AgingModule = ({ initialCustomer = '' }) => {
+  const { t } = useLang();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -105,7 +107,7 @@ export const AgingModule = ({ initialCustomer = '' }) => {
       const res = await fetcher(`/inventory/aging?${params.toString()}`);
       const rows = Array.isArray(res?.rows) ? res.rows : [];
       if (rows.length === 0) {
-        toast.error('No hay material para exportar');
+        toast.error(t('wms_aging_no_export'));
         return;
       }
       const sheet = rows.map(r => ({
@@ -133,10 +135,10 @@ export const AgingModule = ({ initialCustomer = '' }) => {
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, 'Antiguedad');
       XLSX.writeFile(wb, `antiguedad_inventario_${new Date().toISOString().split('T')[0]}.xlsx`);
-      toast.success(`${rows.length.toLocaleString()} caja(s) exportada(s)`);
+      toast.success(t('wms_aging_exported', { n: rows.length.toLocaleString() }));
     } catch (err) {
       logLoadError('export antigüedad')(err);
-      toast.error('No se pudo exportar');
+      toast.error(t('wms_aging_export_err'));
     } finally {
       setExporting(false);
     }
@@ -152,7 +154,7 @@ export const AgingModule = ({ initialCustomer = '' }) => {
           <input
             value={customerFilter}
             onChange={e => setCustomerFilter(e.target.value)}
-            placeholder="Filtrar por cliente…"
+            placeholder={t('wms_aging_filter_customer')}
             className={`${cls.input} pl-9 pr-9`}
             data-testid="aging-customer-filter"
           />
@@ -165,11 +167,11 @@ export const AgingModule = ({ initialCustomer = '' }) => {
         <div className="flex items-center gap-3 text-xs font-mono tabular-nums text-muted-foreground">
           <span className="flex items-center gap-1.5">
             <Clock className="w-3.5 h-3.5 text-amber-500" />
-            {(data?.total_boxes || 0).toLocaleString()} cajas · {(data?.total_units || 0).toLocaleString()} u
+            {t('wms_aging_totals', { boxes: (data?.total_boxes || 0).toLocaleString(), units: (data?.total_units || 0).toLocaleString() })}
           </span>
         </div>
         <Btn onClick={exportExcel} disabled={exporting} data-testid="aging-export-btn">
-          {exporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />} Exportar Excel
+          {exporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />} {t('export_excel')}
         </Btn>
       </div>
 
@@ -178,14 +180,14 @@ export const AgingModule = ({ initialCustomer = '' }) => {
           <table className="w-full text-sm">
             <thead className={tableCls.thead}>
               <tr>
-                <th className={cls.th}>Cliente</th>
-                <th className={`${cls.th} text-right`}>Cajas</th>
-                <th className={`${cls.th} text-right`}>Unidades</th>
-                <th className={`${cls.th} text-right`}>Más viejo</th>
+                <th className={cls.th}>{t('client')}</th>
+                <th className={`${cls.th} text-right`}>{t('wms_boxes')}</th>
+                <th className={`${cls.th} text-right`}>{t('wms_label_units')}</th>
+                <th className={`${cls.th} text-right`}>{t('wms_aging_oldest')}</th>
                 {BUCKETS.map(b => (
-                  <th key={b.key} className={`${cls.th} text-right`}>{b.label} días</th>
+                  <th key={b.key} className={`${cls.th} text-right`}>{t('wms_aging_days_hdr', { range: b.label })}</th>
                 ))}
-                {hasSinFecha && <th className={`${cls.th} text-right`}>Sin fecha</th>}
+                {hasSinFecha && <th className={`${cls.th} text-right`}>{t('no_date')}</th>}
               </tr>
             </thead>
             <tbody>
@@ -198,15 +200,15 @@ export const AgingModule = ({ initialCustomer = '' }) => {
               ) : customers.length === 0 ? (
                 <tr>
                   <td colSpan={colCount}>
-                    <EmptyState art="boxes" title="Sin inventario para mostrar"
-                      hint={`No hay cajas en stock${debouncedCustomer ? ` para “${debouncedCustomer}”` : ''}.`} />
+                    <EmptyState art="boxes" title={t('wms_aging_empty_title')}
+                      hint={debouncedCustomer ? t('wms_aging_empty_hint_customer', { customer: debouncedCustomer }) : t('wms_aging_empty_hint')} />
                   </td>
                 </tr>
               ) : (
                 <>
                   {/* Fila de totales */}
                   <tr className="bg-muted/40 border-b border-border font-medium">
-                    <td className="px-3 py-2.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Total ({customers.length})</td>
+                    <td className="px-3 py-2.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{t('total')} ({customers.length})</td>
                     <td className="px-3 py-2.5 text-right tabular-nums font-semibold">{(data?.total_boxes || 0).toLocaleString()}</td>
                     <td className="px-3 py-2.5 text-right tabular-nums font-semibold">{(data?.total_units || 0).toLocaleString()}</td>
                     <td className="px-3 py-2.5 text-right text-muted-foreground/50">—</td>
@@ -243,7 +245,7 @@ export const AgingModule = ({ initialCustomer = '' }) => {
       </div>
       {data?.generated_at && (
         <p className="text-xs text-muted-foreground/70 text-right">
-          Generado {new Date(data.generated_at).toLocaleString()}
+          {t('wms_aging_generated', { when: new Date(data.generated_at).toLocaleString() })}
         </p>
       )}
     </div>

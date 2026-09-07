@@ -4,8 +4,9 @@ import { useAuth } from "../../App";
 import { Toaster, toast } from "sonner";
 import {
   ClipboardCheck, ChevronLeft, MapPin, ScanLine, CheckCircle2, Lock,
-  Loader2, Trash2, PackageCheck, AlertTriangle, RotateCcw,
+  Loader2, Trash2, PackageCheck, AlertTriangle, RotateCcw, Languages,
 } from "lucide-react";
+import { useLang } from "../../contexts/LanguageContext";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api/wms`;
 const fetcher = (u) => fetch(`${API}${u}`, { credentials: "include" }).then(r => (r.ok ? r.json() : Promise.reject(r)));
@@ -19,6 +20,11 @@ const buzz = (p) => { if (navigator.vibrate) navigator.vibrate(p); };
 export default function PdaRecon() {
   const navigate = useNavigate();
   const { user } = useAuth();
+  const { t, lang, toggleLang } = useLang();
+  // addScanned es un useCallback sin deps: lee el traductor por ref para no
+  // recrearse (y re-disparar) al cambiar de idioma.
+  const tRef = useRef(t);
+  useEffect(() => { tRef.current = t; }, [t]);
 
   const [phase, setPhase] = useState("loc"); // loc | scan | done | locked
   const [loc, setLoc] = useState(null);       // { location, expected, expected_count }
@@ -45,7 +51,7 @@ export default function PdaRecon() {
       } else {
         setLoc(data); setScanned([]); setPhase("scan"); buzz(50);
       }
-    } catch { toast.error("No se pudo leer la ubicación"); buzz([120, 60, 120]); }
+    } catch { toast.error(t('pda_loc_read_err')); buzz([120, 60, 120]); }
     finally { setBusy(false); if (inputRef.current) inputRef.current.value = ""; }
   };
 
@@ -54,7 +60,7 @@ export default function PdaRecon() {
   // Agrega un objeto de caja a la lista, deduplicando por box_id.
   const addScanned = useCallback((item) => {
     setScanned(prev => {
-      if (prev.some(b => b.id === item.id)) { toast.info("Ya escaneada"); return prev; }
+      if (prev.some(b => b.id === item.id)) { toast.info(tRef.current('pda_already_scanned')); return prev; }
       buzz(40);
       return [item, ...prev];
     });
@@ -72,18 +78,18 @@ export default function PdaRecon() {
     try {
       const res = await poster("/recon/resolve-scan", { location: loc.location, code });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) { toast.error(data.detail || "No se pudo resolver el código"); buzz([120, 60, 120]); return; }
+      if (!res.ok) { toast.error(data.detail || t('pda_resolve_err')); buzz([120, 60, 120]); return; }
       if (data.matched) {
         const box = data.box || {};
-        if (scanned.some(b => b.id === data.box_id)) { toast.info("Ya escaneada"); return; }
+        if (scanned.some(b => b.id === data.box_id)) { toast.info(t('pda_already_scanned')); return; }
         const label = `${box.style || box.sku || ""} ${box.color || ""} ${box.size || ""}`.trim() || data.box_id;
         addScanned({ id: data.box_id, known: data.here, lpn: code });
-        if (data.here === false) { toast.warning(`Movida aquí: ${label}`); }
+        if (data.here === false) { toast.warning(t('pda_moved_here', { label })); }
         else { toast.success(label); }
       } else {
         setPick({ code, candidates: data.candidates || [] });
       }
-    } catch { toast.error("Error de conexión"); buzz([120, 60, 120]); }
+    } catch { toast.error(t('ceo_err_connection')); buzz([120, 60, 120]); }
     finally { setBusy(false); }
   };
 
@@ -106,18 +112,18 @@ export default function PdaRecon() {
     try {
       const res = await poster("/recon/bind-lpn", { location: loc.location, lpn: pick.code, box_id: candidate.box_id });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) { toast.error(data.detail || "No se pudo enlazar"); buzz([120, 60, 120]); return; }
+      if (!res.ok) { toast.error(data.detail || t('pda_bind_err')); buzz([120, 60, 120]); return; }
       if (data.status === "ok") {
         addScanned({ id: candidate.box_id, known: true, lpn: pick.code });
-        setPick(null); toast.success("Caja enlazada"); buzz([60, 40, 120]);
+        setPick(null); toast.success(t('pda_box_bound')); buzz([60, 40, 120]);
       } else if (data.status === "already_bound") {
         const bid = data.box_id || candidate.box_id;
         addScanned({ id: bid, known: true, lpn: pick.code });
-        setPick(null); toast.info(data.message || "Ya estaba enlazada");
+        setPick(null); toast.info(data.message || t('pda_already_bound'));
       } else {
-        toast.error("Respuesta inesperada"); buzz([120, 60, 120]);
+        toast.error(t('pda_unexpected_response')); buzz([120, 60, 120]);
       }
-    } catch { toast.error("Error de conexión"); buzz([120, 60, 120]); }
+    } catch { toast.error(t('ceo_err_connection')); buzz([120, 60, 120]); }
     finally { setBusy(false); }
   };
 
@@ -126,8 +132,8 @@ export default function PdaRecon() {
     try {
       const res = await poster("/recon/commit", { location: loc.location, scanned_box_ids: scanned.map(b => b.id) });
       if (res.ok) { setResult(await res.json()); setPhase("done"); buzz([60, 40, 120]); }
-      else { const e = await res.json().catch(() => ({})); toast.error(e.detail || "No se pudo conciliar"); buzz([120, 60, 120]); }
-    } catch { toast.error("Error de conexión"); buzz([120, 60, 120]); }
+      else { const e = await res.json().catch(() => ({})); toast.error(e.detail || t('pda_recon_err')); buzz([120, 60, 120]); }
+    } catch { toast.error(t('ceo_err_connection')); buzz([120, 60, 120]); }
     finally { setBusy(false); }
   };
 
@@ -145,9 +151,13 @@ export default function PdaRecon() {
           <ClipboardCheck className="w-5 h-5 text-emerald-300" />
         </div>
         <div className="flex-1 min-w-0 leading-tight">
-          <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">Conciliación</div>
-          <div className="text-sm font-black truncate">{user?.name || "Contador"}</div>
+          <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">{t('wms_recon')}</div>
+          <div className="text-sm font-black truncate">{user?.name || t('pda_counter_name')}</div>
         </div>
+        <button onClick={toggleLang} title={t('wms_lang_toggle')} data-testid="pda-lang-toggle"
+          className="p-2 rounded-xl text-slate-300 active:bg-white/10 text-[11px] font-black flex items-center gap-1 shrink-0">
+          <Languages className="w-5 h-5" />{lang === 'es' ? 'EN' : 'ES'}
+        </button>
       </header>
 
       <main className="p-4 max-w-md mx-auto">
@@ -156,15 +166,15 @@ export default function PdaRecon() {
           <form onSubmit={submitLoc} className="space-y-5 pt-8">
             <div className="text-center">
               <MapPin className="w-14 h-14 mx-auto text-emerald-400 mb-3" />
-              <h2 className="text-xl font-black uppercase tracking-wide">Escanea la ubicación</h2>
-              <p className="text-sm text-slate-400 mt-1">Empieza escaneando la etiqueta del lugar</p>
+              <h2 className="text-xl font-black uppercase tracking-wide">{t('pda_scan_location')}</h2>
+              <p className="text-sm text-slate-400 mt-1">{t('pda_recon_start_hint')}</p>
             </div>
             <input ref={inputRef} autoFocus inputMode="text"
-              placeholder="Ubicación (ej. CARRO 8 / RP05-A22)"
+              placeholder={t('pda_recon_loc_placeholder')}
               className="w-full px-4 py-4 bg-white/5 border-2 border-emerald-500/40 rounded-2xl text-center text-lg font-mono uppercase focus:border-emerald-400 outline-none" />
             <button type="submit" disabled={busy}
               className="w-full py-4 rounded-2xl bg-emerald-500 text-black text-lg font-black uppercase tracking-widest active:bg-emerald-600 disabled:opacity-50 flex items-center justify-center gap-2">
-              {busy ? <Loader2 className="w-5 h-5 animate-spin" /> : <ScanLine className="w-5 h-5" />} Continuar
+              {busy ? <Loader2 className="w-5 h-5 animate-spin" /> : <ScanLine className="w-5 h-5" />} {t('pda_continue')}
             </button>
           </form>
         )}
@@ -174,12 +184,12 @@ export default function PdaRecon() {
           <div className="space-y-5 pt-10 text-center">
             <Lock className="w-16 h-16 mx-auto text-amber-400" />
             <h2 className="text-xl font-black uppercase">{loc.location}</h2>
-            <p className="text-base text-amber-300 font-bold">Ya fue conciliada</p>
+            <p className="text-base text-amber-300 font-bold">{t('pda_already_reconciled')}</p>
             <p className="text-sm text-slate-400">
-              Por {loc.lock?.reconciled_by_name || "?"}. Pide al administrador que la reabra si necesitas repetirla.
+              {t('pda_locked_by', { name: loc.lock?.reconciled_by_name || "?" })}
             </p>
             <button onClick={reset} className="w-full py-4 rounded-2xl bg-white/10 text-white font-black uppercase tracking-widest active:bg-white/20">
-              Otra ubicación
+              {t('pda_other_location')}
             </button>
           </div>
         )}
@@ -188,34 +198,34 @@ export default function PdaRecon() {
         {phase === "scan" && (
           <div className="space-y-4">
             <div className="rounded-2xl bg-white/5 border border-white/10 p-4 text-center">
-              <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">Ubicación</div>
+              <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">{t('location')}</div>
               <div className="text-2xl font-black">{loc.location}</div>
-              <div className="text-xs text-slate-400 mt-1">Sistema espera {loc.expected_count} caja(s)</div>
+              <div className="text-xs text-slate-400 mt-1">{t('pda_system_expects', { n: loc.expected_count })}</div>
             </div>
 
             <div className="grid grid-cols-2 gap-3">
               <div className="rounded-2xl bg-emerald-500/10 border border-emerald-500/30 p-3 text-center">
                 <div className="text-3xl font-black text-emerald-400">{scannedCount}</div>
-                <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">Escaneadas</div>
+                <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">{t('pda_scanned_label')}</div>
               </div>
               <div className="rounded-2xl bg-amber-500/10 border border-amber-500/30 p-3 text-center">
                 <div className="text-3xl font-black text-amber-400">{missingCount}</div>
-                <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">Faltan</div>
+                <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">{t('pda_missing_word')}</div>
               </div>
             </div>
 
             <form onSubmit={submitScan}>
-              <input ref={inputRef} autoFocus inputMode="text" placeholder="Escanea una caja (BOX-… o LPN)"
+              <input ref={inputRef} autoFocus inputMode="text" placeholder={t('pda_recon_box_placeholder')}
                 className="w-full px-4 py-4 bg-white/5 border-2 border-emerald-500/40 rounded-2xl text-center text-lg font-mono uppercase focus:border-emerald-400 outline-none" />
               {busy && (
                 <div className="mt-2 flex items-center justify-center gap-2 text-xs text-slate-400">
-                  <Loader2 className="w-4 h-4 animate-spin" /> Resolviendo…
+                  <Loader2 className="w-4 h-4 animate-spin" /> {t('pda_resolving')}
                 </div>
               )}
             </form>
 
             <div className="rounded-2xl bg-white/5 border border-white/10 divide-y divide-white/5 max-h-[40vh] overflow-y-auto">
-              {scanned.length === 0 && <div className="p-4 text-center text-sm text-slate-500">Escanea las cajas que estén físicamente aquí</div>}
+              {scanned.length === 0 && <div className="p-4 text-center text-sm text-slate-500">{t('pda_recon_scan_hint')}</div>}
               {scanned.map(b => (
                 <div key={b.id} className="flex items-center gap-3 px-3 py-2.5">
                   {b.known
@@ -225,7 +235,7 @@ export default function PdaRecon() {
                     {b.id}
                     {b.lpn && <span className="block text-[10px] text-sky-300/80 truncate">LPN {b.lpn}</span>}
                   </span>
-                  <span className="text-[10px] uppercase font-black text-slate-500 shrink-0">{b.known ? "esperada" : "nueva/otra"}</span>
+                  <span className="text-[10px] uppercase font-black text-slate-500 shrink-0">{b.known ? t('pda_expected_tag') : t('pda_new_other_tag')}</span>
                   <button onClick={() => setScanned(prev => prev.filter(x => x.id !== b.id))} className="p-1.5 rounded-lg active:bg-white/10">
                     <Trash2 className="w-4 h-4 text-slate-500" />
                   </button>
@@ -236,7 +246,7 @@ export default function PdaRecon() {
             <button onClick={commit} disabled={busy}
               className="w-full py-5 rounded-2xl bg-emerald-500 text-black text-lg font-black uppercase tracking-widest active:bg-emerald-600 disabled:opacity-50 flex items-center justify-center gap-2 shadow-[0_0_30px_rgba(16,185,129,0.3)]">
               {busy ? <Loader2 className="w-6 h-6 animate-spin" /> : <PackageCheck className="w-6 h-6" />}
-              Finalizar y conciliar
+              {t('pda_finish_recon')}
             </button>
           </div>
         )}
@@ -245,24 +255,24 @@ export default function PdaRecon() {
         {phase === "done" && result && (
           <div className="space-y-5 pt-6 text-center">
             <CheckCircle2 className="w-16 h-16 mx-auto text-emerald-400" />
-            <h2 className="text-xl font-black uppercase">{result.location} conciliada</h2>
+            <h2 className="text-xl font-black uppercase">{t('pda_loc_reconciled', { location: result.location })}</h2>
             <div className="grid grid-cols-2 gap-3 text-left">
-              {[["Confirmadas", result.confirmadas, "text-emerald-400"],
-                ["Movidas aquí", result.movidas, "text-sky-400"],
-                ["Creadas", result.creadas, "text-amber-400"],
-                ["Faltantes", result.faltantes, "text-red-400"]].map(([lbl, val, cls]) => (
-                <div key={lbl} className="rounded-2xl bg-white/5 border border-white/10 p-3">
+              {[["pda_confirmed", result.confirmadas, "text-emerald-400"],
+                ["pda_moved_here_label", result.movidas, "text-sky-400"],
+                ["pda_created", result.creadas, "text-amber-400"],
+                ["pda_missing_pl", result.faltantes, "text-red-400"]].map(([lblKey, val, cls]) => (
+                <div key={lblKey} className="rounded-2xl bg-white/5 border border-white/10 p-3">
                   <div className={`text-2xl font-black ${cls}`}>{val}</div>
-                  <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">{lbl}</div>
+                  <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">{t(lblKey)}</div>
                 </div>
               ))}
             </div>
             {result.faltantes > 0 && (
-              <p className="text-xs text-slate-400">Las faltantes quedaron en la lista del administrador; aparecerán aquí si las escaneas en otra ubicación.</p>
+              <p className="text-xs text-slate-400">{t('pda_missing_note')}</p>
             )}
             <button onClick={reset}
               className="w-full py-4 rounded-2xl bg-emerald-500 text-black font-black uppercase tracking-widest active:bg-emerald-600 flex items-center justify-center gap-2">
-              <RotateCcw className="w-5 h-5" /> Conciliar otra ubicación
+              <RotateCcw className="w-5 h-5" /> {t('pda_recon_another')}
             </button>
           </div>
         )}
@@ -273,18 +283,18 @@ export default function PdaRecon() {
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/70" onClick={() => !busy && setPick(null)}>
           <div className="w-full max-w-md bg-[#0b0f1a] border-t border-white/10 rounded-t-2xl p-4 space-y-3" onClick={e => e.stopPropagation()}>
             <div className="text-center">
-              <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">LPN sin casar</div>
+              <div className="text-[10px] font-black uppercase tracking-widest text-slate-400">{t('pda_lpn_unmatched')}</div>
               <div className="text-lg font-black font-mono truncate">{pick.code}</div>
             </div>
 
             {pick.candidates.length === 0 ? (
               <>
                 <p className="text-sm text-slate-300 text-center py-2">
-                  No hay cajas candidatas en esta ubicación — repórtalo al administrador.
+                  {t('pda_no_candidates')}
                 </p>
                 <button onClick={() => setPick(null)}
                   className="w-full py-4 rounded-2xl bg-white/10 text-white font-black uppercase tracking-widest active:bg-white/20">
-                  Cerrar
+                  {t('close')}
                 </button>
               </>
             ) : (
@@ -305,6 +315,7 @@ export default function PdaRecon() {
 // filtros. Se remonta por `key={pick.code}` en cada LPN nuevo, así los filtros
 // arrancan limpios sin necesitar un efecto de reset.
 function PickCandidates({ candidates, busy, onBind, onCancel }) {
+  const { t } = useLang();
   const [f, setF] = useState({ color: "", style: "", size: "" });
   const norm = (v) => String(v ?? "").trim();
   const styleOf = (c) => norm(c.style || c.sku);
@@ -331,30 +342,30 @@ function PickCandidates({ candidates, busy, onBind, onCancel }) {
     <>
       <p className="text-xs text-slate-400 text-center">
         {showFilters
-          ? <>Filtra y toca la caja · <span className="text-slate-200 font-black">{filtered.length}</span> de {candidates.length}</>
-          : <>¿A qué caja corresponde? Tócala para casarla.</>}
+          ? <>{t('pda_filter_tap')} · <span className="text-slate-200 font-black">{filtered.length}</span> {t('pda_of_total', { total: candidates.length })}</>
+          : <>{t('pda_which_box')}</>}
       </p>
 
       {showFilters && (
         <>
           <div className="grid grid-cols-3 gap-2">
             <select value={f.color} onChange={(e) => setF((s) => ({ ...s, color: e.target.value }))} className={selCls(!!f.color)}>
-              <option value="">Color</option>
+              <option value="">{t('wms_label_color')}</option>
               {colors.map((o) => <option key={o} value={o}>{o}</option>)}
             </select>
             <select value={f.style} onChange={(e) => setF((s) => ({ ...s, style: e.target.value }))} className={selCls(!!f.style)}>
-              <option value="">Estilo</option>
+              <option value="">{t('wms_label_style')}</option>
               {styles.map((o) => <option key={o} value={o}>{o}</option>)}
             </select>
             <select value={f.size} onChange={(e) => setF((s) => ({ ...s, size: e.target.value }))} className={selCls(!!f.size)}>
-              <option value="">Talla</option>
+              <option value="">{t('wms_label_size')}</option>
               {sizes.map((o) => <option key={o} value={o}>{o}</option>)}
             </select>
           </div>
           {anyFilter && (
             <button onClick={() => setF({ color: "", style: "", size: "" })}
               className="w-full text-[11px] text-slate-400 active:text-slate-200 uppercase tracking-widest font-black">
-              Limpiar filtros
+              {t('wms_clear_filters')}
             </button>
           )}
         </>
@@ -362,7 +373,7 @@ function PickCandidates({ candidates, busy, onBind, onCancel }) {
 
       <div className="rounded-2xl bg-white/5 border border-white/10 divide-y divide-white/5 max-h-[45vh] overflow-y-auto">
         {filtered.length === 0 ? (
-          <div className="p-4 text-center text-sm text-slate-500">Ninguna caja con esos filtros.</div>
+          <div className="p-4 text-center text-sm text-slate-500">{t('pda_no_box_filters')}</div>
         ) : filtered.map((c) => (
           <button key={c.box_id} onClick={() => onBind(c)} disabled={busy}
             className="w-full flex items-center gap-3 px-3 py-3 text-left active:bg-white/10 disabled:opacity-50">
@@ -379,7 +390,7 @@ function PickCandidates({ candidates, busy, onBind, onCancel }) {
       </div>
       <button onClick={onCancel} disabled={busy}
         className="w-full py-4 rounded-2xl bg-white/10 text-white font-black uppercase tracking-widest active:bg-white/20 disabled:opacity-50">
-        Cancelar
+        {t('cancel')}
       </button>
     </>
   );

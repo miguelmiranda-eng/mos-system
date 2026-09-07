@@ -61,8 +61,8 @@ export const PutawayModule = () => {
         setLocation('');
         loadPending();
       }
-      else { const err = await res.json().catch(() => ({})); toast.error(err.detail || 'Error'); }
-    } catch { toast.error(t('conn_error')); }
+      else { const err = await res.json().catch(() => ({})); toast.error(err.detail || t('error')); }
+    } catch { toast.error(t('wms_conn_error')); }
     finally { setLoading(false); }
   };
 
@@ -73,12 +73,12 @@ export const PutawayModule = () => {
     if (!raw) return;
     const match = locations.find(l => l.name.toUpperCase() === raw);
     if (!match) {
-      toast.error(`Ubicación "${raw}" no existe`);
+      toast.error(t('wms_pa_loc_not_exists', { loc: raw }));
       setScanInput('');
       return;
     }
     if (!boxId) {
-      toast.error('Primero escanea una caja');
+      toast.error(t('wms_pa_scan_box_first'));
       return;
     }
     setPendingConfirm(match);
@@ -104,14 +104,14 @@ export const PutawayModule = () => {
           {/* Location: scannable input by default, manual <select> fallback */}
           <div className="flex items-center justify-between">
             <span className="text-xs font-medium text-muted-foreground">
-              {manualMode ? 'Seleccionar manual' : 'Escanear ubicación'}
+              {manualMode ? t('wms_pa_manual_select') : t('wms_pa_scan_location')}
             </span>
             <button
               type="button"
               onClick={() => { setManualMode(m => !m); setScanInput(''); setLocation(''); }}
               className="text-xs font-medium text-primary hover:underline flex items-center gap-1"
             >
-              <Keyboard className="w-3 h-3" /> {manualMode ? 'Usar scanner' : 'Escribir manualmente'}
+              <Keyboard className="w-3 h-3" /> {manualMode ? t('wms_pa_use_scanner') : t('wms_pa_type_manually')}
             </button>
           </div>
 
@@ -128,7 +128,7 @@ export const PutawayModule = () => {
                   type="text"
                   value={scanInput}
                   onChange={e => setScanInput(e.target.value.toUpperCase())}
-                  placeholder="Escanea ubicación destino (Enter para confirmar)"
+                  placeholder={t('wms_pa_scan_dest_placeholder')}
                   autoComplete="off"
                   className={`${cls.input} pl-10 font-mono`}
                   data-testid="putaway-loc-scan"
@@ -141,13 +141,13 @@ export const PutawayModule = () => {
             onClick={() => {
               if (!boxId || !location) { toast.error(t('wms_box_loc_req')); return; }
               const match = locations.find(l => l.name === location);
-              if (!match) { toast.error(`Ubicación "${location}" no encontrada`); return; }
+              if (!match) { toast.error(t('wms_pa_loc_not_found', { loc: location })); return; }
               setPendingConfirm(match);
             }}
             disabled={loading || !boxId || !location || !manualMode}
             className="w-full px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm font-medium flex items-center justify-center gap-2 hover:opacity-90 transition-colors disabled:opacity-50"
             data-testid="putaway-submit"
-            title={!manualMode ? 'En modo scanner se confirma vía overlay' : 'Abrirá confirmación antes de aplicar'}
+            title={!manualMode ? t('wms_pa_title_scanner_mode') : t('wms_pa_title_confirm_first')}
           >
             {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <ClipboardCheck className="w-4 h-4" />}
             {t('wms_locate_btn')}
@@ -164,12 +164,12 @@ export const PutawayModule = () => {
                    <div className="text-sm font-semibold font-mono">{boxDetails.sku}</div>
                  </div>
                  <div className="text-right">
-                   <div className="text-xs font-medium text-muted-foreground">{t('units')}</div>
+                   <div className="text-xs font-medium text-muted-foreground">{t('wms_label_units')}</div>
                    <div className="text-sm font-semibold tabular-nums">{boxDetails.units}</div>
                  </div>
                </div>
                <div className="p-3 bg-muted/40 rounded-lg border border-border">
-                 <label className="text-xs font-medium text-muted-foreground block mb-1">PO / ORDER (Editable)</label>
+                 <label className="text-xs font-medium text-muted-foreground block mb-1">{t('wms_pa_po_editable')}</label>
                  <input
                    value={boxDetails.po || ''}
                    onChange={e => setBoxDetails(p => ({ ...p, po: e.target.value }))}
@@ -179,7 +179,7 @@ export const PutawayModule = () => {
             </div>
           ) : (
             <div className="text-center text-sm text-muted-foreground">
-              {t('wms_scan_hint') || 'Escanea una caja para ver detalles'}
+              {t('wms_scan_hint')}
             </div>
           )}
         </div>
@@ -198,7 +198,7 @@ export const PutawayModule = () => {
             >
               <div className="flex flex-col items-start">
                 <span className="text-xs font-semibold">{b.box_id}</span>
-                <span className="text-xs opacity-60">{b.sku} / {b.units} UN</span>
+                <span className="text-xs opacity-60">{b.sku} / {t('wms_units_abbr', { n: b.units })}</span>
               </div>
               <ChevronRight className="w-4 h-4 opacity-40" />
             </button>
@@ -214,7 +214,7 @@ export const PutawayModule = () => {
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <ScanLine className="w-5 h-5 text-muted-foreground" />
-                <h3 className="font-semibold text-sm">Confirmar Putaway</h3>
+                <h3 className="font-semibold text-sm">{t('wms_pa_confirm_title')}</h3>
               </div>
               <button onClick={() => setPendingConfirm(null)} className="p-1 hover:bg-secondary rounded-lg transition-all" disabled={loading}>
                 <X className="w-5 h-5" />
@@ -223,17 +223,17 @@ export const PutawayModule = () => {
 
             <div className="bg-muted/40 rounded-lg p-4 space-y-3 border border-border">
               <div>
-                <div className="text-xs font-medium text-muted-foreground mb-1">Caja</div>
+                <div className="text-xs font-medium text-muted-foreground mb-1">{t('wms_box')}</div>
                 <div className="font-mono font-semibold">{boxId}</div>
                 {boxDetails?.sku && <div className="text-xs text-muted-foreground mt-1">{boxDetails.sku} · {boxDetails.units} pcs</div>}
               </div>
               <div className="border-t border-border/60 pt-3">
-                <div className="text-xs font-medium text-muted-foreground mb-1">Ubicación destino</div>
+                <div className="text-xs font-medium text-muted-foreground mb-1">{t('wms_dest_location')}</div>
                 <div className="font-mono font-semibold text-lg">{pendingConfirm.name}</div>
                 <div className="text-xs text-muted-foreground mt-1">
-                  {pendingConfirm.zone || 'SIN ZONA'}
+                  {pendingConfirm.zone || t('wms_no_zone')}
                   {pendingConfirm.inventory_summary?.total_units > 0 && (
-                    <span className="ml-2 text-amber-600 dark:text-amber-400">· Ya ocupada: {pendingConfirm.inventory_summary.total_units} pcs</span>
+                    <span className="ml-2 text-amber-600 dark:text-amber-400">{t('wms_pa_already_occupied', { n: pendingConfirm.inventory_summary.total_units })}</span>
                   )}
                 </div>
               </div>
@@ -246,14 +246,14 @@ export const PutawayModule = () => {
                 className="flex-1 py-3 bg-primary text-primary-foreground text-sm font-medium rounded-md hover:opacity-90 active:scale-95 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
               >
                 {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <ClipboardCheck className="w-4 h-4" />}
-                Confirmar
+                {t('confirm')}
               </button>
               <button
                 onClick={() => setPendingConfirm(null)}
                 disabled={loading}
                 className="flex-1 py-3 bg-card border border-border text-foreground text-sm font-medium rounded-md hover:bg-muted transition-colors disabled:opacity-50"
               >
-                Cancelar
+                {t('cancel')}
               </button>
             </div>
           </div>
