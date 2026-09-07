@@ -77,6 +77,8 @@ async def main():
 
     df = pd.read_excel(XLSX_PATH, sheet_name=0)
     print(f"Loaded {len(df)} rows from {XLSX_PATH.name}")
+    if len(df) == 0:
+        raise SystemExit("[!] ABORTA (empty guard): el snapshot no trae filas; no se borra nada.")
 
     # Pre-flight stats over the wms collections so we know what we're replacing.
     pre_inv = await db.wms_inventory.count_documents({})
@@ -91,6 +93,14 @@ async def main():
     now_iso = datetime.now(timezone.utc).isoformat()
 
     if apply:
+        # Respaldo ANTES de borrar (no habia: un restore equivocado no tenia
+        # vuelta atras). Server-side $out a colecciones con timestamp.
+        ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        if pre_inv:
+            await db.wms_inventory.aggregate([{"$out": f"wms_inventory_bak_restore_{ts}"}])
+        if pre_box:
+            await db.wms_boxes.aggregate([{"$out": f"wms_boxes_bak_restore_{ts}"}])
+        print(f"Respaldo: wms_inventory_bak_restore_{ts} / wms_boxes_bak_restore_{ts}")
         # The current collections are 100% corrupt (location='', units=0), so we
         # can safely wipe them before reseeding from the snapshot.
         print("Wiping current wms_inventory and wms_boxes …")

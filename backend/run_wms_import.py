@@ -1,6 +1,15 @@
-"""One-off: import WMS inventory from an Excel file using the same logic as POST /wms/import/inventory."""
+"""One-off: import WMS inventory from an Excel file.
+
+PELIGRO: BORRA wms_inventory/wms_boxes/wms_tasks/wms_allocations y reimporta desde
+el xlsx. Es un re-import COMPLETO, no incremental. Por eso ahora:
+  - dry-run por defecto (APPLY=1 para ejecutar de verdad),
+  - respalda inventory/boxes a *_bak_import_<ts> antes de borrar,
+  - empty-guard (aborta si el archivo no produce filas),
+  - shrink-guard (aborta si traeria <50% de lo actual, salvo FORCE=1).
+"""
 import asyncio
 import io
+import os
 import re
 import sys
 import uuid
@@ -14,6 +23,9 @@ ROOT = Path(__file__).parent
 load_dotenv(ROOT / ".env")
 
 from deps import db  # noqa: E402
+
+APPLY = os.environ.get("APPLY") == "1"
+FORCE = os.environ.get("FORCE") == "1"
 
 
 def now_iso():
@@ -116,6 +128,31 @@ async def import_inventory(xlsx_path: Path):
     wb.close()
 
     print(f"Parsed: {len(inventory_docs)} inventory rows, {len(box_docs)} boxes, {len(locations_set)} locations, skipped={skipped}")
+
+    # ── GUARDAS anti-wipe: este script BORRA todo el inventario y reimporta ──────
+    if not inventory_docs:
+        raise SystemExit("[!] ABORTA (empty guard): el archivo no produjo filas de inventario.")
+    cur_inv = await db.wms_inventory.count_documents({})
+    cur_box = await db.wms_boxes.count_documents({})
+    print(f"Actual en base: inv={cur_inv}, boxes={cur_box}")
+    if cur_inv and len(inventory_docs) < 0.5 * cur_inv and not FORCE:
+        raise SystemExit(
+            f"[!] ABORTA (shrink guard): el import trae {len(inventory_docs)} filas vs {cur_inv} actuales "
+            f"(<50%). Borrar y reimportar destruiria mas de la mitad del inventario. "
+            f"Si es intencional, FORCE=1.")
+    if not APPLY:
+        print("\n[DRY-RUN] Nada escrito. Este script BORRA wms_inventory/boxes/tasks/allocations y "
+              "reimporta desde el xlsx. APPLY=1 para ejecutar (respalda antes de borrar).")
+        return {"dry_run": True, "would_import": len(inventory_docs),
+                "would_wipe_inv": cur_inv, "would_wipe_box": cur_box}
+
+    # Respaldo ANTES de borrar (server-side, no pasa por el proceso).
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    print(f"Respaldando a wms_inventory_bak_import_{ts} / wms_boxes_bak_import_{ts} ...")
+    if cur_inv:
+        await db.wms_inventory.aggregate([{"$out": f"wms_inventory_bak_import_{ts}"}])
+    if cur_box:
+        await db.wms_boxes.aggregate([{"$out": f"wms_boxes_bak_import_{ts}"}])
 
     # Fresh start
     print("Wiping wms_inventory, wms_boxes, wms_tasks, wms_allocations ...")
