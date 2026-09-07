@@ -2832,6 +2832,7 @@ async def create_receiving(request: Request):
         "descriptions": description,
         "countries": country_of_origin,
         "fabrics": fabric_content,
+        "manufacturers": manufacturer,
     })
 
     # Guardia de UPC: si el receiving se hace contra un UPC que YA esta en el
@@ -3286,20 +3287,27 @@ async def get_receiving(receiving_id: str, request: Request):
 async def update_receiving(receiving_id: str, request: Request):
     user = await require_auth(request)
     body = await request.json()
-    
+
     # Extract only metadata fields (no quantity/sku changes allowed here to protect inventory integrity)
     update_data = {}
     for field in ["customer", "manufacturer", "description", "country_of_origin", "fabric_content", "lot_number", "inv_location"]:
         if field in body:
             update_data[field] = body[field].strip()
-            
+
     if not update_data:
         return {"message": "Nada que actualizar"}
-        
+
     doc = await db.wms_receiving.find_one({"receiving_id": receiving_id})
     if not doc:
         raise HTTPException(404, "Receiving no encontrado")
-        
+
+    # Guardia de catálogo: editar un recibo no puede reintroducir metadata sucia
+    # (mismo criterio que recepción). lot_number / inv_location no son de catálogo.
+    _cust = update_data.get("customer") or doc.get("customer") or ""
+    await _assert_curated_identity(_cust, {
+        ctype: update_data[f] for f, ctype in _EDIT_IDENTITY_CTYPE.items() if f in update_data
+    })
+
     # Update the receiving record
     await db.wms_receiving.update_one({"receiving_id": receiving_id}, {"$set": update_data})
     
@@ -3490,6 +3498,18 @@ _BOX_EDITABLE_FIELDS = {
     "units",  # qty mirror is kept in sync below
 }
 
+# Campos editables que son de catálogo curado -> su ctype. Se usa para validar
+# las EDICIONES (PUT /boxes, PUT /receiving) con la misma guardia que recepción,
+# y así no reintroducir metadata sucia por la puerta de atrás. lot_number, units
+# e inv_location no son de catálogo.
+_EDIT_IDENTITY_CTYPE = {
+    "customer": "customers",
+    "manufacturer": "manufacturers",
+    "description": "descriptions",
+    "country_of_origin": "countries",
+    "fabric_content": "fabrics",
+}
+
 
 @router.put("/boxes/{box_id}")
 async def update_box(box_id: str, request: Request):
@@ -3522,6 +3542,13 @@ async def update_box(box_id: str, request: Request):
 
     if not update_doc:
         raise HTTPException(400, "Nada por actualizar")
+
+    # Guardia de catálogo: editar una caja no puede reintroducir metadata sucia
+    # (mismo criterio que recepción). units/lot_number no son de catálogo.
+    _cust = update_doc.get("customer") or box.get("customer") or ""
+    await _assert_curated_identity(_cust, {
+        ctype: update_doc[f] for f, ctype in _EDIT_IDENTITY_CTYPE.items() if f in update_doc
+    })
 
     update_doc["updated_at"] = now_iso()
     update_doc["updated_by"] = user.get("user_id")
