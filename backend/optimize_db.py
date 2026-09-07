@@ -14,6 +14,16 @@ WMS_INDEXES = [
     ("wms_inventory", [("style", 1), ("color", 1), ("size", 1), ("location", 1)], {}),
     ("wms_inventory", "inventory_id", {"unique": True}),
     ("wms_inventory", "location", {}),
+    # Unicidad de material+lote+ubicacion: impide DOS filas de rollup para el mismo
+    # (style,color,size,location,pais,composicion). Antes vivia solo en el script
+    # manual scripts/create_inventory_unique_index.py -> en un deploy fresco no
+    # existia. Aqui se hace permanente. Boot-safe: si hay duplicados legados, el
+    # try/except lo salta (corre reconcile_duplicate_inventory_rows.py y al
+    # siguiente boot se construye). OJO: compara fabric_content CRUDO; la
+    # canonicalizacion vive en services/inventory_ledger.py al escribir.
+    ("wms_inventory", [("style", 1), ("color", 1), ("size", 1), ("location", 1),
+                       ("country_of_origin", 1), ("fabric_content", 1)],
+        {"unique": True, "name": "uniq_inventory_material_lote"}),
     ("wms_boxes", [("sku", 1), ("color", 1), ("size", 1), ("location", 1), ("units", 1)], {}),
     ("wms_boxes", [("style", 1), ("color", 1), ("size", 1), ("location", 1)], {}),
     # Consultas SOLO por location (p.ej. _cc_bind_candidates del conteo ciclico,
@@ -69,6 +79,13 @@ WMS_INDEXES = [
     # escaneo del piso, y la cola se lee ordenada por cuanto estorba.
     ("wms_quarantine_locations", "location", {"unique": True}),
     ("wms_quarantine_locations", [("status", 1), ("encuentros", -1)], {}),
+    # Unicidad del codigo de barra en el catalogo: un UPC identifica UN solo SKU.
+    # Hasta ahora la unicidad era solo a nivel app (find_one antes de insertar), y
+    # los scripts de import por CLI podian colar duplicados. Boot-safe: si existen
+    # UPC duplicados (hoy 17, restos de estilos viejos sin renombrar + alguna
+    # colision real), el try/except lo SALTA y se construye solo cuando se
+    # deduplique. NO es partial: el catalogo no tiene UPC vacios.
+    ("wms_upc_catalog", "upc", {"unique": True, "name": "uniq_upc_catalog_code"}),
     # Core (non-WMS) uniqueness guards against duplicate generated IDs.
     ("invoices", "invoice_id", {"unique": True}),
 ]

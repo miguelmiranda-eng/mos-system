@@ -56,6 +56,20 @@ def norm_upc(v) -> str:
     return re.sub(r"[^0-9A-Z]", "", s.upper())
 
 
+def valid_gtin(code: str) -> bool:
+    """True si `code` es un GTIN estructuralmente valido (UPC-A/EAN-8/13/GTIN-14):
+    solo digitos, longitud 8/12/13/14, y el digito verificador cuadra. Igual que
+    _valid_gtin en routers/wms.py. Rechaza basura tipo 'BLACK'/'PFD2XL'/'ICEBLUE2X'
+    que el endpoint HTTP nunca dejaria entrar pero por CLI si se colaba."""
+    c = str(code or "").strip()
+    if not c.isdigit() or len(c) not in (8, 12, 13, 14):
+        return False
+    digits = [int(x) for x in c]
+    body = digits[:-1][::-1]
+    s = sum(d * (3 if i % 2 == 0 else 1) for i, d in enumerate(body))
+    return (10 - s % 10) % 10 == digits[-1]
+
+
 def make_sku(style: str, color: str, size: str) -> str:
     parts = [
         re.sub(r"\s+", "-", style.strip().upper()),
@@ -86,7 +100,7 @@ def read_xlsx() -> list[dict]:
     size_col = col_idx.get("SIZE", 2)
     upc_col = col_idx.get("UPC", 3)
 
-    out = []
+    out, rejected = [], []
     for row in rows[1:]:
         if row is None:
             continue
@@ -98,21 +112,30 @@ def read_xlsx() -> list[dict]:
         size = norm_upper(row[size_col])
         if not style:
             continue
+        # Rechaza UPC que no sea GTIN valido (basura tipo 'BLACK'/'PFD2XL'). NO se
+        # inserta al catalogo: se reporta para corregir la fuente.
+        if not valid_gtin(upc):
+            rejected.append({"upc": upc, "style": style, "color": color, "size": size})
+            continue
         out.append({
             "upc": upc,
             "style": style,
             "color": color,
             "size": size,
         })
-    return out
+    return out, rejected
 
 
 async def main():
     apply = os.environ.get("APPLY") == "1"
     print(f"Mode: {'APPLY' if apply else 'DRY-RUN'}")
 
-    candidates = read_xlsx()
+    candidates, rejected = read_xlsx()
     print(f"[i] Candidatos leidos del XLSX: {len(candidates)}")
+    if rejected:
+        print(f"[!] RECHAZADOS por UPC no-GTIN (NO se insertan): {len(rejected)}")
+        for r in rejected[:15]:
+            print(f"      upc={r['upc']!r}  {r['style']}/{r['color']}/{r['size']}")
 
     existing_codes = set()
     if candidates:

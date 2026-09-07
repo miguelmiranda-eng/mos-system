@@ -76,6 +76,19 @@ def norm_upc(v) -> str:
     return s
 
 
+def valid_gtin(code: str) -> bool:
+    """True si `code` es un GTIN estructuralmente valido (solo digitos, longitud
+    8/12/13/14, digito verificador cuadra). Igual que _valid_gtin en
+    routers/wms.py. Rechaza basura tipo 'BLACK'/'PFD2XL'/'WHITE2XL'."""
+    c = str(code or "").strip()
+    if not c.isdigit() or len(c) not in (8, 12, 13, 14):
+        return False
+    digits = [int(x) for x in c]
+    body = digits[:-1][::-1]
+    s = sum(d * (3 if i % 2 == 0 else 1) for i, d in enumerate(body))
+    return (10 - s % 10) % 10 == digits[-1]
+
+
 def make_sku(style: str, color: str, size: str) -> str:
     parts = [
         re.sub(r"\s+", "-", style.strip().upper()),
@@ -107,7 +120,7 @@ def read_xlsx() -> list[dict]:
     color_col = col_idx.get("Color", 2)
     size_cols = {sz: col_idx[sz] for sz in SIZE_COLUMNS if sz in col_idx}
 
-    out = []
+    out, rejected = [], []
     for row in rows[1:]:
         if row is None:
             continue
@@ -124,6 +137,10 @@ def read_xlsx() -> list[dict]:
             upc = norm_upc(cell)
             if not upc:
                 continue
+            # Rechaza UPC que no sea GTIN valido: no se inserta, se reporta.
+            if not valid_gtin(upc):
+                rejected.append({"upc": upc, "style": style, "color": color, "size": canon_size(sz)})
+                continue
             out.append({
                 "upc": upc,
                 "style": style,
@@ -131,15 +148,19 @@ def read_xlsx() -> list[dict]:
                 "color": color,
                 "size": canon_size(sz),
             })
-    return out
+    return out, rejected
 
 
 async def main():
     apply = os.environ.get("APPLY") == "1"
     print(f"Mode: {'APPLY' if apply else 'DRY-RUN'}")
 
-    candidates = read_xlsx()
+    candidates, rejected = read_xlsx()
     print(f"[i] Candidatos leidos del XLSX: {len(candidates)}")
+    if rejected:
+        print(f"[!] RECHAZADOS por UPC no-GTIN (NO se insertan): {len(rejected)}")
+        for r in rejected[:15]:
+            print(f"      upc={r['upc']!r}  {r['style']}/{r['color']}/{r['size']}")
 
     # Conflict detection
     existing_codes = set()
