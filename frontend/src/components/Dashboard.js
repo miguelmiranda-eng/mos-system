@@ -8,7 +8,7 @@ import {
   Download, Sun, Moon, GripVertical, PlusCircle,
   BarChart3, UserPlus, Bell, Eye, EyeOff, CalendarDays, CalendarCheck, Pin, Save, Table2, Undo2,
   Factory, GanttChart, TrendingUp, Languages, Monitor, MessageSquare, Loader2, History, Zap, AtSign, AlertTriangle, Users, ClipboardList, DatabaseBackup, Warehouse, ImageDown, ImageUp, FileJson, ArrowRightLeft, Wrench, Scissors,
-  ChevronDown, ChevronUp, Check, FileDown, Home, ExternalLink, Menu, ArrowLeft, Link2, Truck, Clock
+  ChevronDown, ChevronUp, Check, FileDown, Home, ExternalLink, Menu, ArrowLeft, Link2, Truck, Clock, Shirt
 } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue, SelectGroup, SelectLabel, SelectSeparator } from "./ui/select";
 import {
@@ -1200,6 +1200,20 @@ const Dashboard = () => {
               : 'bg-slate-100/50 text-slate-300 dark:bg-slate-800/40 dark:text-slate-600 border-transparent'
               }`} title={order.art_sep_status ? t('dash_sep_ready') : t('dash_sep_pending')}>
               SEP
+            </span>
+
+            {/* SAMPLE / playerita — se enciende cuando el work order de Printavo
+                pide muestra física (sample_printavo === 'SI'). Apagada si es 'NO'
+                o si la orden aún no trae el dato (viejas, sin sincronizar). */}
+            <span className={`px-1.5 py-0.5 rounded-full leading-none border transition-all inline-flex items-center ${order.sample_printavo === 'SI'
+              ? 'bg-violet-100 text-violet-600 dark:bg-violet-950/40 dark:text-violet-400 border-violet-200/20'
+              : 'bg-slate-100/50 text-slate-300 dark:bg-slate-800/40 dark:text-slate-600 border-transparent'
+              }`}
+              title={order.sample_printavo === 'SI' ? t('dash_sample_yes')
+                : order.sample_printavo === 'NO' ? t('dash_sample_no')
+                  : t('dash_sample_unknown')}
+              data-testid={`order-sample-badge-${order.order_id}`}>
+              <Shirt className="w-2.5 h-2.5" />
             </span>
 
             {/* PL / Packing importado — se enciende cuando la orden tiene el enlace
