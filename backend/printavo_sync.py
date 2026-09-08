@@ -337,6 +337,32 @@ def _parse_nickname(nickname: str):
     return (m.group(1) or "", m.group(2) or "", m.group(3) or "", m.group(4) or "")
 
 
+# Sección del work order que declara si la orden requiere MUESTRA FÍSICA. El
+# header vive en el grupo de PRODUCTION y cambia por plantilla: "TOPS NEEDED"
+# (Spencers/Goodie) o "SAMPLES" (Culture Kings/Tractor). Cuerpo "N/A"/vacío = no
+# lleva; con detalle (tallas de muestra, ECOM SAMPLE) = sí lleva.
+#
+# OJO — la señal se ancla al HEADER de esa línea, NO a "aparece la palabra
+# sample": la línea "APPROVAL METHOD:\nPlease follow APPROVED SAMPLE..." también
+# dice SAMPLE y NO es esta sección (falso positivo confirmado en el invoice 2406).
+_SAMPLE_HEADERS = ("SAMPLES", "TOPS NEEDED")
+_SAMPLE_EMPTY = {"", "N/A", "NA", "NONE"}
+
+
+def _sample_signal(invoice: dict):
+    """Return ("SI"|"NO", raw_line) if the work order carries a sample section,
+    else (None, None) — 'desconocido': el invoice no trae esa línea (visto en
+    varios POs de Culture Kings), distinto de "NO lleva" (sección con N/A)."""
+    for li in _flatten_line_items(invoice):
+        desc = str(li.get("description") or "").replace("\r\n", "\n").replace("\r", "\n")
+        head = desc.split("\n", 1)[0].strip().upper().rstrip(":")
+        if head in _SAMPLE_HEADERS:
+            body = desc.split("\n", 1)[1].strip() if "\n" in desc else ""
+            flag = "NO" if body.strip().upper() in _SAMPLE_EMPTY else "SI"
+            return flag, desc.strip()
+    return None, None
+
+
 def invoice_to_orders(invoice: dict) -> list:
     """Map one Printavo invoice into a list of OrderCreate-ready dicts."""
     visual_id = str(invoice.get("visualId") or "").strip()
@@ -365,6 +391,11 @@ def invoice_to_orders(invoice: dict) -> list:
     # Keep only the garment lines (see _real_line_items) so we don't create junk
     # orders from department headers / notes / sample specs.
     real = _real_line_items(invoice)
+
+    # ¿La orden requiere muestra física? Se lee del work order (invoice-level) y
+    # se estampa en TODAS las hermanas por color. Ausente = desconocido (el
+    # invoice no trae la sección SAMPLES/TOPS NEEDED).
+    sample_flag, sample_raw = _sample_signal(invoice)
 
     # Consolidación POR COLOR: un invoice trae varios estilos (tipo de prenda:
     # tee / long sleeve / hoodie) del MISMO color y la nave lo opera como UNA
@@ -429,6 +460,10 @@ def invoice_to_orders(invoice: dict) -> list:
             "board": "SCHEDULING",
             "source": "printavo_auto",
             "printavo_invoice_id": invoice.get("id"),
+            # Muestra física leída del work order de Printavo. "SI"/"NO";
+            # ausente = desconocido (no confundir "NO lleva" con "no se sabe").
+            "sample_printavo": sample_flag,
+            "sample_printavo_raw": sample_raw,
             "notes": notes,
         }
         # JOB TITLE A = work order link + its title (the nickname).
