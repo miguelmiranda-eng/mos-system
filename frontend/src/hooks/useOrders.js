@@ -463,12 +463,16 @@ export const useOrders = (currentBoard, boardFilters) => {
           // If the board changed, we need to refresh the current view as the order might disappear
           if (field === 'board') fetchOrders(true, true);
         }
-      } else { 
-        toast.error(t('update_err')); 
+      } else {
+        // Surfacea el mensaje del backend (p.ej. el de una GUARDA que bloquea:
+        // "Sube una foto de evidencia…") en vez de un genérico "Error al actualizar".
+        let msg = t('update_err');
+        try { const err = await res.json(); if (err && err.detail) msg = String(err.detail); } catch { /* genérico */ }
+        toast.error(msg);
         fetchOrders(true, true); // Rollback/Sync
       }
-    } catch { 
-      toast.error(t('update_err')); 
+    } catch {
+      toast.error(t('update_err'));
       fetchOrders(true, true); // Rollback/Sync
     }
   };
@@ -514,6 +518,13 @@ export const useOrders = (currentBoard, boardFilters) => {
 
       if (res.ok) {
         const data = await res.json();
+        // Movimiento masivo con guardas: algunas órdenes pueden quedar bloqueadas
+        // (éxito parcial). Se avisa cuáles y por qué en vez de decir "todo ok".
+        const blocked = data.guard_blocked || [];
+        if (blocked.length) {
+          const reason = blocked[0]?.reason || 'requisito no cumplido';
+          toast.warning(`${blocked.length} orden(es) NO se movieron por una guarda: ${reason}`, { duration: 6000 });
+        }
         const automations = data._automations_executed || [];
         if (automations.length > 0) {
           const names = [...new Set(automations.map(a => a.name))].join(', ');
