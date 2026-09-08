@@ -638,6 +638,20 @@ async def update_order(order_id: str, order: OrderUpdate, request: Request):
         if user.get("role") not in ("supersu", "inspector_qc", "qc"):
             raise HTTPException(status_code=403, detail="Board CONTROL DE CALIDAD is locked for your role")
 
+    # Guardas / validaciones (automatizaciones tipo "guard"): pueden BLOQUEAR el
+    # cambio de status o de tablero hasta que se cumpla un requisito (foto de
+    # evidencia, campo lleno, otro badge). Se evalúan ANTES de escribir.
+    _status_changing = ("production_status" in update_data
+                        and (update_data.get("production_status") or "") != (existing.get("production_status") or ""))
+    _board_changing = bool(new_board and old_board != new_board)
+    if _status_changing or _board_changing:
+        from routers.automations import check_guards  # lazy import (evita ciclo)
+        _block = await check_guards(existing, update_data, user,
+                                    status_changing=_status_changing, board_changing=_board_changing,
+                                    new_board=new_board)
+        if _block:
+            raise HTTPException(status_code=422, detail=_block)
+
     await db.orders.update_one({"order_id": order_id}, {"$set": update_data})
     updated = await db.orders.find_one({"order_id": order_id}, {"_id": 0})
     changed_data = {k: v for k, v in update_data.items() if k != "updated_at"}
@@ -714,6 +728,13 @@ async def move_order(order_id: str, request: Request):
     if old_board == "CONTROL DE CALIDAD" and target_board != old_board:
         if user.get("role") not in ("supersu", "inspector_qc", "qc"):
             raise HTTPException(status_code=403, detail="Board CONTROL DE CALIDAD is locked for your role")
+    # Guardas: un movimiento de tablero también puede requerir foto/campo/flag.
+    if old_board != target_board and target_board != "PAPELERA DE RECICLAJE":
+        from routers.automations import check_guards  # lazy import (evita ciclo)
+        _block = await check_guards(existing, {"board": target_board}, user,
+                                    board_changing=True, new_board=target_board)
+        if _block:
+            raise HTTPException(status_code=422, detail=_block)
     await db.orders.update_one({"order_id": order_id}, {"$set": {"board": target_board, "updated_at": datetime.now(timezone.utc).isoformat()}})
     updated = await db.orders.find_one({"order_id": order_id}, {"_id": 0})
     await log_activity(user, "move_order", {"order_id": order_id, "order_number": existing.get("order_number"), "from_board": old_board, "to_board": target_board}, previous_data={"order_id": order_id, "fields": {"board": old_board}})

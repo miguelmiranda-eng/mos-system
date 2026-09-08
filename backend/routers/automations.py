@@ -141,6 +141,112 @@ def _values_match(actual, expected):
     # String comparison (case-insensitive)
     return str(actual).strip().lower() == str(expected).strip().lower()
 
+
+# ── GUARDAS / VALIDACIONES (Fase 2) ──────────────────────────────────────────
+# Reglas que BLOQUEAN un cambio de status o de tablero hasta que se cumple un
+# requisito (foto de evidencia, campo lleno, otro badge en estado X). A
+# diferencia del motor normal (run_automations, que dispara efectos DESPUÉS del
+# cambio), las guardas se evalúan ANTES y pueden rechazar la operación.
+#
+# Se guardan en la MISMA colección db.automations con trigger_type "guard":
+#   trigger_conditions: {
+#     on: "status_change" | "move",     # qué intento vigila
+#     to_status: "X" (opcional),        # solo cuando el status destino es X
+#     to_board:  "Y" (opcional),        # solo cuando se mueve al tablero Y
+#     <flag>: <valor>, ...              # condiciones AND (ESTRICTAS) sobre la orden
+#   }
+#   action_params: {
+#     requirement: "photo" | "field" | "flag",
+#     field: "<campo>" (field/flag), value: "<valor>" (flag),
+#     message: "texto que ve el usuario al ser bloqueado"
+#   }
+GUARD_TRIGGER = "guard"
+_GUARD_RESERVED = {"on", "to_status", "to_board"}
+
+
+def _guard_conditions_match(cond: dict, order: dict) -> bool:
+    """TODAS las condiciones (flags) deben casar ESTRICTO contra la orden. Un
+    flag ausente NO casa (a diferencia del motor normal, que lo dejaba pasar):
+    si no sabemos que la orden es 'need sample', la guarda no aplica."""
+    for field, expected in cond.items():
+        if field in _GUARD_RESERVED or expected in (None, ""):
+            continue
+        if not _values_match(order.get(field), expected):
+            return False
+    return True
+
+
+def _requirement_met(params: dict, order: dict) -> bool:
+    """¿La orden cumple el requisito para dejar pasar el cambio? Se evalúa sobre
+    la vista fusionada (existing + update_data), así llenar el campo en el MISMO
+    request satisface el requisito."""
+    req = (params.get("requirement") or "").strip().lower()
+    if req == "photo":
+        return len(order.get("images") or []) >= 1
+    if req == "field":
+        v = order.get(params.get("field"))
+        return v is not None and str(v).strip() != ""
+    if req == "flag":
+        return bool(_values_match(order.get(params.get("field")), params.get("value")))
+    # Requisito desconocido -> no bloquear (fail-open: una config mala no debe
+    # trabar a todo el mundo).
+    return True
+
+
+async def check_guards(existing: dict, update_data: dict, user: dict,
+                       status_changing: bool = False, board_changing: bool = False,
+                       new_board=None):
+    """Evalúa las guardas activas contra el cambio que se intenta. Devuelve el
+    mensaje de la PRIMERA guarda que bloquea, o None si todo pasa.
+
+    `existing` = orden actual; `update_data` = cambios intentados. El requisito y
+    las condiciones se evalúan sobre la fusión {**existing, **update_data}."""
+    if not (status_changing or board_changing):
+        return None
+    try:
+        guards = await db.automations.find(
+            {"trigger_type": GUARD_TRIGGER, "is_active": True}
+        ).to_list(200)
+    except Exception as e:
+        logger.error(f"[guards] no se pudieron leer las guardas: {e}")
+        return None  # fail-open: un fallo de lectura no debe trabar la operación
+    if not guards:
+        return None
+
+    merged = {**existing, **update_data}
+    board = existing.get("board")
+    new_status = update_data.get("production_status")
+    for g in guards:
+        cond = g.get("trigger_conditions") or {}
+        on = cond.get("on")
+        if on == "status_change" and not status_changing:
+            continue
+        if on == "move" and not board_changing:
+            continue
+        if on not in ("status_change", "move"):
+            continue
+        # Scope: el tablero ACTUAL de la orden (donde se intenta la acción).
+        boards = g.get("boards") or []
+        if boards and board not in boards:
+            continue
+        # Destino específico (opcional).
+        to_status = cond.get("to_status")
+        if on == "status_change" and to_status and not _values_match(new_status, to_status):
+            continue
+        to_board = cond.get("to_board")
+        if on == "move" and to_board and not _values_match(new_board, to_board):
+            continue
+        # Condiciones (flags) estrictas.
+        if not _guard_conditions_match(cond, merged):
+            continue
+        # Requisito.
+        if not _requirement_met(g.get("action_params") or {}, merged):
+            msg = (g.get("action_params") or {}).get("message") \
+                or f"Acción bloqueada por la regla '{g.get('name', '')}'."
+            logger.info(f"[guards] bloqueada orden {existing.get('order_number')} por '{g.get('name')}'")
+            return msg
+    return None
+
 async def execute_action(action_type, params, target_obj, user=None):
     if action_type == "send_email":
         await send_automation_email(params, target_obj)
