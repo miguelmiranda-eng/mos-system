@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import {
   Plus, Loader2, AlertTriangle, Link2,
   FileSearch, CheckCircle2, PackageSearch,
-  Zap, Info, ExternalLink, X, Tag, Users
+  Zap, Info, ExternalLink, X, Tag, Users, Shirt
 } from "lucide-react";
 import { toast } from "sonner";
 import { API } from "../../lib/constants";
@@ -610,6 +610,32 @@ export const NewOrderForm = ({
               </div>
             ))}
           </div>
+
+          {/* ¿Lleva sample? — setea sample_printavo (lo que enciende la playerita).
+              En órdenes de Printavo lo llena el sync; en las manuales, aquí. */}
+          {!isPreview && (
+            <div className="pt-8 border-t border-border/20 space-y-3">
+              <h3 className="text-[10px] font-black uppercase tracking-[0.2em] text-muted-foreground flex items-center gap-2">
+                <Shirt className="w-3.5 h-3.5 text-violet-500" /> ¿Lleva sample? (playerita)
+              </h3>
+              <div className="flex gap-2">
+                <button type="button" onClick={() => setFormData(prev => ({ ...prev, sample_printavo: 'SI' }))}
+                  className={`px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all border ${formData.sample_printavo === 'SI' ? 'bg-violet-500 text-white border-violet-500' : 'bg-secondary/40 text-muted-foreground border-border hover:bg-secondary'}`}>
+                  Sí lleva sample
+                </button>
+                <button type="button" onClick={() => setFormData(prev => ({ ...prev, sample_printavo: 'NO' }))}
+                  className={`px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all border ${formData.sample_printavo === 'NO' ? 'bg-slate-600 text-white border-slate-600' : 'bg-secondary/40 text-muted-foreground border-border hover:bg-secondary'}`}>
+                  No lleva
+                </button>
+                {formData.sample_printavo && (
+                  <button type="button" onClick={() => setFormData(prev => { const c = { ...prev }; delete c.sample_printavo; return c; })}
+                    className="px-3 py-2 rounded-xl text-xs font-bold text-muted-foreground hover:text-foreground hover:bg-secondary/50 transition-all">
+                    Limpiar
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
 
           {/* Sizes Horizontal Section */}
           <div className="pt-8 border-t border-border/20 space-y-4">
