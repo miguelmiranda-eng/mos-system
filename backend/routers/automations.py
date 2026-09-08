@@ -117,7 +117,7 @@ def check_conditions(conditions, order, context):
             if not _values_match(order.get(watch_field), watch_value):
                 return False
     for field, expected in conditions.items():
-        if not expected or field in ("watch_field", "watch_value"):
+        if not expected or field in ("watch_field", "watch_value", "advanced"):
             continue
         if field == "from_board" and context.get("from_board") != expected:
             return False
@@ -125,6 +125,9 @@ def check_conditions(conditions, order, context):
             return False
         if field in order and not _values_match(order.get(field), expected):
             return False
+    # Condiciones avanzadas con operadores (Fase 3, Track 2).
+    if not _advanced_match(conditions, order):
+        return False
     return True
 
 def _values_match(actual, expected):
@@ -140,6 +143,54 @@ def _values_match(actual, expected):
         return str(actual).lower() == str(expected).lower()
     # String comparison (case-insensitive)
     return str(actual).strip().lower() == str(expected).strip().lower()
+
+
+# ── Operadores de comparación (Fase 3, Track 2) ──────────────────────────────
+# Las condiciones "avanzadas" (lista trigger_conditions.advanced = [{field, op,
+# value}]) permiten más que igualdad: >, <, ≥, ≤, contiene, en-lista, seteado.
+# A diferencia del filtro plano {campo: valor} (que deja pasar un campo AUSENTE,
+# ver check_conditions L126), aquí el operador manda: eq sobre un campo ausente
+# NO casa. Compatibilidad: reglas viejas no traen `advanced` y no cambian.
+def _num(v):
+    """Valor numérico best-effort ('1,500' -> 1500.0), o None si no es número."""
+    try:
+        return float(str(v).replace(",", "").strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def _compare(actual, op, expected) -> bool:
+    op = (op or "eq").strip().lower()
+    if op in ("is_set", "not_empty"):
+        return actual is not None and str(actual).strip() != ""
+    if op in ("not_set", "is_empty"):
+        return actual is None or str(actual).strip() == ""
+    if op == "eq":
+        return _values_match(actual, expected)
+    if op == "ne":
+        return not _values_match(actual, expected)
+    if op == "contains":
+        return expected not in (None, "") and str(expected).strip().lower() in str(actual or "").lower()
+    if op == "in":
+        vals = [x.strip().lower() for x in str(expected or "").split(",") if x.strip()]
+        return str(actual or "").strip().lower() in vals
+    if op in ("gt", "lt", "gte", "lte"):
+        na, ne = _num(actual), _num(expected)
+        if na is None or ne is None:
+            return False
+        return {"gt": na > ne, "lt": na < ne, "gte": na >= ne, "lte": na <= ne}[op]
+    return False
+
+
+def _advanced_match(conditions_or_cond: dict, order: dict) -> bool:
+    """Evalúa la lista `advanced` (AND). Vacía/ausente -> True (no filtra)."""
+    for c in (conditions_or_cond.get("advanced") or []):
+        fld = c.get("field")
+        if not fld:
+            continue
+        if not _compare(order.get(fld), c.get("op"), c.get("value")):
+            return False
+    return True
 
 
 # ── GUARDAS / VALIDACIONES (Fase 2) ──────────────────────────────────────────
@@ -161,19 +212,19 @@ def _values_match(actual, expected):
 #     message: "texto que ve el usuario al ser bloqueado"
 #   }
 GUARD_TRIGGER = "guard"
-_GUARD_RESERVED = {"on", "to_status", "to_board"}
+_GUARD_RESERVED = {"on", "to_status", "to_board", "advanced"}
 
 
 def _guard_conditions_match(cond: dict, order: dict) -> bool:
-    """TODAS las condiciones (flags) deben casar ESTRICTO contra la orden. Un
-    flag ausente NO casa (a diferencia del motor normal, que lo dejaba pasar):
-    si no sabemos que la orden es 'need sample', la guarda no aplica."""
+    """TODAS las condiciones (flags + avanzadas) deben casar ESTRICTO contra la
+    orden. Un flag ausente NO casa (a diferencia del motor normal, que lo dejaba
+    pasar): si no sabemos que la orden es 'need sample', la guarda no aplica."""
     for field, expected in cond.items():
         if field in _GUARD_RESERVED or expected in (None, ""):
             continue
         if not _values_match(order.get(field), expected):
             return False
-    return True
+    return _advanced_match(cond, order)
 
 
 def _requirement_met(params: dict, order: dict) -> bool:

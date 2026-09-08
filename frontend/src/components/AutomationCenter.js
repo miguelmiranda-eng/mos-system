@@ -43,6 +43,23 @@ const EXTRA_WATCH_FIELDS = [
   ...FLAG_CONDITION_FIELDS.map(f => ({ key: f.key, label: f.label, optionKey: f.optionKey })),
 ];
 
+// Operadores de las condiciones avanzadas (Fase 3, Track 2). Deben casar con
+// _compare del backend.
+const ADV_OPS = [
+  { op: 'eq', label: '= igual a' },
+  { op: 'ne', label: '≠ distinto de' },
+  { op: 'gt', label: '> mayor que' },
+  { op: 'gte', label: '≥ mayor o igual' },
+  { op: 'lt', label: '< menor que' },
+  { op: 'lte', label: '≤ menor o igual' },
+  { op: 'contains', label: 'contiene' },
+  { op: 'in', label: 'en lista (separa con coma)' },
+  { op: 'is_set', label: 'tiene valor' },
+  { op: 'not_set', label: 'está vacío' },
+];
+const ADV_NO_VALUE = ['is_set', 'not_set'];
+const ADV_OP_SYMBOL = Object.fromEntries(ADV_OPS.map(o => [o.op, o.label.split(' ')[0]]));
+
 const buildWatchFields = (colData = {}) => {
   const removed = colData.removed_default_columns || [];
   const defaultKeys = new Set(DEFAULT_COLUMNS.map(c => c.key));
@@ -99,7 +116,7 @@ const AutomationCenter = () => {
   // Condición adicional (filtro Y): la regla solo dispara si ADEMÁS otra
   // columna de la orden tiene cierto valor. Se persiste como clave extra en
   // trigger_conditions ({cliente: "X"}) — el backend ya evalúa esas claves.
-  const RESERVED_COND_KEYS = ['watch_field', 'watch_value', 'from_board', 'to_board'];
+  const RESERVED_COND_KEYS = ['watch_field', 'watch_value', 'from_board', 'to_board', 'advanced'];
   // Llaves propias de las guardas: tampoco son la "condición extra" (el flag).
   const GUARD_COND_KEYS = ['on', 'to_status', 'to_board'];
   const [extraCond, setExtraCond] = useState({ enabled: false, field: '', value: '' });
@@ -122,7 +139,7 @@ const AutomationCenter = () => {
     if (def && def.statusOptions && def.statusOptions.length) return def.statusOptions;
     return null;
   };
-  
+
   // Wizard State
   const [showWizard, setShowWizard] = useState(false);
   const [wizardStep, setWizardStep] = useState(1);
@@ -143,6 +160,16 @@ const AutomationCenter = () => {
     return (def && def.label) || key;
   };
 
+  // Condiciones avanzadas (operadores): lista {field, op, value} en
+  // trigger_conditions.advanced. Aplica a cualquier tipo de regla y a las guardas.
+  const advRows = () => currentAuto.trigger_conditions.advanced || [];
+  const setAdvanced = (arr) => setCurrentAuto(prev => ({
+    ...prev, trigger_conditions: { ...prev.trigger_conditions, advanced: arr },
+  }));
+  const addAdvRow = () => setAdvanced([...advRows(), { field: '', op: 'eq', value: '' }]);
+  const updAdvRow = (i, patch) => setAdvanced(advRows().map((c, idx) => (idx === i ? { ...c, ...patch } : c)));
+  const rmAdvRow = (i) => setAdvanced(advRows().filter((_, idx) => idx !== i));
+
   // Helper to safely get the trigger condition string
   const getTriggerCondString = (conds) => {
     if (!conds) return t('auto_any_change');
@@ -152,8 +179,9 @@ const AutomationCenter = () => {
       if (conds.on === 'status_change' && conds.to_status) gp.push(`hacia "${conds.to_status}"`);
       if (conds.on === 'move' && conds.to_board) gp.push(`hacia "${conds.to_board}"`);
       Object.keys(conds)
-        .filter(k => !['on', 'to_status', 'to_board', 'watch_field', 'watch_value'].includes(k) && conds[k])
+        .filter(k => !['on', 'to_status', 'to_board', 'watch_field', 'watch_value', 'advanced'].includes(k) && conds[k])
         .forEach(k => gp.push(`si ${fieldLabel(k)} = ${conds[k]}`));
+      (conds.advanced || []).forEach(c => { if (c.field) gp.push(`${fieldLabel(c.field)} ${ADV_OP_SYMBOL[c.op] || c.op} ${ADV_NO_VALUE.includes(c.op) ? '' : (c.value || '')}`.trim()); });
       return gp.join(' · ');
     }
     const parts = [];
@@ -164,12 +192,13 @@ const AutomationCenter = () => {
       else parts.push(t('auto_if_equals', { field: fieldLabel(conds.watch_field), value: conds.watch_value }));
     }
     Object.keys(conds)
-      .filter(k => k !== 'watch_field' && k !== 'watch_value' && conds[k])
+      .filter(k => k !== 'watch_field' && k !== 'watch_value' && k !== 'advanced' && conds[k])
       .forEach(k => {
         if (k === 'to_board') parts.push(t('auto_if_enters_board', { board: conds[k] }));
         else if (k === 'from_board') parts.push(t('auto_if_leaves_board', { board: conds[k] }));
         else parts.push(t('auto_only_if_equals', { field: fieldLabel(k), value: conds[k] }));
       });
+    (conds.advanced || []).forEach(c => { if (c.field) parts.push(`${fieldLabel(c.field)} ${ADV_OP_SYMBOL[c.op] || c.op} ${ADV_NO_VALUE.includes(c.op) ? '' : (c.value || '')}`.trim()); });
     return parts.length ? parts.join(t('auto_and_join')) : t('auto_on_trigger');
   };
 
@@ -611,6 +640,42 @@ const AutomationCenter = () => {
                 </div>
               </div>
             )}
+
+            {/* Condiciones avanzadas con operadores (>, <, contiene, en lista...).
+                Aplica a cualquier tipo de regla y a las guardas. */}
+            <div className="p-4 border border-indigo-500/20 bg-indigo-500/5 rounded-xl space-y-3">
+              <label className="block text-sm font-bold text-muted-foreground uppercase tracking-widest">
+                Condiciones avanzadas <span className="text-muted-foreground/60 normal-case font-normal">— operadores, opcional</span>
+              </label>
+              {advRows().length === 0 && (
+                <p className="text-[10px] text-muted-foreground italic">Ej. Cantidad &gt; 1500 · Prioridad en RUSH,EVENT · Cliente contiene "GOODIE"</p>
+              )}
+              {advRows().map((c, i) => (
+                <div key={i} className="grid grid-cols-[1fr_1fr_1fr_auto] gap-2 items-center">
+                  <select value={c.field} onChange={e => updAdvRow(i, { field: e.target.value, value: '' })} className="w-full bg-secondary/50 border border-border p-2 rounded-lg text-sm text-foreground">
+                    <option value="">{t('auto_select_dash')}</option>
+                    {watchFields.map(f => <option key={f.key} value={f.key}>{f.label}</option>)}
+                  </select>
+                  <select value={c.op || 'eq'} onChange={e => updAdvRow(i, { op: e.target.value })} className="w-full bg-secondary/50 border border-border p-2 rounded-lg text-sm text-foreground">
+                    {ADV_OPS.map(o => <option key={o.op} value={o.op}>{o.label}</option>)}
+                  </select>
+                  {ADV_NO_VALUE.includes(c.op) ? (
+                    <span className="text-xs text-muted-foreground text-center">—</span>
+                  ) : (getValueOptions(c.field) && ['eq', 'ne'].includes(c.op)) ? (
+                    <select value={c.value} onChange={e => updAdvRow(i, { value: e.target.value })} className="w-full bg-secondary/50 border border-border p-2 rounded-lg text-sm text-foreground">
+                      <option value="">{t('auto_select_dash')}</option>
+                      {getValueOptions(c.field).map(v => <option key={v} value={v}>{v}</option>)}
+                    </select>
+                  ) : (
+                    <input type="text" value={c.value || ''} onChange={e => updAdvRow(i, { value: e.target.value })} className="w-full bg-secondary/50 border border-border p-2 rounded-lg text-sm text-foreground" placeholder="valor" />
+                  )}
+                  <button onClick={() => rmAdvRow(i)} className="p-1 hover:bg-destructive/20 rounded"><X className="w-4 h-4 text-destructive" /></button>
+                </div>
+              ))}
+              <button onClick={addAdvRow} className="text-xs font-bold text-indigo-500 hover:text-indigo-400 flex items-center gap-1">
+                <Plus className="w-3.5 h-3.5" /> Agregar condición
+              </button>
+            </div>
 
             <label className="block text-sm font-bold text-muted-foreground uppercase tracking-widest pt-4">{t('auto_boards_apply')}</label>
             <select
