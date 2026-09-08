@@ -143,7 +143,7 @@ DEFAULT_OPTIONS = {
         "MAQUINA11", "MAQUINA12", "MAQUINA13", "MAQUINA14", "FINAL BILL", "CONTROL DE CALIDAD"
     ],
     "trigger_types": ["create", "move", "update", "status_change"],
-    "action_types": ["send_email", "move_board", "assign_field", "notify_slack"],
+    "action_types": ["send_email", "move_board", "assign_field", "change_status", "add_comment", "set_date", "notify_push", "notify_slack"],
     "condition_fields": ["priority", "client", "branding", "blank_status", "production_status", "trim_status", "sample", "artwork_status", "board", "betty_column", "shipping",
                          # Flags de badges de la tarjeta (iconos de iluminación): el
                          # evaluador de automatizaciones ya compara contra cualquier

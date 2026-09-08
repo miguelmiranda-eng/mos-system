@@ -52,6 +52,63 @@ async def delete_automation(automation_id: str, request: Request):
     await log_activity(user, "delete_automation", {"automation_id": automation_id})
     return {"message": "Automation deleted"}
 
+
+@router.get("/history")
+async def automation_history(request: Request, limit: int = 50):
+    """Historial de disparos: qué automatización se ejecutó, cuándo y sobre qué."""
+    await require_auth(request)
+    limit = max(1, min(limit, 200))
+    rows = await db.activity_logs.find(
+        {"action": "automation_triggered"}, {"_id": 0}
+    ).sort("timestamp", -1).limit(limit).to_list(limit)
+    out = []
+    for r in rows:
+        d = r.get("details") or {}
+        out.append({
+            "automation_id": d.get("automation_id"),
+            "automation_name": d.get("automation_name"),
+            "target_id": d.get("target_id"),
+            "via": d.get("via") or "crud",
+            "timestamp": r.get("timestamp"),
+        })
+    return {"history": out}
+
+
+@router.post("/dry-run")
+async def automation_dry_run(request: Request):
+    """Prueba una regla contra las órdenes ACTUALES sin ejecutar nada: devuelve a
+    cuántas pegaría y una muestra. Para 'time' usa el umbral; para 'guard', a
+    cuántas bloquearía (condiciones casan y requisito no se cumple); para el resto,
+    qué órdenes satisfacen las condiciones hoy."""
+    from datetime import datetime as _dt, timezone as _tz
+    await require_auth(request)
+    body = await request.json()
+    trigger_type = body.get("trigger_type")
+    cond = body.get("trigger_conditions") or {}
+    boards = body.get("boards") or []
+    q = {"board": {"$ne": "PAPELERA DE RECICLAJE"}}
+    if boards:
+        q["board"] = {"$in": boards}
+    proj = {"_id": 0, "comments": 0, "activity_logs": 0, "history": 0, "images": 0}
+    now = _dt.now(_tz.utc)
+    ap = body.get("action_params") or {}
+    total, sample, scanned = 0, [], 0
+    async for o in db.orders.find(q, proj):
+        scanned += 1
+        if scanned > 8000:
+            break
+        if trigger_type == "time":
+            ok = time_rule_due(cond, o, now) and time_conditions_ok(cond, o)
+        elif trigger_type == "guard":
+            ok = _guard_conditions_match(cond, o) and not _requirements_met(ap, o, {"role": None})[0]
+        else:
+            ok = _dryrun_match(cond, o)
+        if ok:
+            total += 1
+            if len(sample) < 25:
+                sample.append(o.get("order_number") or o.get("order_id"))
+    return {"matched": total, "sample": sample, "scanned": scanned}
+
 # ==================== AUTOMATION ENGINE ====================
 
 async def run_automations(trigger_type, target_obj, user, context=None, obj_type="order"):
@@ -242,6 +299,22 @@ def time_conditions_ok(cond: dict, order: dict) -> bool:
         if k in _TIME_KEYS or not v:
             continue
         if not _values_match(order.get(k), v):
+            return False
+    return _advanced_match(cond, order)
+
+
+def _dryrun_match(cond: dict, order: dict) -> bool:
+    """Para el DRY-RUN de una regla normal: ¿la orden satisface las condiciones
+    HOY, ignorando el evento (watch_field/changed_fields)? Misma lenidad que
+    check_conditions para el filtro plano (campo ausente pasa) + avanzadas."""
+    wf, wv = cond.get("watch_field"), cond.get("watch_value")
+    if wf and wv and wv not in ("date_updated", "is_empty", "not_empty"):
+        if not _values_match(order.get(wf), wv):
+            return False
+    for field, expected in cond.items():
+        if not expected or field in ("watch_field", "watch_value", "advanced", "from_board", "to_board"):
+            continue
+        if field in order and not _values_match(order.get(field), expected):
             return False
     return _advanced_match(cond, order)
 

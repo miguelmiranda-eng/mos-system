@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { 
-  Zap, Settings, Plus, ArrowLeft, Trash2, Edit2, 
-  ChevronRight, Check, CheckCircle2, Factory, X, Play, Loader2
+import {
+  Zap, Settings, Plus, ArrowLeft, Trash2, Edit2,
+  ChevronRight, Check, CheckCircle2, Factory, X, Play, Loader2, History
 } from 'lucide-react';
 import { API, BOARDS, DEFAULT_COLUMNS, FLAG_CONDITION_FIELDS } from '../lib/constants';
 import { useLang } from '../contexts/LanguageContext';
@@ -29,6 +29,13 @@ const TIME_BASES = [
 ];
 const TIME_DATE_BASES = ['cancel_date', 'due_date', 'final_bill', 'ship_by'];
 const TIME_COND_KEYS = ['basis', 'amount', 'unit', 'direction'];
+
+// Plantillas / recetas de un clic (pre-llenan el wizard).
+const TEMPLATES = [
+  { label: '📷 Requiere foto para ENVIO', rule: { name: 'Requiere foto para LISTO PARA ENVIO', trigger_type: 'guard', trigger_conditions: { on: 'status_change', to_status: 'LISTO PARA ENVIO' }, action_type: 'require', action_params: { requirement: 'photo', message: 'Sube una foto de evidencia antes de marcar LISTO PARA ENVIO.' }, is_active: true, boards: [] } },
+  { label: '⏱ SLA: 3 días parada', rule: { name: 'SLA: 3 días en el status', trigger_type: 'time', trigger_conditions: { basis: 'production_status_at', amount: 3, unit: 'days', direction: 'after' }, action_type: 'notify_push', action_params: { title: 'SLA', message: 'Orden {order_number} lleva 3+ días parada' }, is_active: true, boards: [] } },
+  { label: '🔔 Avisa al pasar a Inventario', rule: { name: 'Aviso LISTO PARA INVENTARIO', trigger_type: 'status_change', trigger_conditions: { watch_field: 'production_status', watch_value: 'LISTO PARA INVENTARIO' }, action_type: 'notify_push', action_params: { title: 'Final Bill', message: 'Orden {order_number} lista para facturar' }, is_active: true, boards: [] } },
+];
 
 const ACTION_LABELS = {
   move_board: 'Mover Tablero',
@@ -118,6 +125,8 @@ const AutomationCenter = () => {
   const [loading, setLoading] = useState(true);
   const [options, setOptions] = useState({});
   const [sla, setSla] = useState(null);   // config del motor de reglas por tiempo
+  const [dryRun, setDryRun] = useState(null);  // resultado de la prueba (dry-run)
+  const [history, setHistory] = useState(null); // historial de disparos (modal)
   const [watchFields, setWatchFields] = useState(() => buildWatchFields());
 
   // Tipo de condición sobre el campo observado. Se persiste dentro de
@@ -335,6 +344,47 @@ const AutomationCenter = () => {
     } catch (e) { console.error(e); }
   };
 
+  // Construye trigger_conditions final (mismo criterio que al guardar): limpia las
+  // claves no-reservadas y agrega la condición extra vigente.
+  const buildConds = () => {
+    const conds = { ...(currentAuto.trigger_conditions || {}) };
+    const keep = currentAuto.trigger_type === 'guard'
+      ? [...RESERVED_COND_KEYS, 'on', 'to_status', 'to_board']
+      : currentAuto.trigger_type === 'time'
+        ? [...RESERVED_COND_KEYS, ...TIME_COND_KEYS]
+        : RESERVED_COND_KEYS;
+    Object.keys(conds).forEach(k => { if (!keep.includes(k)) delete conds[k]; });
+    if (extraCond.enabled && extraCond.field && String(extraCond.value).trim() !== '') {
+      conds[extraCond.field] = extraCond.value;
+    }
+    return conds;
+  };
+
+  const runDryRun = async () => {
+    setDryRun({ loading: true });
+    try {
+      const ap = currentAuto.action_params || {};
+      let action_params = ap;
+      if (currentAuto.trigger_type === 'guard') {
+        const cleanReqs = extraRequirements.filter(r => r.requirement);
+        if (cleanReqs.length > 0) action_params = { ...ap, requirements: [{ requirement: ap.requirement, field: ap.field, value: ap.value, roles: ap.roles, message: ap.message }, ...cleanReqs] };
+      }
+      const res = await fetch(`${API}/automations/dry-run`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
+        body: JSON.stringify({ trigger_type: currentAuto.trigger_type, trigger_conditions: buildConds(), boards: currentAuto.boards, action_params }),
+      });
+      setDryRun(res.ok ? await res.json() : { error: true });
+    } catch { setDryRun({ error: true }); }
+  };
+
+  const openHistory = async () => {
+    setHistory({ loading: true });
+    try {
+      const res = await fetch(`${API}/automations/history?limit=80`, { credentials: 'include' });
+      setHistory(res.ok ? (await res.json()).history : []);
+    } catch { setHistory([]); }
+  };
+
   useEffect(() => {
     fetchAutomations();
     fetchOptions();
@@ -377,9 +427,18 @@ const AutomationCenter = () => {
     setExtraCond({ enabled: false, field: '', value: '' });
     setExtraActions([]);
     setExtraRequirements([]);
+    setDryRun(null);
     setIsEditing(false);
     setWizardStep(1);
     setShowWizard(true);
+  };
+
+  const openTemplate = (tpl) => {
+    setCurrentAuto({ ...tpl.rule });
+    setCondMode(deriveCondMode((tpl.rule.trigger_conditions || {}).watch_value));
+    setExtraCond(deriveExtraCond(tpl.rule.trigger_conditions));
+    setExtraActions([]); setExtraRequirements([]); setDryRun(null);
+    setIsEditing(false); setWizardStep(1); setShowWizard(true);
   };
 
   const openEditWizard = (auto) => {
@@ -405,6 +464,7 @@ const AutomationCenter = () => {
     }
     setCondMode(deriveCondMode((auto.trigger_conditions || {}).watch_value));
     setExtraCond(deriveExtraCond(auto.trigger_conditions));
+    setDryRun(null);
     setIsEditing(true);
     setWizardStep(1);
     setShowWizard(true);
@@ -420,20 +480,8 @@ const AutomationCenter = () => {
         alert(t('auto_name_required'));
         return;
       }
-      // Reconstruir la condición adicional: limpiar cualquier clave extra vieja
-      // y escribir la vigente solo si está activa y completa.
-      const conds = { ...(currentAuto.trigger_conditions || {}) };
-      // Las guardas guardan on/to_status/to_board en trigger_conditions; no son
-      // "condición extra" y no se deben borrar al reconstruir.
-      const keepKeys = currentAuto.trigger_type === 'guard'
-        ? [...RESERVED_COND_KEYS, 'on', 'to_status', 'to_board']
-        : currentAuto.trigger_type === 'time'
-          ? [...RESERVED_COND_KEYS, ...TIME_COND_KEYS]
-          : RESERVED_COND_KEYS;
-      Object.keys(conds).forEach(k => { if (!keepKeys.includes(k)) delete conds[k]; });
-      if (extraCond.enabled && extraCond.field && String(extraCond.value).trim() !== '') {
-        conds[extraCond.field] = extraCond.value;
-      }
+      // Condiciones finales (misma lógica que el dry-run): ver buildConds.
+      const conds = buildConds();
       // Multi-acción: si hay acciones adicionales (y no es guarda), se combinan
       // con la principal en un action_type "multi".
       let action_type = currentAuto.action_type;
@@ -1229,6 +1277,15 @@ const AutomationCenter = () => {
               </div>
             </div>
 
+            <div className="flex items-center gap-3 flex-wrap">
+              <button type="button" onClick={runDryRun} className="px-4 py-2 rounded-xl bg-indigo-500/20 text-indigo-400 font-bold text-xs uppercase tracking-wider hover:bg-indigo-500/30 transition-colors">
+                Probar (dry-run)
+              </button>
+              {dryRun && (dryRun.loading ? <span className="text-xs text-muted-foreground flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" /> Probando…</span>
+                : dryRun.error ? <span className="text-xs text-destructive">Error al probar</span>
+                  : <span className="text-xs text-muted-foreground">Pegaría a <b className="text-foreground">{dryRun.matched}</b> orden(es){dryRun.sample && dryRun.sample.length ? `: ${dryRun.sample.slice(0, 8).join(', ')}${dryRun.matched > 8 ? '…' : ''}` : ''}</span>)}
+            </div>
+
             <div>
               <label className="block text-sm font-bold text-muted-foreground uppercase tracking-widest mb-2">{t('auto_rule_name')}</label>
               <input 
@@ -1347,9 +1404,14 @@ const AutomationCenter = () => {
           </div>
         </div>
         {!showWizard && (
-          <button onClick={openNewWizard} className="bg-primary text-black px-6 py-3 rounded-xl font-bold uppercase tracking-wider text-sm hover:scale-105 transition-all shadow-[0_0_20px_rgba(255,193,7,0.4)] hover:shadow-[0_0_30px_rgba(255,193,7,0.6)] flex items-center gap-2">
-            <Plus className="w-5 h-5" /> {t('new_rule')}
-          </button>
+          <div className="flex gap-2">
+            <button onClick={openHistory} className="bg-secondary text-foreground px-5 py-3 rounded-xl font-bold uppercase tracking-wider text-sm hover:bg-secondary/70 transition-all flex items-center gap-2">
+              <History className="w-4 h-4" /> Historial
+            </button>
+            <button onClick={openNewWizard} className="bg-primary text-black px-6 py-3 rounded-xl font-bold uppercase tracking-wider text-sm hover:scale-105 transition-all shadow-[0_0_20px_rgba(255,193,7,0.4)] hover:shadow-[0_0_30px_rgba(255,193,7,0.6)] flex items-center gap-2">
+              <Plus className="w-5 h-5" /> {t('new_rule')}
+            </button>
+          </div>
         )}
       </header>
 
@@ -1367,10 +1429,46 @@ const AutomationCenter = () => {
         </div>
       )}
 
+      {/* Plantillas / recetas de un clic */}
+      {!showWizard && (
+        <div className="mb-4 flex flex-wrap gap-2 items-center">
+          <span className="text-xs text-muted-foreground font-bold uppercase tracking-wide">Plantillas:</span>
+          {TEMPLATES.map((tpl, i) => (
+            <button key={i} onClick={() => openTemplate(tpl)} className="px-3 py-1.5 rounded-lg bg-secondary/50 border border-border text-xs font-bold hover:bg-secondary transition-colors">
+              {tpl.label}
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* Main Content */}
       <div className="relative z-10">
         {showWizard ? renderWizard() : renderCards()}
       </div>
+
+      {/* Historial de disparos */}
+      {history !== null && (
+        <div className="fixed inset-0 z-[200] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setHistory(null)}>
+          <div className="bg-card border border-border rounded-2xl max-w-2xl w-full max-h-[80vh] overflow-auto p-6" onClick={e => e.stopPropagation()}>
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-lg font-black uppercase tracking-wide flex items-center gap-2"><History className="w-5 h-5 text-primary" /> Historial de disparos</h3>
+              <button onClick={() => setHistory(null)} className="p-1.5 hover:bg-secondary rounded-lg"><X className="w-5 h-5" /></button>
+            </div>
+            {history.loading ? <p className="text-sm text-muted-foreground flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Cargando…</p>
+              : history.length === 0 ? <p className="text-sm text-muted-foreground">Sin disparos registrados aún.</p>
+                : (
+                  <div className="space-y-0.5">
+                    {history.map((h, i) => (
+                      <div key={i} className="flex items-center justify-between text-sm border-b border-border/40 py-1.5 gap-3">
+                        <div className="min-w-0"><span className="font-bold">{h.automation_name || h.automation_id || '(regla)'}</span> <span className="text-[10px] uppercase text-muted-foreground bg-secondary/50 px-1.5 py-0.5 rounded">{h.via}</span></div>
+                        <span className="text-xs text-muted-foreground whitespace-nowrap">{h.timestamp ? new Date(h.timestamp).toLocaleString() : ''}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+          </div>
+        </div>
+      )}
     </div>
   );
 };
