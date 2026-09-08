@@ -54,7 +54,8 @@ const DATE_FIELDS = ['due_date', 'cancel_date', 'final_bill', 'ship_by'];
 
 // Requisitos que una guarda puede exigir antes de dejar pasar el cambio.
 const REQUIREMENT_LABELS = {
-  photo: 'Foto de evidencia adjunta',
+  sample_evidence: 'Evidencia de sample (foto + comentario)',
+  photo: 'Foto/adjunto en la orden',
   field: 'Un campo debe estar lleno',
   flag: 'Otro badge en cierto estado',
   role: 'Rol autorizado',
@@ -151,7 +152,7 @@ const AutomationCenter = () => {
   // trigger_conditions ({cliente: "X"}) — el backend ya evalúa esas claves.
   const RESERVED_COND_KEYS = ['watch_field', 'watch_value', 'from_board', 'to_board', 'advanced'];
   // Llaves propias de las guardas: tampoco son la "condición extra" (el flag).
-  const GUARD_COND_KEYS = ['on', 'to_status', 'to_board'];
+  const GUARD_COND_KEYS = ['on', 'from_status', 'to_status', 'to_board'];
   const [extraCond, setExtraCond] = useState({ enabled: false, field: '', value: '' });
   const deriveExtraCond = (conds = {}) => {
     const skip = [...RESERVED_COND_KEYS, ...GUARD_COND_KEYS, ...TIME_COND_KEYS];
@@ -238,10 +239,11 @@ const AutomationCenter = () => {
     // Guarda: resumen propio (on / to_status / to_board / condición de flag).
     if (conds.on) {
       const gp = [conds.on === 'move' ? 'al mover de tablero' : 'al cambiar el status'];
+      if (conds.on === 'status_change' && conds.from_status) gp.push(`desde "${conds.from_status}"`);
       if (conds.on === 'status_change' && conds.to_status) gp.push(`hacia "${conds.to_status}"`);
       if (conds.on === 'move' && conds.to_board) gp.push(`hacia "${conds.to_board}"`);
       Object.keys(conds)
-        .filter(k => !['on', 'to_status', 'to_board', 'watch_field', 'watch_value', 'advanced'].includes(k) && conds[k])
+        .filter(k => !['on', 'from_status', 'to_status', 'to_board', 'watch_field', 'watch_value', 'advanced'].includes(k) && conds[k])
         .forEach(k => gp.push(`si ${fieldLabel(k)} = ${conds[k]}`));
       (conds.advanced || []).forEach(c => { if (c.field) gp.push(`${fieldLabel(c.field)} ${ADV_OP_SYMBOL[c.op] || c.op} ${ADV_NO_VALUE.includes(c.op) ? '' : (c.value || '')}`.trim()); });
       return gp.join(' · ');
@@ -269,7 +271,8 @@ const AutomationCenter = () => {
     if (type === 'require') {
       const reqStr = (rq) => {
         const q = rq.requirement;
-        return q === 'photo' ? 'foto de evidencia'
+        return q === 'sample_evidence' ? 'evidencia de sample'
+          : q === 'photo' ? 'foto/adjunto'
           : q === 'field' ? `campo "${fieldLabel(rq.field) || rq.field || '?'}" lleno`
           : q === 'flag' ? `${fieldLabel(rq.field) || rq.field || '?'} = ${rq.value || '?'}`
           : q === 'role' ? `rol en [${(rq.roles || []).join(', ') || '?'}]`
@@ -349,7 +352,7 @@ const AutomationCenter = () => {
   const buildConds = () => {
     const conds = { ...(currentAuto.trigger_conditions || {}) };
     const keep = currentAuto.trigger_type === 'guard'
-      ? [...RESERVED_COND_KEYS, 'on', 'to_status', 'to_board']
+      ? [...RESERVED_COND_KEYS, 'on', 'from_status', 'to_status', 'to_board']
       : currentAuto.trigger_type === 'time'
         ? [...RESERVED_COND_KEYS, ...TIME_COND_KEYS]
         : RESERVED_COND_KEYS;
@@ -767,16 +770,29 @@ const AutomationCenter = () => {
                   <option value="move">Al mover de tablero</option>
                 </select>
                 {(currentAuto.trigger_conditions.on || 'status_change') === 'status_change' && (
-                  <div>
-                    <span className="text-xs text-muted-foreground mb-1 block">Solo hacia el status (opcional)</span>
-                    <select
-                      value={currentAuto.trigger_conditions.to_status || ''}
-                      onChange={e => setCurrentAuto({ ...currentAuto, trigger_conditions: { ...currentAuto.trigger_conditions, to_status: e.target.value } })}
-                      className="w-full bg-secondary/50 border border-border p-2 rounded-lg text-sm text-foreground"
-                    >
-                      <option value="">Cualquier status</option>
-                      {(options.production_statuses || []).map(s => <option key={s} value={s}>{s}</option>)}
-                    </select>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <span className="text-xs text-muted-foreground mb-1 block">Solo DESDE el status (al salir de…)</span>
+                      <select
+                        value={currentAuto.trigger_conditions.from_status || ''}
+                        onChange={e => setCurrentAuto({ ...currentAuto, trigger_conditions: { ...currentAuto.trigger_conditions, from_status: e.target.value } })}
+                        className="w-full bg-secondary/50 border border-border p-2 rounded-lg text-sm text-foreground"
+                      >
+                        <option value="">Cualquier status</option>
+                        {(options.production_statuses || []).map(s => <option key={s} value={s}>{s}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <span className="text-xs text-muted-foreground mb-1 block">Solo HACIA el status (al entrar a…)</span>
+                      <select
+                        value={currentAuto.trigger_conditions.to_status || ''}
+                        onChange={e => setCurrentAuto({ ...currentAuto, trigger_conditions: { ...currentAuto.trigger_conditions, to_status: e.target.value } })}
+                        className="w-full bg-secondary/50 border border-border p-2 rounded-lg text-sm text-foreground"
+                      >
+                        <option value="">Cualquier status</option>
+                        {(options.production_statuses || []).map(s => <option key={s} value={s}>{s}</option>)}
+                      </select>
+                    </div>
                   </div>
                 )}
                 {currentAuto.trigger_conditions.on === 'move' && (

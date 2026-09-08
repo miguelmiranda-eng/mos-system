@@ -173,6 +173,20 @@ async def main():
                                  {"production_status": "LISTO PARA ENVIO"}, USER, status_changing=True)
     check("foto + final bill -> pasa", r is None, f"{r!r}")
 
+    print("\n8) evidencia de sample + from_status ('al SALIR de NECESITA QC')")
+    GEV = guard(name="evidencia sample", cond={"on": "status_change", "from_status": "NECESITA QC", "sample_printavo": "SI"},
+                params={"requirement": "sample_evidence", "message": "Sube la evidencia del sample antes de avanzar"})
+    set_guards([GEV])
+    en_qc = {"board": "CONTROL DE CALIDAD", "sample_printavo": "SI", "production_status": "NECESITA QC", "sample_evidence": []}
+    r = await autos.check_guards(en_qc, {"production_status": "LISTO PARA ENVIO"}, USER, status_changing=True)
+    check("sale de NECESITA QC sin evidencia -> BLOQUEA", r == "Sube la evidencia del sample antes de avanzar", f"{r!r}")
+    r = await autos.check_guards({**en_qc, "sample_evidence": [{"url": "x", "comment": "ok"}]},
+                                 {"production_status": "LISTO PARA ENVIO"}, USER, status_changing=True)
+    check("con evidencia -> pasa", r is None, f"{r!r}")
+    otro = {**en_qc, "production_status": "EN PRODUCCION"}
+    r = await autos.check_guards(otro, {"production_status": "NECESITA QC"}, USER, status_changing=True)
+    check("no venía de NECESITA QC -> la guarda no aplica", r is None, f"{r!r}")
+
     print(f"\n{'='*60}\n   {ok} PASS / {fail} FAIL\n{'='*60}")
     sys.exit(1 if fail else 0)
 

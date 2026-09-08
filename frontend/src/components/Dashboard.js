@@ -41,6 +41,7 @@ import { AddColumnModal } from "./dashboard/AddColumnModal";
 import { AutomationsModal } from "./dashboard/AutomationsModal";
 import { FormFieldsManagerModal } from "./dashboard/FormFieldsManagerModal";
 import OrderHistoryModal from "./OrderHistoryModal";
+import SampleEvidenceModal from "./SampleEvidenceModal";
 import { SystemGuideModal } from "./dashboard/SystemGuideModal";
 import { SeedPackingLinkModal } from "./dashboard/SeedPackingLinkModal";
 // Existing top-level components
@@ -158,6 +159,7 @@ const Dashboard = () => {
   const searchInputRef = useRef(null); // focused from the mobile bottom-nav "Buscar"
   const [showAutomations, setShowAutomations] = useState(false);
   const [commentsOrder, setCommentsOrder] = useState(null);
+  const [evidenceOrder, setEvidenceOrder] = useState(null);  // modal de evidencia de sample (playerita)
   const [historyOrder, setHistoryOrder] = useState(null);
   const [highlightedOrderId, setHighlightedOrderId] = useState(null);
   const [showAddColumn, setShowAddColumn] = useState(false);
@@ -1205,16 +1207,16 @@ const Dashboard = () => {
             {/* SAMPLE / playerita — se enciende cuando el work order de Printavo
                 pide muestra física (sample_printavo === 'SI'). Apagada si es 'NO'
                 o si la orden aún no trae el dato (viejas, sin sincronizar). */}
-            <span className={`px-1.5 py-0.5 rounded-full leading-none border transition-all inline-flex items-center ${order.sample_printavo === 'SI'
+            <button type="button"
+              onClick={(e) => { e.stopPropagation(); setEvidenceOrder(order); }}
+              className={`px-1.5 py-0.5 rounded-full leading-none border transition-all inline-flex items-center cursor-pointer hover:brightness-110 hover:scale-110 ${order.sample_printavo === 'SI'
               ? 'bg-violet-100 text-violet-600 dark:bg-violet-950/40 dark:text-violet-400 border-violet-200/20'
               : 'bg-slate-100/50 text-slate-300 dark:bg-slate-800/40 dark:text-slate-600 border-transparent'
               }`}
-              title={order.sample_printavo === 'SI' ? t('dash_sample_yes')
-                : order.sample_printavo === 'NO' ? t('dash_sample_no')
-                  : t('dash_sample_unknown')}
+              title={`${order.sample_printavo === 'SI' ? t('dash_sample_yes') : order.sample_printavo === 'NO' ? t('dash_sample_no') : t('dash_sample_unknown')} — clic para ver/agregar evidencia`}
               data-testid={`order-sample-badge-${order.order_id}`}>
               <Shirt className="w-2.5 h-2.5" />
-            </span>
+            </button>
 
             {/* PL / Packing importado — se enciende cuando la orden tiene el enlace
                 del packing sembrado (icono de camion). */}
@@ -2730,6 +2732,7 @@ const Dashboard = () => {
       {/* Modals */}
       <NewOrderModal isOpen={showNewOrder} onClose={() => setShowNewOrder(false)} onCreate={(order) => { setOrders(prev => [order, ...prev]); }} options={options} groupConfig={groupConfig} columns={columns} />
       <CommentsModal order={commentsOrder} isOpen={!!commentsOrder} onClose={() => { setCommentsOrder(null); setHighlightedCommentId(null); }} currentUser={user} highlightedCommentId={highlightedCommentId} />
+      {evidenceOrder && <SampleEvidenceModal order={evidenceOrder} onClose={() => setEvidenceOrder(null)} />}
       <AutomationsModal isOpen={showAutomations} onClose={() => setShowAutomations(false)} options={options} columns={columns} dynamicBoards={activeBoards} />
       {isAdmin && <FormFieldsManagerModal isOpen={showFormFields} onClose={() => setShowFormFields(false)} columns={columns} />}
       <AddColumnModal isOpen={showAddColumn} onClose={() => setShowAddColumn(false)} onAdd={handleAddColumn} existingColumns={columns} options={options} sampleRow={orders?.[0] || allOrders?.[0] || null} />

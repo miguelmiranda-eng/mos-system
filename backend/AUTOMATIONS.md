@@ -126,24 +126,31 @@ Plantillas: `{order_number}`, `{client}`, … con `_fmt` (tolerante a campos fal
 ```jsonc
 "trigger_conditions": {
   "on": "status_change | move",
-  "to_status": "LISTO PARA ENVIO",   // opcional (status_change)
-  "to_board": "COMPLETOS",           // opcional (move)
+  "from_status": "NECESITA QC",       // opcional: 'al SALIR de X'
+  "to_status": "LISTO PARA ENVIO",    // opcional: 'al ENTRAR a X'
+  "to_board": "COMPLETOS",            // opcional (move)
   "<flag>": "<valor>", "advanced": [ … ]   // condiciones (ESTRICTAS)
 },
 "action_params": {
   // requisito único…
-  "requirement": "photo | field | flag | role",
+  "requirement": "sample_evidence | photo | field | flag | role",
   "field": "…", "value": "…", "roles": ["supersu", …],
   "message": "texto que ve el usuario al ser bloqueado",
   // …o múltiples (AND):
-  "requirements": [ { "requirement": "photo", "message": "…" }, { "requirement": "field", "field": "final_bill" } ]
+  "requirements": [ { "requirement": "sample_evidence", "message": "…" }, { "requirement": "role", "roles": ["qc"] } ]
 }
 ```
 
-Requisitos: `photo` (≥1 imagen adjunta), `field` (campo lleno), `flag` (otro badge
-en estado X), `role` (rol autorizado). Se evalúan sobre `{existing + update_data}`
-(llenar el campo en el mismo request satisface). `bulk_move` mueve las permitidas
-y reporta las bloqueadas en `guard_blocked`.
+Requisitos: `sample_evidence` (≥1 evidencia de sample — ver §13), `photo` (≥1
+imagen/adjunto en `images`), `field` (campo lleno), `flag` (otro badge en estado X),
+`role` (rol autorizado). Se evalúan sobre `{existing + update_data}` (llenar el
+campo en el mismo request satisface). `bulk_move` mueve las permitidas y reporta
+las bloqueadas en `guard_blocked`.
+
+Ejemplo del flujo QC: `on: status_change`, `from_status: NECESITA QC`,
+`sample_printavo: SI`, `requirement: sample_evidence` → no deja AVANZAR una orden
+con sample fuera de NECESITA QC sin haber subido la evidencia (foto+comentario)
+desde la playerita.
 
 ---
 
@@ -228,3 +235,21 @@ backend/venv/Scripts/python.exe backend/tests/smoke_automations_actions.py     #
 backend/venv/Scripts/python.exe backend/tests/smoke_automations_guards.py      # 20
 backend/venv/Scripts/python.exe backend/tests/smoke_automations_time.py        # 17
 ```
+
+---
+
+## 13. Evidencia de sample (la playerita)
+
+Contenedor DEDICADO en la orden, `sample_evidence` = lista de
+`{url, storage_key, comment, by, by_name, at}`. Separado del `images` genérico
+para que el modal de la playerita muestre solo esto.
+
+- **UI**: la playerita (badge de sample en la tarjeta, `Dashboard.js`) es
+  clickeable → abre `SampleEvidenceModal.js` con las evidencias (imagen +
+  comentario + quién/cuándo) y un formulario para agregar una nueva.
+- **Endpoints** (en `routers/orders.py`):
+  - `POST /api/orders/{id}/sample-evidence` — `{image_data (base64, opcional), comment}`; guarda la imagen en disco + `file_uploads` (`kind:"sample_evidence"`) y hace push a `order.sample_evidence`.
+  - `GET /api/orders/{id}/sample-evidence` — lista la evidencia.
+- **Guarda**: el requisito `sample_evidence` revisa `len(order.sample_evidence) >= 1`.
+- `sample_evidence` se EXCLUYE del payload del tablero (`/orders`) y se pide bajo
+  demanda al abrir el modal.

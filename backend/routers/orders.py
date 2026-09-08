@@ -146,7 +146,7 @@ async def _fetch_orders(board, search, limit, include_images, filtro_cliente=Non
     # (~3.5 MB) y NINGUNA vista lo lee del listado — los modales piden
     # /orders/{id}/images bajo demanda. include_images=true lo restaura
     # para integraciones externas que lo necesiten.
-    projection = {"_id": 0, "comments": 0, "activity_logs": 0, "history": 0}
+    projection = {"_id": 0, "comments": 0, "activity_logs": 0, "history": 0, "sample_evidence": 0}
     if not include_images:
         projection["images"] = 0
     if search:
@@ -1503,6 +1503,71 @@ async def upload_attachment(order_id: str, request: Request):
         return {"url": file_url, "filename": filename, "storage_key": storage_key, "content_type": content_type}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
+
+
+# ==================== EVIDENCIA DE SAMPLE (playerita) ====================
+# Contenedor propio de la orden (`sample_evidence`), separado del `images`
+# genérico, para que el modal de la playerita muestre SOLO la evidencia del
+# sample (imagen + comentario). La guarda "Evidencia de sample" lo revisa.
+
+@router.post("/{order_id}/sample-evidence")
+async def add_sample_evidence(order_id: str, request: Request):
+    """Agrega una evidencia de sample: imagen (base64) y/o comentario."""
+    user = await require_auth(request)
+    body = await request.json()
+    file_data = body.get("image_data") or body.get("file_data")
+    comment = (body.get("comment") or "").strip()
+    filename = body.get("filename", f"sample_{uuid.uuid4().hex[:8]}")
+    order = await db.orders.find_one({"order_id": order_id}, {"_id": 0, "order_number": 1})
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    entry = {"comment": comment, "by": user.get("user_id"),
+             "by_name": user.get("name") or user.get("email") or "",
+             "at": datetime.now(timezone.utc).isoformat()}
+    if file_data:
+        try:
+            raw_b64, content_type = file_data, "application/octet-stream"
+            if "," in raw_b64:
+                header = raw_b64.split(",")[0]
+                if ":" in header and ";" in header:
+                    content_type = header.split(":")[1].split(";")[0]
+                raw_b64 = raw_b64.split(",")[1]
+            file_bytes = base64.b64decode(raw_b64)
+            storage_key = f"{order_id}_sev_{uuid.uuid4().hex[:8]}_{filename}"
+            with open(UPLOADS_DIR / storage_key, "wb") as f:
+                f.write(file_bytes)
+            await db.file_uploads.insert_one({
+                "storage_key": storage_key, "content_type": content_type, "order_id": order_id,
+                "filename": filename, "kind": "sample_evidence", "uploaded_at": entry["at"]})
+            backend_url = os.environ.get("BACKEND_PUBLIC_URL", "")
+            entry["url"] = f"{backend_url}/api/uploads/{storage_key}"
+            entry["storage_key"] = storage_key
+            entry["content_type"] = content_type
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
+    if not (entry.get("url") or comment):
+        raise HTTPException(status_code=400, detail="Se requiere una imagen o un comentario")
+    await db.orders.update_one({"order_id": order_id}, {"$push": {"sample_evidence": entry}})
+    await log_activity(user, "add_sample_evidence",
+                       {"order_id": order_id, "order_number": order.get("order_number"),
+                        "has_image": bool(entry.get("url"))})
+    await ws_manager.broadcast("order_change", {"action": "update", "order_id": order_id})
+    return {"ok": True, "entry": entry}
+
+
+@router.get("/{order_id}/sample-evidence")
+async def get_sample_evidence(order_id: str, request: Request):
+    """Lista la evidencia de sample de la orden (para el modal de la playerita)."""
+    await require_auth(request)
+    order = await db.orders.find_one(
+        {"order_id": order_id},
+        {"_id": 0, "order_number": 1, "sample_printavo": 1, "sample_evidence": 1})
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    return {"order_number": order.get("order_number"),
+            "sample_printavo": order.get("sample_printavo"),
+            "evidence": order.get("sample_evidence") or []}
+
 
 # ==================== EXPORT ORDERS WITH COMMENTS & IMAGES ====================
 

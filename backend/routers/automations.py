@@ -338,7 +338,7 @@ def _dryrun_match(cond: dict, order: dict) -> bool:
 #     message: "texto que ve el usuario al ser bloqueado"
 #   }
 GUARD_TRIGGER = "guard"
-_GUARD_RESERVED = {"on", "to_status", "to_board", "advanced"}
+_GUARD_RESERVED = {"on", "from_status", "to_status", "to_board", "advanced"}
 
 
 def _guard_conditions_match(cond: dict, order: dict) -> bool:
@@ -360,6 +360,8 @@ def _requirement_met_one(rq: dict, order: dict, user: dict) -> bool:
     req = (rq.get("requirement") or "").strip().lower()
     if req == "photo":
         return len(order.get("images") or []) >= 1
+    if req == "sample_evidence":
+        return len(order.get("sample_evidence") or []) >= 1
     if req == "field":
         v = order.get(rq.get("field"))
         return v is not None and str(v).strip() != ""
@@ -421,7 +423,11 @@ async def check_guards(existing: dict, update_data: dict, user: dict,
         boards = g.get("boards") or []
         if boards and board not in boards:
             continue
-        # Destino específico (opcional).
+        # Status de ORIGEN específico (opcional): 'al SALIR de X' -> from_status=X.
+        from_status = cond.get("from_status")
+        if on == "status_change" and from_status and not _values_match(existing.get("production_status"), from_status):
+            continue
+        # Status de DESTINO específico (opcional): 'al ENTRAR a X' -> to_status=X.
         to_status = cond.get("to_status")
         if on == "status_change" and to_status and not _values_match(new_status, to_status):
             continue
