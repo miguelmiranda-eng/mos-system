@@ -1967,8 +1967,13 @@ async def move_location_bulk(request: Request):
       2. wms_inventory: handles duplicate SKUs at the destination by merging
          (sum units_on_hand + units_allocated + total_boxes, delete source row).
       3. Single 'bulk_relocation' movement logged with totals.
+
+    Admin nivel 5+ / supersu: barrer una ubicación ENTERA es la operación más
+    destructiva del Mover (arrastra toda caja, con o sin piezas). Antes solo
+    pedía `require_auth`, así que cualquier usuario podía dispararla por API
+    aunque la UI le ocultara el botón; se cerró a nivel 5.
     """
-    user = await require_auth(request)
+    user = await require_admin_level(request, 5)
     body = await request.json()
     src = (body.get("from") or "").strip().upper()
     dst = (body.get("to") or "").strip().upper()
@@ -2487,10 +2492,11 @@ async def reconcile_lpn(request: Request):
 
     Body: { location, sku|style, color, size, physical_lpn, units, destination }
 
-    Solo admin/supersu: identificar una caja es trabajo de supervisor. El picker
-    que escanea un LPN desconocido se detiene y avisa (ver scan-box).
+    Solo admin nivel 5+ / supersu: reconciliar LPN es un flujo de migración
+    delicado (reescribe la identidad física de la caja), reservado a supervisión.
+    El picker que escanea un LPN desconocido se detiene y avisa (ver scan-box).
     """
-    user = await require_admin(request)
+    user = await require_admin_level(request, 5)
     body = await request.json()
     location = (body.get("location") or "").strip()
     sku = (body.get("sku") or body.get("style") or "").strip()
@@ -11866,7 +11872,8 @@ async def _reconcile_line_boxes(inv, delta):
 @router.post("/inventory/bulk-adjust")
 async def bulk_adjust_inventory(request: Request):
     """Mass inventory adjustment from the 'Formato ajuste de inventario' Excel.
-    Inventory level 2+. Each row's 'on_hand' is a DELTA (positive adds, negative
+    Admin nivel 5+ / supersu (antes inventory level 2+): el ajuste masivo puede
+    reescribir cientos de renglones de golpe. Each row's 'on_hand' is a DELTA (positive adds, negative
     subtracts). dry_run=true returns the plan only (preview); dry_run=false
     applies it. Boxes (LPNs) are reconciled so the per-box sum tracks the new
     line on-hand. A reason is mandatory to apply (audited per row).
@@ -11877,7 +11884,7 @@ async def bulk_adjust_inventory(request: Request):
     renglones (chico→grande, sin bajar del comprometido) y las SUMAS piden
     identidad única. Filas del mismo material dentro del archivo se acumulan
     antes de validar."""
-    user = await require_inventory_level(request, 2)
+    user = await require_admin_level(request, 5)
     body = await request.json()
     rows = body.get("rows") or []
     dry_run = bool(body.get("dry_run", True))

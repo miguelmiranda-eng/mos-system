@@ -8,6 +8,7 @@ import { useLang } from "../../contexts/LanguageContext";
 import { fetcher, poster, cleanScan, logLoadError, API, useWmsSizes, useWmsCatalogs, mergeUnique } from "./lib";
 import SearchableSelect from "../SearchableSelect";
 import BulkInventoryAdjust from "./BulkInventoryAdjust";
+import { adminLevelOf } from "./modules";
 import { ModuleToolbar, SoftAlert, Btn, Chip, EmptyState } from "./ui";
 
 // ─── Location input: scan (keyboard-wedge) OR type-to-search a known slot ─────
@@ -87,15 +88,21 @@ export function MoverModule({ currentUser }) {
   // Top-level mode: the classic origin→destination move, a box-first inventory
   // adjustment (Case# 002), or the bulk Excel inventory adjustment (admin L3+).
   const [topMode, setTopMode] = useState("move"); // 'move' | 'adjust' | 'bulk'
-  // Manual inventory adjustments (box-level "Ajustar caja" and the bulk Excel
-  // adjust) are gated to WMS inventory level 2+. Admins/supersu count as max.
-  const invLevel = ['admin', 'supersu'].includes(currentUser?.role)
-    ? 3
-    : (parseInt(currentUser?.inventory_level, 10) || 0);
-  const canAdjust = invLevel >= 2;
-  const canBulk = invLevel >= 2;
-  const _visibleTopTabs = 2 + (canAdjust ? 1 : 0) + (canBulk ? 1 : 0);
-  const topTabsGridClass = _visibleTopTabs >= 4 ? 'grid-cols-4' : (_visibleTopTabs === 3 ? 'grid-cols-3' : 'grid-cols-2');
+  // Visibilidad de las herramientas del Mover (decisión de negocio):
+  //  • VERDES — "Ajustar caja" y "Generar caja": rol inventarios O admin 5+.
+  //  • ROJOS  — "Ajuste masivo" (tab) y los modos "Toda la ubicación" y
+  //    "Reconciliar LPN/Etiqueta": SOLO admin 5+ / supersu. Son operaciones
+  //    peligrosas (barrido de ubicación entera) o de migración (reconciliar LPN).
+  // adminLevelOf() es el espejo de get_admin_level() del backend (deps.py):
+  // supersu=5, admin=admin_level(1-5), inventory_level>=3 confiere 3.
+  const admin5 = adminLevelOf(currentUser) >= 5;
+  const canGreen = currentUser?.role === 'inventory' || admin5;  // Ajustar / Generar caja
+  const canRed = admin5;                                          // Ajuste masivo + modos peligrosos
+  // Tabs visibles: Mover (siempre) + Ajustar + Generar (verdes) + Ajuste masivo (rojo).
+  const _visibleTopTabs = 1 + (canGreen ? 2 : 0) + (canRed ? 1 : 0);
+  const topTabsGridClass = _visibleTopTabs >= 4 ? 'grid-cols-4'
+    : (_visibleTopTabs === 3 ? 'grid-cols-3'
+      : (_visibleTopTabs === 2 ? 'grid-cols-2' : 'grid-cols-1'));
 
   // Flow: origin → mode → (per-mode selection) → destination → submit.
   const [origin, setOrigin] = useState("");
@@ -405,7 +412,7 @@ export function MoverModule({ currentUser }) {
             className={`flex items-center justify-center gap-2 py-2 rounded-md text-sm font-medium transition-colors ${topMode === "move" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}>
             <Move className="w-4 h-4" /> {t("wms_move")}
           </button>
-          {canAdjust && (
+          {canGreen && (
           <button
             onClick={() => { if (topMode !== "adjust") { resetAll(); setTopMode("adjust"); } }}
             data-testid="mover-top-adjust"
@@ -413,13 +420,15 @@ export function MoverModule({ currentUser }) {
             <Scale className="w-4 h-4" /> {t("wms_adjust_box")}
           </button>
           )}
+          {canGreen && (
           <button
             onClick={() => { if (topMode !== "generate") { resetAll(); resetAdjust(); setTopMode("generate"); } }}
             data-testid="mover-top-generate"
             className={`flex items-center justify-center gap-2 py-2 rounded-md text-sm font-medium transition-colors ${topMode === "generate" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}>
             <Tag className="w-4 h-4" /> {t("wms_generate_box")}
           </button>
-          {canBulk && (
+          )}
+          {canRed && (
             <button
               onClick={() => { if (topMode !== "bulk") { resetAll(); resetAdjust(); setTopMode("bulk"); } }}
               data-testid="mover-top-bulk"
@@ -626,10 +635,12 @@ export function MoverModule({ currentUser }) {
                   <span className="w-6 h-6 rounded-full bg-primary text-primary-foreground text-xs flex items-center justify-center font-semibold">2</span>
                   {t("wms_what_to_move")}
                 </div>
+                {canRed && (
                 <ModeButton icon={Layers} color="text-amber-400" testid="mover-mode-all"
                   title={t("wms_mode_all")}
                   subtitle={t("wms_mode_all_sub", { n: contents.boxes.length, units: totalUnits })}
                   onClick={() => setMode("all")} />
+                )}
                 <ModeButton icon={Boxes} color="text-blue-400" testid="mover-mode-box"
                   title={t("wms_mode_box")}
                   subtitle={t("wms_mode_box_sub")}
@@ -638,10 +649,12 @@ export function MoverModule({ currentUser }) {
                   title={t("wms_mode_units")}
                   subtitle={t("wms_mode_units_sub")}
                   onClick={() => setMode("units")} />
+                {canRed && (
                 <ModeButton icon={Tag} color="text-fuchsia-400" testid="mover-mode-reconcile"
                   title={t("wms_mode_reconcile")}
                   subtitle={t("wms_mode_reconcile_sub")}
                   onClick={() => setMode("reconcile")} />
+                )}
               </div>
             ) : (
               /* STEP 3 — per-mode selection + destination */
