@@ -7,6 +7,7 @@ from ws_manager import ws_manager
 from wms_constants import (
     BoxStatus, TicketStatus, PickingStatus, CycleCountStatus,
     TaskType, TaskStatus, PickDestination, MovementType, AsnStatus,
+    MovementTrigger, MOVEMENT_BOX_UNITS_CAP,
     TICKET_OPEN_QUERY,
 )
 from services import inventory_ledger as ledger
@@ -209,6 +210,26 @@ async def log_movement(user, movement_type, details):
         "user_name": user.get("name", user.get("email", "")),
         "created_at": now_iso(),
     })
+
+
+def _box_units_snapshot(boxes, cap=MOVEMENT_BOX_UNITS_CAP):
+    """Mapa {box_id: unidades_al_momento} para un movimiento que toca varias
+    cajas. Deja que el timeline por-caja muestre "esta caja: X u" en vez del
+    total del lote — clave para que una caja `depleted` (0 u) arrastrada por un
+    barrido no aparente haber movido cientos de piezas.
+
+    Cap para no inflar el documento; más allá del cap el lector cae a solo
+    "lote: N u". `boxes` es cualquier iterable de docs de caja con `units`/`qty`.
+    """
+    snap = {}
+    for b in boxes:
+        bid = b.get("box_id")
+        if not bid:
+            continue
+        snap[bid] = int(b.get("units") if b.get("units") is not None else b.get("qty", 0) or 0)
+        if len(snap) >= cap:
+            break
+    return snap
 
 # ── Invariantes de inventario (adaptadores HTTP de services.inventory_ledger) ─
 # Ver services/inventory_ledger.py para el porqué. Resumen: los endpoints de
@@ -1992,11 +2013,15 @@ async def move_location_bulk(request: Request):
         await _reproject_material_rows(t_style, t_sku, t_color, t_size, dst, user=user)
 
     await log_movement(user, MovementType.BULK_RELOCATION, {
-        "from": src, "to": dst,
+        "trigger": MovementTrigger.LOCATION_SWEEP,   # se barrió la ubicación ENTERA — nadie escaneó cajas
+        "from": src, "to": dst,                      # legado
+        "origins": [src], "destination": dst,        # normalizado
         "boxes_moved": boxes_moved,
         "skus_moved": skus_moved,
-        "units_moved": units_moved,
-        "box_ids": moved_box_ids[:50],  # cap log payload
+        "units_moved": units_moved,                  # legado (total del lote)
+        "units_batch": units_moved,                  # normalizado (total del lote)
+        "box_units": _box_units_snapshot(boxes_src), # {box_id: u} → "esta caja: X u" (0 = cartón vacío arrastrado)
+        "box_ids": moved_box_ids[:MOVEMENT_BOX_UNITS_CAP],  # cap log payload (alineado con box_units)
     })
     await notify_badge_change("all")
 
@@ -2152,12 +2177,16 @@ async def transit_relocate(request: Request):
         await _reproject_material_rows(t_style, t_sku, t_color, t_size, dst_name, user=user)
 
     await log_movement(user, MovementType.TRANSIT_RELOCATION, {
+        "trigger": MovementTrigger.TRANSIT,          # cajas sacadas de tránsito (escaneadas/elegidas)
         "to": dst_name,
-        "from_sources": sorted(sources_set),
+        "from_sources": sorted(sources_set),         # legado
+        "origins": sorted(sources_set), "destination": dst_name,  # normalizado
         "boxes_moved": len(moved_ids),
         "skus_moved": skus_moved,
-        "units_moved": units_moved,
-        "box_ids": moved_ids[:50],  # cap log payload
+        "units_moved": units_moved,                  # legado
+        "units_batch": units_moved,                  # normalizado
+        "box_units": _box_units_snapshot(boxes),     # {box_id: u} al momento
+        "box_ids": moved_ids[:MOVEMENT_BOX_UNITS_CAP],  # cap log payload
     })
     await notify_badge_change("all")
 
@@ -2238,19 +2267,22 @@ async def boxes_relocate(request: Request):
     # Use the transit movement type when EVERY source was a transit slot
     # (cart or legacy UBICACION TEMPORAL), so the Movements module surfaces it
     # under the same bucket as /transit/relocate.
-    move_type = (
-        MovementType.TRANSIT_RELOCATION
-        if sources_touched and all(_is_transit_name(s) for s in sources_touched)
-        else MovementType.BULK_RELOCATION
-    )
+    all_transit = bool(sources_touched) and all(_is_transit_name(s) for s in sources_touched)
+    move_type = MovementType.TRANSIT_RELOCATION if all_transit else MovementType.BULK_RELOCATION
 
     await log_movement(user, move_type, {
+        # Aunque comparta `type` con el barrido de ubicación, aquí SÍ se
+        # escanearon/eligieron cajas una por una — el trigger lo deja claro.
+        "trigger": MovementTrigger.TRANSIT if all_transit else MovementTrigger.BOX_SCAN,
         "to": dst_name,
-        "sources": sorted(sources_touched),
+        "sources": sorted(sources_touched),          # legado
+        "origins": sorted(sources_touched), "destination": dst_name,  # normalizado
         "boxes_moved": len(moved_ids),
         "skus_moved": skus_moved,
-        "units_moved": units_moved,
-        "box_ids": moved_ids[:50],  # cap log payload
+        "units_moved": units_moved,                  # legado
+        "units_batch": units_moved,                  # normalizado
+        "box_units": _box_units_snapshot(boxes),     # {box_id: u} al momento
+        "box_ids": moved_ids[:MOVEMENT_BOX_UNITS_CAP],  # cap log payload
     })
     await notify_badge_change("all")
 
@@ -2367,6 +2399,7 @@ async def move_units(request: Request):
     whole_count = 0   # boxes that left the source entirely
     split_count = 0   # boxes split → a new partial box created at the destination
     moved_box_ids = []  # every box touched (whole + shrunk source + split child) for box history
+    box_units_moved = {}  # {box_id: unidades que este evento movió por esa caja} → timeline "esta caja: X u"
     next_seq = None
 
     for box, take, completa in plan:
@@ -2379,6 +2412,8 @@ async def move_units(request: Request):
             )
             whole_count += 1
             moved_box_ids.append(box.get("box_id"))
+            if box.get("box_id") and len(box_units_moved) < MOVEMENT_BOX_UNITS_CAP:
+                box_units_moved[box.get("box_id")] = b_qty  # caja completa: movió todas sus piezas
         else:
             # Partial: shrink the source box, create a fresh box at the destination.
             await db.wms_boxes.update_one(
@@ -2397,6 +2432,12 @@ async def move_units(request: Request):
             await db.wms_boxes.insert_one(child)
             split_count += 1
             moved_box_ids.extend([box.get("box_id"), new_box_id])
+            # split: `take` piezas salieron de la caja origen hacia una caja hija
+            # nueva en el destino; ambas quedan asociadas a esa cantidad.
+            if len(box_units_moved) < MOVEMENT_BOX_UNITS_CAP:
+                if box.get("box_id"):
+                    box_units_moved[box.get("box_id")] = take
+                box_units_moved[new_box_id] = take
 
     # LA CAJA MANDA: el resumen de cada material tocado se recalcula desde las
     # cajas en origen y destino (incluye lotes cruzados por el FIFO y la caja
@@ -2412,9 +2453,13 @@ async def move_units(request: Request):
         await _reproject_material_rows(t_style, t_sku, t_color, t_size, dst_name, user=user)
 
     await log_movement(user, MovementType.BULK_RELOCATION, {
-        "from": src, "to": dst_name, "sku": sku, "color": color, "size": size,
-        "units_moved": units, "boxes_relocated": whole_count, "boxes_split": split_count,
-        "box_ids": [b for b in moved_box_ids if b][:50],  # cap log payload
+        "trigger": MovementTrigger.UNIT_SPLIT,       # unidades sueltas; pudo partir cajas en dos
+        "from": src, "to": dst_name, "sku": sku, "color": color, "size": size,  # legado
+        "origins": [src], "destination": dst_name,   # normalizado
+        "units_moved": units, "units_batch": units,  # legado + normalizado
+        "boxes_relocated": whole_count, "boxes_split": split_count,
+        "box_units": box_units_moved,                # {box_id: u movidas por esa caja}
+        "box_ids": [b for b in moved_box_ids if b][:MOVEMENT_BOX_UNITS_CAP],  # cap log payload
     })
     await notify_badge_change("all")
     return {
@@ -3825,6 +3870,22 @@ async def buscar_historial_caja(box_id: str, limit: int = 300) -> dict:
                     break
             if r.get("received_by_name") and not m.get("user_name"):
                 m["user_name"] = r["received_by_name"]
+            m["details"] = d
+
+    # Reubicaciones en lote: el detalle guarda el total del lote (units_batch),
+    # pero cada caja participante trae sus propias piezas en box_units{box_id: u}.
+    # Sacamos LAS DE ESTA CAJA (units_box) para que el timeline diga "esta caja:
+    # X u · lote: Y u" en vez del total pelón — así una caja `depleted` (0 u)
+    # arrastrada por un barrido no aparenta haber movido cientos de piezas.
+    for m in box_events:
+        d = m.get("details") or {}
+        bu = d.pop("box_units", None)  # se extrae y NO se reenvía el mapa completo al cliente
+        if isinstance(bu, dict):
+            if d.get("units_box") is None:
+                for k in keys:
+                    if k in bu:
+                        d["units_box"] = bu[k]
+                        break
             m["details"] = d
 
     # SKU/location context — only when we still know the box's dimensions.
@@ -7816,7 +7877,12 @@ async def list_movements(request: Request, movement_type: str = "", limit: int =
     await require_auth(request)
     query = {}
     if movement_type: query["type"] = movement_type
-    movements = await db.wms_movements.find(query, {"_id": 0}).sort("created_at", -1).to_list(limit)
+    # `details.box_units` es el mapa {box_id: u} para el timeline POR-CAJA; la
+    # vista agregada no lo usa y puede traer hasta 200 llaves por doc, así que se
+    # excluye aquí para no inflar la respuesta (lo consume /boxes/{id}/history).
+    movements = await db.wms_movements.find(
+        query, {"_id": 0, "details.box_units": 0}
+    ).sort("created_at", -1).to_list(limit)
     return movements
 
 

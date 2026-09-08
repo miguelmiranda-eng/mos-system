@@ -27,6 +27,28 @@ const MV_TYPE_KEYS = {
   box_generated: "wms_bs_mv_box_generated", box_style_restored: "wms_bs_mv_box_style_restored",
 };
 
+// CÓMO se disparó una reubicación (details.trigger). Desambigua el `type`
+// compartido: "Reubicación masiva" puede ser un barrido de ubicación ENTERA
+// (nadie tocó la caja) o cajas escaneadas una por una — cosas muy distintas.
+const MV_TRIGGER_KEYS = {
+  location_sweep: "wms_trig_location_sweep",
+  box_scan: "wms_trig_box_scan",
+  unit_split: "wms_trig_unit_split",
+  transit: "wms_trig_transit",
+};
+const RELOC_TYPES = new Set(["bulk_relocation", "transit_relocation"]);
+
+// Los movimientos históricos no traen `trigger`; se infiere del shape del
+// detail (orden importa: transit y box_scan usan listas; split trae boxes_split;
+// el barrido de ubicación es el único con `from` y sin las anteriores).
+const inferTriggerKey = (d) => {
+  if (Array.isArray(d.from_sources)) return "wms_trig_transit";
+  if (Array.isArray(d.sources)) return "wms_trig_box_scan";
+  if (d.boxes_split != null) return "wms_trig_unit_split";
+  if (d.from) return "wms_trig_location_sweep";
+  return "";
+};
+
 // `ctx` es la caja que se está viendo (data): sirve para localizar, dentro de un
 // surtido en lote, la línea que corresponde a ESTA caja.
 const summarize = (m, ctx, t) => {
@@ -56,9 +78,25 @@ const summarize = (m, ctx, t) => {
     return parts.join(" · ");
   }
 
-  const origin = d.from || (Array.isArray(d.from_sources) && d.from_sources.join(", "))
+  const origin = d.origin || d.from || (Array.isArray(d.origins) && d.origins.join(", "))
+    || (Array.isArray(d.from_sources) && d.from_sources.join(", "))
     || (Array.isArray(d.sources) && d.sources.join(", ")) || "";
-  const dest = d.to || d.to_loc || "";
+  const dest = d.destination || d.to || d.to_loc || "";
+
+  // Reubicaciones: el "cómo" (trigger) al frente y las unidades desglosadas
+  // "esta caja: X u · lote: Y u". Una caja vacía arrastrada por un barrido queda
+  // como "esta caja: 0 u · lote: 544 u" — sin fingir que movió el lote entero.
+  if (RELOC_TYPES.has(m.type)) {
+    const trigKey = MV_TRIGGER_KEYS[d.trigger] || inferTriggerKey(d);
+    if (trigKey) parts.push(t(trigKey));
+    if (origin || dest) parts.push(`${origin || "—"} → ${dest || "—"}`);
+    const batch = d.units_batch != null ? d.units_batch : d.units_moved;
+    if (d.units_box != null) parts.push(t("wms_bs_box_vs_batch", { box: d.units_box, batch: batch != null ? batch : d.units_box }));
+    else if (batch != null) parts.push(t("wms_bs_batch_only", { batch }));
+    if (d.reason) parts.push(`“${d.reason}”`);
+    return parts.join(" · ");
+  }
+
   if (origin || dest) parts.push(`${origin || "—"} → ${dest || "—"}`);
   else if (d.location) parts.push(d.location);
   if (d.old_units != null && d.new_units != null) parts.push(`${d.old_units} → ${d.new_units} u`);

@@ -39,12 +39,34 @@ const MV_TYPE_KEYS = {
   manual_inventory_remove: 'wms_mv_manual_inventory_remove',
 };
 
+// CÓMO se disparó una reubicación (details.trigger) — desambigua el `type`
+// compartido entre barrer una ubicación entera y escanear cajas una por una.
+const MV_TRIGGER_KEYS = {
+  location_sweep: 'wms_trig_location_sweep',
+  box_scan: 'wms_trig_box_scan',
+  unit_split: 'wms_trig_unit_split',
+  transit: 'wms_trig_transit',
+};
+const RELOC_TYPES = new Set(['bulk_relocation', 'transit_relocation']);
+
+// Históricos sin `trigger`: se infiere del shape (mismo criterio que BoxSearch).
+const inferTriggerKey = (d) => {
+  if (Array.isArray(d.from_sources)) return 'wms_trig_transit';
+  if (Array.isArray(d.sources)) return 'wms_trig_box_scan';
+  if (d.boxes_split != null) return 'wms_trig_unit_split';
+  if (d.from) return 'wms_trig_location_sweep';
+  return '';
+};
+
 // i18n keys for the raw detail keys shown in the expanded event view.
 const DETAIL_LABEL_KEYS = {
+  trigger: 'wms_dl_trigger',
   from: 'wms_origin', from_sources: 'wms_dl_origins', sources: 'wms_dl_origins',
+  origins: 'wms_dl_origins', destination: 'wms_dl_destination',
   to: 'wms_dl_destination', to_loc: 'wms_dl_destination', location: 'location',
   sku: 'sku', style: 'wms_label_style', color: 'wms_label_color', size: 'wms_label_size',
-  units: 'wms_label_units', units_moved: 'wms_dl_units_moved',
+  units: 'wms_label_units', units_moved: 'wms_dl_units_moved', units_batch: 'wms_dl_units_batch',
+  units_box: 'wms_dl_units_box',
   old_units: 'wms_dl_old_units', new_units: 'wms_dl_new_units', delta_units: 'wms_dl_delta',
   added_units: 'wms_dl_added_units', removed_units: 'wms_dl_removed_units',
   added_boxes: 'wms_dl_added_boxes', removed_boxes: 'wms_dl_removed_boxes',
@@ -62,9 +84,10 @@ const DETAIL_LABEL_KEYS = {
 
 // Preferred display order for detail keys; anything else follows alphabetically.
 const DETAIL_ORDER = [
-  'from', 'from_sources', 'sources', 'to', 'to_loc', 'location',
+  'trigger',
+  'from', 'from_sources', 'sources', 'origins', 'to', 'to_loc', 'destination', 'location',
   'sku', 'style', 'color', 'size',
-  'old_units', 'new_units', 'delta_units', 'units', 'units_moved',
+  'old_units', 'new_units', 'delta_units', 'units_box', 'units', 'units_moved', 'units_batch',
   'box_units_received', 'added_units', 'removed_units', 'added_boxes', 'removed_boxes', 'total_units',
   'boxes_moved', 'skus_moved', 'count', 'boxes_relocated', 'boxes_split',
   'order_number', 'ticket_id', 'receiving_id', 'asn_id', 'po_number',
@@ -74,6 +97,7 @@ const DETAIL_ORDER = [
 
 const fmtDetailVal = (k, v, t) => {
   if (v == null || v === '') return '—';
+  if (k === 'trigger') return MV_TRIGGER_KEYS[v] ? t(MV_TRIGGER_KEYS[v]) : String(v);
   if (Array.isArray(v)) {
     if (v.length === 0) return '—';
     if ((k === 'box_ids') && v.length > 6) return `${v.slice(0, 6).join(', ')} … (+${v.length - 6})`;
@@ -99,10 +123,25 @@ const detailEntries = (details = {}) => {
 // Compact one-line summary of a movement's details for the box timeline.
 const summarizeMovement = (m, t) => {
   const d = m.details || {};
-  const origin = d.from || (Array.isArray(d.from_sources) && d.from_sources.join(', '))
+  const origin = d.origin || d.from || (Array.isArray(d.origins) && d.origins.join(', '))
+    || (Array.isArray(d.from_sources) && d.from_sources.join(', '))
     || (Array.isArray(d.sources) && d.sources.join(', ')) || '';
-  const dest = d.to || d.to_loc || '';
+  const dest = d.destination || d.to || d.to_loc || '';
   const parts = [];
+
+  // Reubicaciones: trigger al frente + unidades desglosadas "esta caja / lote".
+  if (RELOC_TYPES.has(m.type)) {
+    const trigKey = MV_TRIGGER_KEYS[d.trigger] || inferTriggerKey(d);
+    if (trigKey) parts.push(t(trigKey));
+    if (origin || dest) parts.push(`${origin || '—'} → ${dest || '—'}`);
+    const batch = d.units_batch != null ? d.units_batch : d.units_moved;
+    if (d.units_box != null) parts.push(t('wms_bs_box_vs_batch', { box: d.units_box, batch: batch != null ? batch : d.units_box }));
+    else if (batch != null) parts.push(t('wms_bs_batch_only', { batch }));
+    if (Array.isArray(d.updated_fields) && d.updated_fields.length) parts.push(t('wms_sum_fields', { fields: d.updated_fields.join(', ') }));
+    if (d.reason) parts.push(`“${d.reason}”`);
+    return parts.join(' · ');
+  }
+
   if (origin || dest) parts.push(`${origin || '—'} → ${dest || '—'}`);
   else if (d.location) parts.push(d.location);
   if (d.old_units != null && d.new_units != null) parts.push(`${d.old_units} → ${d.new_units} u`);
@@ -231,11 +270,20 @@ const MovementsTab = () => {
                     <span className="text-xs text-muted-foreground">{t('wms_moved_to_label')}</span>
                     <span className="font-mono text-foreground">{m.to_loc || '-'}</span>
                   </div>
-                  <div className="text-xs text-muted-foreground flex items-center gap-2">
+                  <div className="text-xs text-muted-foreground flex items-center gap-2 flex-wrap">
                     <Chip>{typeLabels[m.type] || m.type?.replace('_', ' ')}</Chip>
+                    {RELOC_TYPES.has(m.type) && (() => {
+                      // El trigger desambigua el `type` compartido (barrido vs escaneo).
+                      const tk = MV_TRIGGER_KEYS[m.details?.trigger] || inferTriggerKey(m.details || {});
+                      return tk ? <Chip>{t(tk)}</Chip> : null;
+                    })()}
                     <span className="w-1 h-1 rounded-full bg-border" />
                     {t('by_label')}: {m.user_name || m.user || t('wms_mv_system')}
                   </div>
+                  {(() => {
+                    const s = summarizeMovement(m, t);
+                    return s ? <div className="text-xs text-muted-foreground/70 mt-0.5 truncate max-w-xl">{s}</div> : null;
+                  })()}
                 </div>
               </div>
               <div className="text-right flex-shrink-0">

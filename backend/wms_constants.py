@@ -98,6 +98,39 @@ class MovementType:
     INVENTORY_ROW_RECONCILED = "inventory_row_reconciled"  # fila de inventario faltante reconstruida desde las cajas físicas
 
 
+class MovementTrigger:
+    """CÓMO se disparó un movimiento — desambigua acciones que comparten el
+    mismo `type`. Se guarda en details['trigger'].
+
+    Nació porque `bulk_relocation` se registra idéntico desde tres flujos muy
+    distintos (barrer una ubicación entera, escanear cajas una por una, o mover
+    unidades sueltas partiendo cajas), y el log no dejaba ver cuál fue. En el
+    caso que lo destapó, una caja `depleted` (0 u) aparecía "moviéndose" con el
+    total del lote (544 u) sin forma de saber que solo la arrastró un barrido.
+
+    ADITIVO: los movimientos históricos no traen `trigger`. Todo lector debe
+    tener fallback (inferir del shape del detail: `from` ⇒ barrido de ubicación,
+    `sources` ⇒ cajas escaneadas, `boxes_split` ⇒ split de unidades)."""
+    LOCATION_SWEEP = "location_sweep"   # /move-location: se movió una ubicación ENTERA (arrastra toda caja, con o sin piezas)
+    BOX_SCAN = "box_scan"               # /boxes/relocate: cajas escaneadas / elegidas a mano
+    UNIT_SPLIT = "unit_split"           # /move-units: unidades sueltas; puede partir una caja en dos
+    TRANSIT = "transit"                 # /transit/relocate: sacar cajas de tránsito (carro / temporal) a un slot real
+
+
+# Vocabulario normalizado del `details` de un movimiento. Objetivo: que TODO
+# reporte pueda distinguir sin adivinar. Los flujos nuevos escriben estos campos
+# ADEMÁS de los legados (para no romper históricos ni lectores viejos):
+#   trigger        → MovementTrigger (cómo se disparó)
+#   origins        → list[str] ubicaciones de origen (incluso si es una)
+#   destination    → str ubicación destino
+#   units_batch    → int total de unidades de TODA la operación (== units_moved legado)
+#   box_units      → {box_id: unidades_de_esa_caja_al_momento}; permite al timeline
+#                    por-caja decir "esta caja: X u" en vez del total del lote.
+#                    Cap para no inflar el doc; más allá del cap el lector cae a
+#                    solo "lote: N u".
+MOVEMENT_BOX_UNITS_CAP = 200
+
+
 class AsnStatus:
     PENDING = "pending"          # Nothing received yet
     PARTIAL = "partial"          # Some items received, more expected
