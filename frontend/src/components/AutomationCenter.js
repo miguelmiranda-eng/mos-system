@@ -4,7 +4,7 @@ import {
   Zap, Settings, Plus, ArrowLeft, Trash2, Edit2, 
   ChevronRight, Check, CheckCircle2, Factory, X, Play, Loader2
 } from 'lucide-react';
-import { API, BOARDS, DEFAULT_COLUMNS } from '../lib/constants';
+import { API, BOARDS, DEFAULT_COLUMNS, FLAG_CONDITION_FIELDS } from '../lib/constants';
 import { useLang } from '../contexts/LanguageContext';
 
 
@@ -28,6 +28,10 @@ const ACTION_LABELS = {
 // el frontend y nunca aparecen en changed_fields del backend.
 const EXTRA_WATCH_FIELDS = [
   { key: 'board', label: 'Tablero (board)', optionKey: 'boards' },
+  // Flags de los badges de la tarjeta (playerita/NECK/SEP/mallas/twin/PL) como
+  // campo observable Y como condición. optionKey resuelve los valores; twin/PL
+  // van sin optionKey (se usan con "Asignado/Vacío"). Ver FLAG_CONDITION_FIELDS.
+  ...FLAG_CONDITION_FIELDS.map(f => ({ key: f.key, label: f.label, optionKey: f.optionKey })),
 ];
 
 const buildWatchFields = (colData = {}) => {

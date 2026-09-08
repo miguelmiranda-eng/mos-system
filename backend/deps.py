@@ -144,7 +144,15 @@ DEFAULT_OPTIONS = {
     ],
     "trigger_types": ["create", "move", "update", "status_change"],
     "action_types": ["send_email", "move_board", "assign_field", "notify_slack"],
-    "condition_fields": ["priority", "client", "branding", "blank_status", "production_status", "trim_status", "sample", "artwork_status", "board", "betty_column", "shipping"],
+    "condition_fields": ["priority", "client", "branding", "blank_status", "production_status", "trim_status", "sample", "artwork_status", "board", "betty_column", "shipping",
+                         # Flags de badges de la tarjeta (iconos de iluminación): el
+                         # evaluador de automatizaciones ya compara contra cualquier
+                         # campo de la orden (order.get(field)); esto solo los expone
+                         # como condición en la UI. Ver flag_condition_fields.
+                         "sample_printavo", "art_neck_status", "art_sep_status", "screens", "is_preorder", "twin_order_number", "packing_link"],
+    # Valores de los flags de badges, para los selects de condición en la UI.
+    "sample_printavo_values": ["SI", "NO"],   # playerita: SI lleva muestra / NO
+    "flag_values": ["true", "false"],          # badges booleanos (NECK/SEP/mallas/preorden)
     # WMS: forzar que el picker escanee la caja fisica antes de descontar. Cuando
     # esta en True (default), /pick-size sin box_id explicito se rechaza y el
     # frontend obliga al scan. Si el LPN escaneado no matchea (no es BOX- o no

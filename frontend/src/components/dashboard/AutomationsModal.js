@@ -4,7 +4,7 @@ import { Zap, Plus, Edit2, Trash2, X, Loader2 } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import { toast } from "sonner";
-import { API, BOARDS } from "../../lib/constants";
+import { API, BOARDS, FLAG_CONDITION_FIELDS } from "../../lib/constants";
 
 export const AutomationsModal = ({ isOpen, onClose, options, columns = [], dynamicBoards = [] }) => {
   const { t } = useLang();
@@ -40,11 +40,19 @@ export const AutomationsModal = ({ isOpen, onClose, options, columns = [], dynam
       .filter(col => col.type === 'text' && col.key !== 'order_number' && col.key !== 'board')
       .map(col => ({ key: col.key, label: col.label, type: 'text', options: ['is_empty', 'not_empty'] }));
 
-    const allWatchFields = [...selectFields, ...dateFields, ...textFields].filter(f => f.options.length > 0);
+    // Flags de los badges de la tarjeta (playerita/NECK/SEP/mallas/twin/PL): no son
+    // columnas del tablero, pero el evaluador ya los soporta como condición.
+    const flagFields = FLAG_CONDITION_FIELDS.map(f => ({
+      key: f.key, label: f.label, type: 'flag',
+      options: f.optionKey ? (options[f.optionKey] || f.values) : f.values,
+    }));
+
+    const allWatchFields = [...selectFields, ...dateFields, ...textFields, ...flagFields].filter(f => f.options.length > 0);
 
     const conditionFields = [
       { key: 'board', label: t('board'), options: activeBoards },
-      ...selectFields.filter(f => f.options.length > 0)
+      ...selectFields.filter(f => f.options.length > 0),
+      ...flagFields,
     ];
     const actionFields = selectFields.filter(f => f.options.length > 0);
 

@@ -170,6 +170,23 @@ export const DEFAULT_COLUMNS = [
   { key: 'shipping', label: 'Shipping', type: 'select', optionKey: 'shippings', width: 250 }
 ];
 
+// Flags de los BADGES ("iconos de iluminación") de la tarjeta de orden — no son
+// columnas del tablero, pero el evaluador de automatizaciones ya los soporta como
+// condición (compara order.get(field)). Catálogo ÚNICO consumido por las dos UIs
+// de automatizaciones (AutomationCenter y AutomationsModal): `optionKey` resuelve
+// los valores vía /config/options; `values` los trae inline como fallback.
+// Los booleanos usan 'true'/'false' (el backend _values_match maneja bool↔string);
+// twin/packing se usan mejor con is_empty/not_empty (vacío = apagado).
+export const FLAG_CONDITION_FIELDS = [
+  { key: 'sample_printavo', label: 'Sample (playerita)', optionKey: 'sample_printavo_values', values: ['SI', 'NO'] },
+  { key: 'art_neck_status', label: 'Neck Label listo', optionKey: 'flag_values', values: ['true', 'false'] },
+  { key: 'art_sep_status', label: 'Separaciones listas', optionKey: 'flag_values', values: ['true', 'false'] },
+  { key: 'screens', label: 'Mallas listas', optionKey: 'flag_values', values: ['true', 'false'] },
+  { key: 'is_preorder', label: 'Preorden', optionKey: 'flag_values', values: ['true', 'false'] },
+  { key: 'twin_order_number', label: 'Orden gemela (Twin)', optionKey: null, values: ['is_empty', 'not_empty'] },
+  { key: 'packing_link', label: 'Packing importado (PL)', optionKey: null, values: ['is_empty', 'not_empty'] },
+];
+
 export const BOARD_COLORS = {
   'MASTER': { bg: '#1a1a2e', accent: '#e94560' },
   'SCHEDULING': { bg: '#0f3460', accent: '#16c79a' },
