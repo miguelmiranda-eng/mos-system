@@ -79,6 +79,16 @@ check("CK SAMPLES/N/A -> NO", f == "NO", f"got {f!r}")
 f, _ = _sample_signal(_inv([GARMENT, SAMPLES_DETALLE]))
 check("SAMPLES con detalle -> SI", f == "SI", f"got {f!r}")
 
+# Header que MENCIONA sample sin ser "SAMPLES"/"TOPS NEEDED" exactos (invoice 3222):
+# 'PP SAMPLE:' con CONTRACTUAL SAMPLE / TOPS NEEDED / ECOM / GTS KEEP SAMPLE adentro.
+PP_SAMPLE = {"color": "", "items": 0,
+             "description": "PP SAMPLE:\r\n1 M\r\nCONTRACTUAL SAMPLE:\r\n1 SM\r\n2 MD\r\nTOPS NEEDED\r\n1 SM\r\nECOM\r\n1 MD"}
+f, _ = _sample_signal(_inv([GARMENT, PP_SAMPLE]))
+check("header 'PP SAMPLE:' -> SI (contiene SAMPLE)", f == "SI", f"got {f!r}")
+CONTRACTUAL = {"color": "", "items": 0, "description": "CONTRACTUAL SAMPLE:\r\n1 SM\r\n1 LG"}
+f, _ = _sample_signal(_inv([GARMENT, CONTRACTUAL]))
+check("header 'CONTRACTUAL SAMPLE:' -> SI", f == "SI", f"got {f!r}")
+
 f, _ = _sample_signal(_inv([GARMENT, TOPS_NEEDED_EMPTY]))
 check("TOPS NEEDED sin cuerpo -> NO", f == "NO", f"got {f!r}")
 

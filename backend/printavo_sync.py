@@ -356,7 +356,11 @@ def _sample_signal(invoice: dict):
     for li in _flatten_line_items(invoice):
         desc = str(li.get("description") or "").replace("\r\n", "\n").replace("\r", "\n")
         head = desc.split("\n", 1)[0].strip().upper().rstrip(":")
-        if head in _SAMPLE_HEADERS:
+        # Es la línea de muestra si el HEADER menciona SAMPLE (SAMPLES, PP SAMPLE,
+        # CONTRACTUAL SAMPLE, ECOM SAMPLE…) o es TOPS NEEDED. El "APPROVAL METHOD"
+        # trae "SAMPLE" en el CUERPO, no en el header, así que NO matchea (sigue
+        # excluido el falso positivo del 2406).
+        if "SAMPLE" in head or head in _SAMPLE_HEADERS:
             body = desc.split("\n", 1)[1].strip() if "\n" in desc else ""
             flag = "NO" if body.strip().upper() in _SAMPLE_EMPTY else "SI"
             return flag, desc.strip()
