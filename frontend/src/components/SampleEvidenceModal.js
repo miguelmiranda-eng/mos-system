@@ -37,6 +37,16 @@ export default function SampleEvidenceModal({ order, onClose, onChanged }) {
     } else setPreview(null);
   };
 
+  // La URL guardada puede ser relativa ('/api/uploads/…', si BACKEND_PUBLIC_URL
+  // está vacío) y resolvería contra el frontend, no el backend. Se reconstruye
+  // absoluta desde storage_key con la base API (mismo patrón que QCDashboard).
+  const imgUrl = (it) => {
+    if (it.storage_key) return `${API}/uploads/${it.storage_key}`;
+    if (it.url && it.url.startsWith('http')) return it.url;
+    if (it.url && it.url.startsWith('/api/')) return `${API}${it.url.slice(4)}`;
+    return it.url || '';
+  };
+
   const toBase64 = (f) => new Promise((resolve, reject) => {
     const r = new FileReader();
     r.onload = () => resolve(r.result);
@@ -83,9 +93,9 @@ export default function SampleEvidenceModal({ order, onClose, onChanged }) {
           <div className="space-y-3 mb-4">
             {items.map((it, i) => (
               <div key={i} className="flex gap-3 bg-secondary/30 rounded-xl p-3">
-                {it.url ? (
-                  <a href={it.url} target="_blank" rel="noreferrer" className="shrink-0">
-                    <img src={it.url} alt="evidencia" className="w-20 h-20 object-cover rounded-lg border border-border" />
+                {(it.url || it.storage_key) ? (
+                  <a href={imgUrl(it)} target="_blank" rel="noreferrer" className="shrink-0">
+                    <img src={imgUrl(it)} alt="evidencia" className="w-20 h-20 object-cover rounded-lg border border-border" />
                   </a>
                 ) : (
                   <div className="w-20 h-20 rounded-lg bg-secondary flex items-center justify-center shrink-0"><ImageIcon className="w-6 h-6 text-muted-foreground" /></div>
