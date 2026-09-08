@@ -147,6 +147,32 @@ async def main():
     r = await autos.check_guards(base, {"notes": "hola"}, USER, status_changing=False, board_changing=False)
     check("ni status ni board -> None", r is None, f"{r!r}")
 
+    print("\n6) Track 4: requisito de ROL")
+    GROLE = guard(name="solo supersu", cond={"on": "status_change"},
+                  params={"requirement": "role", "roles": ["supersu"], "message": "Solo supersu"})
+    set_guards([GROLE])
+    base6 = {"board": "MAQUINA1", "production_status": "EN PRODUCCION"}
+    r = await autos.check_guards(base6, {"production_status": "LISTO PARA ENVIO"}, {"role": "admin"}, status_changing=True)
+    check("rol admin no permitido -> BLOQUEA", r == "Solo supersu", f"{r!r}")
+    r = await autos.check_guards(base6, {"production_status": "LISTO PARA ENVIO"}, {"role": "supersu"}, status_changing=True)
+    check("rol supersu -> pasa", r is None, f"{r!r}")
+
+    print("\n7) Track 4: MÚLTIPLES requisitos (AND)")
+    GMULTI = guard(name="foto y final bill", cond={"on": "status_change"},
+                   params={"requirements": [
+                       {"requirement": "photo", "message": "Falta foto"},
+                       {"requirement": "field", "field": "final_bill", "message": "Falta final bill"},
+                   ]})
+    set_guards([GMULTI])
+    base7 = {"board": "MAQUINA1", "production_status": "EN PRODUCCION", "images": [], "final_bill": ""}
+    r = await autos.check_guards(base7, {"production_status": "LISTO PARA ENVIO"}, USER, status_changing=True)
+    check("sin foto -> BLOQUEA con el 1er msg", r == "Falta foto", f"{r!r}")
+    r = await autos.check_guards({**base7, "images": [{"f": "x"}]}, {"production_status": "LISTO PARA ENVIO"}, USER, status_changing=True)
+    check("con foto pero sin final bill -> BLOQUEA con el 2do msg", r == "Falta final bill", f"{r!r}")
+    r = await autos.check_guards({**base7, "images": [{"f": "x"}], "final_bill": "2026-09-10"},
+                                 {"production_status": "LISTO PARA ENVIO"}, USER, status_changing=True)
+    check("foto + final bill -> pasa", r is None, f"{r!r}")
+
     print(f"\n{'='*60}\n   {ok} PASS / {fail} FAIL\n{'='*60}")
     sys.exit(1 if fail else 0)
 

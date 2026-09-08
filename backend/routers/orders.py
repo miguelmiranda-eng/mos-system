@@ -869,6 +869,32 @@ async def bulk_move_orders(request: Request):
         if qc_board:
             raise HTTPException(status_code=403, detail=f"CONTROL DE CALIDAD locked:{','.join(qc_board)}")
 
+    # Guardas (Fase 3, Track 4): en un movimiento masivo, filtra las órdenes que
+    # una guarda bloquea y mueve el resto (bulk es conveniencia, no todo-o-nada);
+    # las bloqueadas se reportan con su motivo. Solo se evalúa si existe alguna
+    # guarda activa (evita N consultas cuando no hay ninguna).
+    guard_blocked = []
+    if target_board != "PAPELERA DE RECICLAJE" and await db.automations.count_documents(
+            {"trigger_type": "guard", "is_active": True}) > 0:
+        from routers.automations import check_guards
+        full_docs = await db.orders.find({"order_id": {"$in": order_ids}}, {"_id": 0}).to_list(len(order_ids))
+        allowed_ids = []
+        for od in full_docs:
+            if od.get("board") == target_board:
+                allowed_ids.append(od["order_id"]); continue
+            blk = await check_guards(od, {"board": target_board}, user, board_changing=True, new_board=target_board)
+            if blk:
+                guard_blocked.append({"order_number": od.get("order_number") or od["order_id"], "reason": blk})
+            else:
+                allowed_ids.append(od["order_id"])
+        if guard_blocked:
+            allowed_set = set(allowed_ids)
+            order_ids = allowed_ids
+            original_orders = [o for o in original_orders if o["order_id"] in allowed_set]
+            original_boards = {k: v for k, v in original_boards.items() if k in allowed_set}
+            if not order_ids:
+                return {"modified_count": 0, "guard_blocked": guard_blocked, "_automations_executed": []}
+
     is_machine_board = target_board.startswith("MAQUINA")
     is_queue_supported = _is_queue_supported(target_board)
     is_day_supported = is_machine_board or target_board in DAY_SUPPORTED_BOARDS
@@ -988,7 +1014,8 @@ async def bulk_move_orders(request: Request):
     affected_boards = list(set(original_boards.values())) + [target_board]
     await _notify_all(user, "move", f"{user['name']} movio {len(order_ids)} ordenes a {target_board}", None, None)
     await ws_manager.broadcast("order_change", {"action": "bulk_move", "boards": affected_boards})
-    return {"modified_count": result.modified_count, "_automations_executed": executed_automations}
+    return {"modified_count": result.modified_count, "guard_blocked": guard_blocked,
+            "_automations_executed": executed_automations}
 
 @router.post("/export")
 async def export_orders(request: Request):

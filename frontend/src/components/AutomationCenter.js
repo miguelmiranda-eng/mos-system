@@ -36,7 +36,10 @@ const REQUIREMENT_LABELS = {
   photo: 'Foto de evidencia adjunta',
   field: 'Un campo debe estar lleno',
   flag: 'Otro badge en cierto estado',
+  role: 'Rol autorizado',
 };
+// Roles del sistema (para el requisito "rol autorizado").
+const ROLES = ['supersu', 'admin', 'ceo', 'inspector_qc', 'qc', 'sample_lead', 'operator'];
 
 // "Campo a observar": todas las columnas del tablero (default + personalizadas),
 // no solo las de estado. Las columnas fórmula se excluyen porque se calculan en
@@ -161,6 +164,8 @@ const AutomationCenter = () => {
   });
   // Acciones adicionales (multi-acción). Ver helpers add/upd/rmExtraAction.
   const [extraActions, setExtraActions] = useState([]);
+  // Requisitos adicionales de una guarda (AND). Se combinan en action_params.requirements.
+  const [extraRequirements, setExtraRequirements] = useState([]);
 
   // Etiqueta visible de una columna observada (cae a la clave si ya no existe).
   const fieldLabel = (key) => {
@@ -184,6 +189,11 @@ const AutomationCenter = () => {
   const updExtraAction = (i, patch) => setExtraActions(extraActions.map((a, idx) => (idx === i ? { ...a, ...patch } : a)));
   const updExtraParams = (i, patch) => setExtraActions(extraActions.map((a, idx) => (idx === i ? { ...a, action_params: { ...a.action_params, ...patch } } : a)));
   const rmExtraAction = (i) => setExtraActions(extraActions.filter((_, idx) => idx !== i));
+
+  // Requisitos adicionales de una guarda (AND).
+  const addExtraReq = () => setExtraRequirements([...extraRequirements, { requirement: 'photo' }]);
+  const updExtraReq = (i, patch) => setExtraRequirements(extraRequirements.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
+  const rmExtraReq = (i) => setExtraRequirements(extraRequirements.filter((_, idx) => idx !== i));
 
   // Helper to safely get the trigger condition string
   const getTriggerCondString = (conds) => {
@@ -220,11 +230,16 @@ const AutomationCenter = () => {
   const getActionParamString = (type, params) => {
     if (!params) return '';
     if (type === 'require') {
-      const req = params.requirement;
-      const base = req === 'photo' ? 'requiere foto de evidencia adjunta'
-        : req === 'field' ? `requiere que "${fieldLabel(params.field) || params.field || '?'}" esté lleno`
-        : req === 'flag' ? `requiere ${fieldLabel(params.field) || params.field || '?'} = ${params.value || '?'}`
-        : 'requisito';
+      const reqStr = (rq) => {
+        const q = rq.requirement;
+        return q === 'photo' ? 'foto de evidencia'
+          : q === 'field' ? `campo "${fieldLabel(rq.field) || rq.field || '?'}" lleno`
+          : q === 'flag' ? `${fieldLabel(rq.field) || rq.field || '?'} = ${rq.value || '?'}`
+          : q === 'role' ? `rol en [${(rq.roles || []).join(', ') || '?'}]`
+          : 'requisito';
+      };
+      const list = (Array.isArray(params.requirements) && params.requirements.length) ? params.requirements : [params];
+      const base = 'requiere ' + list.map(reqStr).join(' y ');
       return params.message ? `${base} — "${params.message}"` : base;
     }
     if (type === 'move_board') return t('auto_to_board', { board: params.target_board || '?' });
@@ -315,6 +330,7 @@ const AutomationCenter = () => {
     setCondMode('');
     setExtraCond({ enabled: false, field: '', value: '' });
     setExtraActions([]);
+    setExtraRequirements([]);
     setIsEditing(false);
     setWizardStep(1);
     setShowWizard(true);
@@ -328,9 +344,18 @@ const AutomationCenter = () => {
       const first = acts[0] || { action_type: 'move_board', action_params: {} };
       setCurrentAuto({ ...auto, action_type: first.action_type, action_params: first.action_params || {} });
       setExtraActions(acts.slice(1));
+      setExtraRequirements([]);
+    } else if (auto.trigger_type === 'guard' && auto.action_params && Array.isArray(auto.action_params.requirements)) {
+      // Guarda con varios requisitos: 1º como principal, el resto como adicionales.
+      const reqs = auto.action_params.requirements;
+      const first = reqs[0] || {};
+      setCurrentAuto({ ...auto, action_params: { ...first, message: auto.action_params.message ?? first.message } });
+      setExtraActions([]);
+      setExtraRequirements(reqs.slice(1));
     } else {
       setCurrentAuto({ ...auto });
       setExtraActions([]);
+      setExtraRequirements([]);
     }
     setCondMode(deriveCondMode((auto.trigger_conditions || {}).watch_value));
     setExtraCond(deriveExtraCond(auto.trigger_conditions));
@@ -372,6 +397,15 @@ const AutomationCenter = () => {
           { action_type: currentAuto.action_type, action_params: currentAuto.action_params },
           ...cleanExtras,
         ] };
+      }
+      // Guarda con múltiples requisitos: combina en action_params.requirements.
+      if (currentAuto.trigger_type === 'guard') {
+        action_type = 'require';
+        const ap = currentAuto.action_params || {};
+        const cleanReqs = extraRequirements.filter(r => r.requirement);
+        action_params = cleanReqs.length > 0
+          ? { ...ap, requirements: [{ requirement: ap.requirement, field: ap.field, value: ap.value, roles: ap.roles, message: ap.message }, ...cleanReqs] }
+          : ap;
       }
       const payload = { ...currentAuto, trigger_conditions: conds, action_type, action_params };
       const url = isEditing ? `${API}/automations/${currentAuto.automation_id}` : `${API}/automations`;
@@ -798,9 +832,68 @@ const AutomationCenter = () => {
                       </div>
                     </div>
                   )}
+                  {currentAuto.action_params.requirement === 'role' && (
+                    <div>
+                      <span className="text-xs text-muted-foreground mb-1 block">Roles autorizados (solo estos pueden hacer el cambio)</span>
+                      <div className="flex flex-wrap gap-2">
+                        {ROLES.map(r => {
+                          const sel = (currentAuto.action_params.roles || []).includes(r);
+                          return (
+                            <button key={r} type="button" onClick={() => {
+                              const cur = currentAuto.action_params.roles || [];
+                              const next = sel ? cur.filter(x => x !== r) : [...cur, r];
+                              setCurrentAuto({ ...currentAuto, action_params: { ...currentAuto.action_params, roles: next } });
+                            }} className={`px-2.5 py-1 rounded-lg text-xs font-bold ${sel ? 'bg-rose-500 text-white' : 'bg-secondary text-muted-foreground hover:bg-secondary/70'}`}>
+                              {r}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
                   <div>
                     <span className="text-xs text-muted-foreground mb-1 block">Mensaje al bloquear</span>
                     <input type="text" value={currentAuto.action_params.message || ''} onChange={e => setCurrentAuto({ ...currentAuto, action_params: { ...currentAuto.action_params, message: e.target.value } })} className="w-full bg-secondary/50 border border-border p-2 rounded-lg text-sm text-foreground" placeholder="Ej. Sube una foto de evidencia antes de cambiar el status." />
+                  </div>
+                  {/* Requisitos adicionales (AND): todos deben cumplirse. */}
+                  <div className="border-t border-border/40 pt-3 space-y-2">
+                    <span className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Requisitos adicionales <span className="normal-case font-normal text-muted-foreground/60">— opcional, todos deben cumplirse</span></span>
+                    {extraRequirements.map((r, i) => (
+                      <div key={i} className="flex flex-col gap-2 bg-secondary/40 rounded-lg p-2">
+                        <div className="flex gap-2 items-center">
+                          <select value={r.requirement} onChange={e => updExtraReq(i, { requirement: e.target.value, field: '', value: '', roles: [] })} className="flex-1 bg-secondary/50 border border-border p-2 rounded-lg text-sm text-foreground">
+                            {Object.entries(REQUIREMENT_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                          </select>
+                          <button onClick={() => rmExtraReq(i)} className="p-1 hover:bg-destructive/20 rounded"><X className="w-4 h-4 text-destructive" /></button>
+                        </div>
+                        {(r.requirement === 'field' || r.requirement === 'flag') && (
+                          <div className="grid grid-cols-2 gap-2">
+                            <select value={r.field || ''} onChange={e => updExtraReq(i, { field: e.target.value, value: '' })} className="w-full bg-secondary/50 border border-border p-2 rounded-lg text-sm text-foreground">
+                              <option value="">{t('auto_select_dash')}</option>
+                              {watchFields.map(f => <option key={f.key} value={f.key}>{f.label}</option>)}
+                            </select>
+                            {r.requirement === 'flag' && (getValueOptions(r.field) ? (
+                              <select value={r.value || ''} onChange={e => updExtraReq(i, { value: e.target.value })} className="w-full bg-secondary/50 border border-border p-2 rounded-lg text-sm text-foreground">
+                                <option value="">{t('auto_select_dash')}</option>
+                                {getValueOptions(r.field).map(v => <option key={v} value={v}>{v}</option>)}
+                              </select>
+                            ) : (
+                              <input value={r.value || ''} onChange={e => updExtraReq(i, { value: e.target.value })} className="w-full bg-secondary/50 border border-border p-2 rounded-lg text-sm text-foreground" placeholder="valor" />
+                            ))}
+                          </div>
+                        )}
+                        {r.requirement === 'role' && (
+                          <div className="flex flex-wrap gap-1.5">
+                            {ROLES.map(rol => {
+                              const sel = (r.roles || []).includes(rol);
+                              return <button key={rol} type="button" onClick={() => { const cur = r.roles || []; updExtraReq(i, { roles: sel ? cur.filter(x => x !== rol) : [...cur, rol] }); }} className={`px-2 py-0.5 rounded text-[11px] font-bold ${sel ? 'bg-rose-500 text-white' : 'bg-secondary text-muted-foreground'}`}>{rol}</button>;
+                            })}
+                          </div>
+                        )}
+                        <input value={r.message || ''} onChange={e => updExtraReq(i, { message: e.target.value })} className="w-full bg-secondary/50 border border-border p-2 rounded-lg text-sm text-foreground" placeholder="mensaje al bloquear (opcional)" />
+                      </div>
+                    ))}
+                    <button onClick={addExtraReq} className="text-xs font-bold text-rose-500 hover:text-rose-400 flex items-center gap-1"><Plus className="w-3.5 h-3.5" /> Agregar requisito</button>
                   </div>
                 </div>
               </>
@@ -1034,6 +1127,11 @@ const AutomationCenter = () => {
                     {currentAuto.trigger_type !== 'guard' && extraActions.length > 0 && (
                       <ul className="mt-1 text-xs text-muted-foreground list-disc ml-4">
                         {extraActions.map((a, i) => <li key={i}>{ACTION_LABELS[a.action_type]}: {getActionParamString(a.action_type, a.action_params)}</li>)}
+                      </ul>
+                    )}
+                    {currentAuto.trigger_type === 'guard' && extraRequirements.length > 0 && (
+                      <ul className="mt-1 text-xs text-muted-foreground list-disc ml-4">
+                        {extraRequirements.map((r, i) => <li key={i}>y además: {getActionParamString('require', r).replace('requiere ', '')}</li>)}
                       </ul>
                     )}
                   </div>

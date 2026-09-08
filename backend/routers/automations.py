@@ -227,21 +227,36 @@ def _guard_conditions_match(cond: dict, order: dict) -> bool:
     return _advanced_match(cond, order)
 
 
-def _requirement_met(params: dict, order: dict) -> bool:
-    """¿La orden cumple el requisito para dejar pasar el cambio? Se evalúa sobre
-    la vista fusionada (existing + update_data), así llenar el campo en el MISMO
-    request satisface el requisito."""
-    req = (params.get("requirement") or "").strip().lower()
+def _requirement_met_one(rq: dict, order: dict, user: dict) -> bool:
+    """¿Se cumple UN requisito? photo=foto adjunta, field=campo lleno, flag=otro
+    badge en estado X, role=el usuario tiene un rol permitido. Se evalúa sobre la
+    vista fusionada (existing+update_data). Requisito desconocido -> True (fail-open)."""
+    req = (rq.get("requirement") or "").strip().lower()
     if req == "photo":
         return len(order.get("images") or []) >= 1
     if req == "field":
-        v = order.get(params.get("field"))
+        v = order.get(rq.get("field"))
         return v is not None and str(v).strip() != ""
     if req == "flag":
-        return bool(_values_match(order.get(params.get("field")), params.get("value")))
-    # Requisito desconocido -> no bloquear (fail-open: una config mala no debe
-    # trabar a todo el mundo).
+        return bool(_values_match(order.get(rq.get("field")), rq.get("value")))
+    if req == "role":
+        roles = rq.get("roles") or ([rq.get("value")] if rq.get("value") else [])
+        roles = [str(r).strip().lower() for r in roles if str(r).strip()]
+        return (not roles) or str((user or {}).get("role") or "").strip().lower() in roles
     return True
+
+
+def _requirements_met(params: dict, order: dict, user: dict):
+    """Evalúa TODOS los requisitos (AND). Compatibilidad: si no hay lista
+    `requirements`, usa el requisito único (`requirement`/`field`/`value`).
+    Devuelve (ok, mensaje_del_que_falló)."""
+    reqs = params.get("requirements")
+    if reqs:
+        for rq in reqs:
+            if not _requirement_met_one(rq, order, user):
+                return False, rq.get("message") or params.get("message")
+        return True, None
+    return _requirement_met_one(params, order, user), params.get("message")
 
 
 async def check_guards(existing: dict, update_data: dict, user: dict,
@@ -290,10 +305,10 @@ async def check_guards(existing: dict, update_data: dict, user: dict,
         # Condiciones (flags) estrictas.
         if not _guard_conditions_match(cond, merged):
             continue
-        # Requisito.
-        if not _requirement_met(g.get("action_params") or {}, merged):
-            msg = (g.get("action_params") or {}).get("message") \
-                or f"Acción bloqueada por la regla '{g.get('name', '')}'."
+        # Requisitos (uno o varios, AND).
+        ok_req, why = _requirements_met(g.get("action_params") or {}, merged, user)
+        if not ok_req:
+            msg = why or f"Acción bloqueada por la regla '{g.get('name', '')}'."
             logger.info(f"[guards] bloqueada orden {existing.get('order_number')} por '{g.get('name')}'")
             return msg
     return None
