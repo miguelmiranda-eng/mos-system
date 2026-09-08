@@ -19,11 +19,17 @@ const TRIGGER_LABELS = {
 const ACTION_LABELS = {
   move_board: 'Mover Tablero',
   change_status: 'Cambio de Estado',
-  send_email: 'Enviar Email',
   assign_field: 'Asignar Campo',
+  add_comment: 'Comentar la orden',
+  set_date: 'Fijar / empujar fecha',
+  notify_push: 'Notificar (push)',
+  send_email: 'Enviar Email',
   notify_slack: 'Notificar Slack',
   require: 'Requerir (bloquear el cambio)'
 };
+
+// Campos de fecha que la acción set_date puede fijar.
+const DATE_FIELDS = ['due_date', 'cancel_date', 'final_bill', 'ship_by'];
 
 // Requisitos que una guarda puede exigir antes de dejar pasar el cambio.
 const REQUIREMENT_LABELS = {
@@ -153,7 +159,9 @@ const AutomationCenter = () => {
     is_active: true,
     boards: []
   });
-  
+  // Acciones adicionales (multi-acción). Ver helpers add/upd/rmExtraAction.
+  const [extraActions, setExtraActions] = useState([]);
+
   // Etiqueta visible de una columna observada (cae a la clave si ya no existe).
   const fieldLabel = (key) => {
     const def = watchFields.find(f => f.key === key);
@@ -169,6 +177,13 @@ const AutomationCenter = () => {
   const addAdvRow = () => setAdvanced([...advRows(), { field: '', op: 'eq', value: '' }]);
   const updAdvRow = (i, patch) => setAdvanced(advRows().map((c, idx) => (idx === i ? { ...c, ...patch } : c)));
   const rmAdvRow = (i) => setAdvanced(advRows().filter((_, idx) => idx !== i));
+
+  // Acciones adicionales (multi-acción): se combinan con la principal en un
+  // action_type "multi" al guardar. Cada una: {action_type, action_params}.
+  const addExtraAction = () => setExtraActions([...extraActions, { action_type: 'add_comment', action_params: {} }]);
+  const updExtraAction = (i, patch) => setExtraActions(extraActions.map((a, idx) => (idx === i ? { ...a, ...patch } : a)));
+  const updExtraParams = (i, patch) => setExtraActions(extraActions.map((a, idx) => (idx === i ? { ...a, action_params: { ...a.action_params, ...patch } } : a)));
+  const rmExtraAction = (i) => setExtraActions(extraActions.filter((_, idx) => idx !== i));
 
   // Helper to safely get the trigger condition string
   const getTriggerCondString = (conds) => {
@@ -216,7 +231,11 @@ const AutomationCenter = () => {
     if (type === 'change_status') return t('auto_change_to', { field: params.field || '?', value: params.value || '?' });
     if (type === 'send_email') return t('auto_to_email', { email: params.to_email || '?' });
     if (type === 'assign_field') return `${params.field || '?'} = ${params.value || '?'}`;
+    if (type === 'add_comment') return `comenta: "${params.content || ''}"`;
+    if (type === 'set_date') return `${params.field || '?'} = ${params.mode === 'offset' ? `hoy+${params.days || 0}d` : 'hoy'}`;
+    if (type === 'notify_push') return `push: ${params.message || ''}`;
     if (type === 'notify_slack') return t('auto_slack_message');
+    if (type === 'multi') return `${(params.actions || []).length} acciones en orden`;
     return JSON.stringify(params);
   };
 
@@ -295,13 +314,24 @@ const AutomationCenter = () => {
     });
     setCondMode('');
     setExtraCond({ enabled: false, field: '', value: '' });
+    setExtraActions([]);
     setIsEditing(false);
     setWizardStep(1);
     setShowWizard(true);
   };
 
   const openEditWizard = (auto) => {
-    setCurrentAuto({ ...auto });
+    // Una regla "multi" se abre con la 1ª acción como principal y el resto como
+    // acciones adicionales; las demás se editan como acción única.
+    if (auto.action_type === 'multi') {
+      const acts = (auto.action_params && auto.action_params.actions) || [];
+      const first = acts[0] || { action_type: 'move_board', action_params: {} };
+      setCurrentAuto({ ...auto, action_type: first.action_type, action_params: first.action_params || {} });
+      setExtraActions(acts.slice(1));
+    } else {
+      setCurrentAuto({ ...auto });
+      setExtraActions([]);
+    }
     setCondMode(deriveCondMode((auto.trigger_conditions || {}).watch_value));
     setExtraCond(deriveExtraCond(auto.trigger_conditions));
     setIsEditing(true);
@@ -331,7 +361,19 @@ const AutomationCenter = () => {
       if (extraCond.enabled && extraCond.field && String(extraCond.value).trim() !== '') {
         conds[extraCond.field] = extraCond.value;
       }
-      const payload = { ...currentAuto, trigger_conditions: conds };
+      // Multi-acción: si hay acciones adicionales (y no es guarda), se combinan
+      // con la principal en un action_type "multi".
+      let action_type = currentAuto.action_type;
+      let action_params = currentAuto.action_params;
+      const cleanExtras = (currentAuto.trigger_type !== 'guard' ? extraActions : []).filter(a => a.action_type);
+      if (cleanExtras.length > 0) {
+        action_type = 'multi';
+        action_params = { actions: [
+          { action_type: currentAuto.action_type, action_params: currentAuto.action_params },
+          ...cleanExtras,
+        ] };
+      }
+      const payload = { ...currentAuto, trigger_conditions: conds, action_type, action_params };
       const url = isEditing ? `${API}/automations/${currentAuto.automation_id}` : `${API}/automations`;
       const method = isEditing ? 'PUT' : 'POST';
       const res = await fetch(url, {
@@ -853,8 +895,92 @@ const AutomationCenter = () => {
                   <input type="text" placeholder={t('auto_message')} value={currentAuto.action_params.message || ''} onChange={e => setCurrentAuto({...currentAuto, action_params: {...currentAuto.action_params, message: e.target.value}})} className="w-full bg-secondary/50 border border-border p-2 rounded-lg text-sm text-foreground"/>
                 </div>
               )}
+
+              {currentAuto.action_type === 'add_comment' && (
+                <textarea placeholder="Contenido del comentario (usa {order_number}, {client}...)" value={currentAuto.action_params.content || ''} onChange={e => setCurrentAuto({ ...currentAuto, action_params: { ...currentAuto.action_params, content: e.target.value } })} className="w-full bg-secondary/50 border border-border p-2 rounded-lg text-sm text-foreground min-h-[80px]" />
+              )}
+
+              {currentAuto.action_type === 'set_date' && (
+                <div className="grid grid-cols-3 gap-3">
+                  <div>
+                    <span className="text-xs text-muted-foreground mb-1 block">Campo de fecha</span>
+                    <select value={currentAuto.action_params.field || ''} onChange={e => setCurrentAuto({ ...currentAuto, action_params: { ...currentAuto.action_params, field: e.target.value } })} className="w-full bg-secondary/50 border border-border p-2 rounded-lg text-sm text-foreground">
+                      <option value="">{t('auto_select_dash')}</option>
+                      {DATE_FIELDS.map(f => <option key={f} value={f}>{f}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <span className="text-xs text-muted-foreground mb-1 block">Cuándo</span>
+                    <select value={currentAuto.action_params.mode || 'today'} onChange={e => setCurrentAuto({ ...currentAuto, action_params: { ...currentAuto.action_params, mode: e.target.value } })} className="w-full bg-secondary/50 border border-border p-2 rounded-lg text-sm text-foreground">
+                      <option value="today">Hoy</option>
+                      <option value="offset">Hoy + N días</option>
+                    </select>
+                  </div>
+                  {currentAuto.action_params.mode === 'offset' && (
+                    <div>
+                      <span className="text-xs text-muted-foreground mb-1 block">Días</span>
+                      <input type="number" value={currentAuto.action_params.days ?? ''} onChange={e => setCurrentAuto({ ...currentAuto, action_params: { ...currentAuto.action_params, days: e.target.value } })} className="w-full bg-secondary/50 border border-border p-2 rounded-lg text-sm text-foreground" placeholder="7" />
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {currentAuto.action_type === 'notify_push' && (
+                <div className="space-y-3">
+                  <input type="text" placeholder="Título (ej. MOS)" value={currentAuto.action_params.title || ''} onChange={e => setCurrentAuto({ ...currentAuto, action_params: { ...currentAuto.action_params, title: e.target.value } })} className="w-full bg-secondary/50 border border-border p-2 rounded-lg text-sm text-foreground" />
+                  <input type="text" placeholder="Mensaje (usa {order_number}...)" value={currentAuto.action_params.message || ''} onChange={e => setCurrentAuto({ ...currentAuto, action_params: { ...currentAuto.action_params, message: e.target.value } })} className="w-full bg-secondary/50 border border-border p-2 rounded-lg text-sm text-foreground" />
+                </div>
+              )}
             </div>
             </>)}
+
+            {currentAuto.trigger_type !== 'guard' && (
+              <div className="p-4 border border-cyan-500/10 bg-cyan-500/[0.03] rounded-xl space-y-3">
+                <label className="block text-sm font-bold text-muted-foreground uppercase tracking-widest">
+                  Acciones adicionales <span className="text-muted-foreground/60 normal-case font-normal">— opcional, se ejecutan en orden</span>
+                </label>
+                {extraActions.map((a, i) => (
+                  <div key={i} className="flex flex-col gap-2 bg-secondary/30 rounded-lg p-2">
+                    <div className="flex gap-2 items-center">
+                      <select value={a.action_type} onChange={e => updExtraAction(i, { action_type: e.target.value, action_params: {} })} className="flex-1 bg-secondary/50 border border-border p-2 rounded-lg text-sm text-foreground">
+                        {['move_board', 'change_status', 'assign_field', 'add_comment', 'set_date', 'notify_push', 'notify_slack'].map(k => <option key={k} value={k}>{ACTION_LABELS[k]}</option>)}
+                      </select>
+                      <button onClick={() => rmExtraAction(i)} className="p-1 hover:bg-destructive/20 rounded"><X className="w-4 h-4 text-destructive" /></button>
+                    </div>
+                    {a.action_type === 'move_board' && (
+                      <select value={a.action_params.target_board || ''} onChange={e => updExtraParams(i, { target_board: e.target.value })} className="w-full bg-secondary/50 border border-border p-2 rounded-lg text-sm text-foreground">
+                        <option value="">{t('auto_select_dash')}</option>
+                        {(options.boards || BOARDS).map(b => <option key={b} value={b}>{b}</option>)}
+                      </select>
+                    )}
+                    {(a.action_type === 'change_status' || a.action_type === 'assign_field') && (
+                      <div className="grid grid-cols-2 gap-2">
+                        <input placeholder="campo" value={a.action_params.field || ''} onChange={e => updExtraParams(i, { field: e.target.value })} className="w-full bg-secondary/50 border border-border p-2 rounded-lg text-sm text-foreground" />
+                        <input placeholder="valor" value={a.action_params.value || ''} onChange={e => updExtraParams(i, { value: e.target.value })} className="w-full bg-secondary/50 border border-border p-2 rounded-lg text-sm text-foreground" />
+                      </div>
+                    )}
+                    {a.action_type === 'add_comment' && (
+                      <input placeholder="contenido ({order_number}...)" value={a.action_params.content || ''} onChange={e => updExtraParams(i, { content: e.target.value })} className="w-full bg-secondary/50 border border-border p-2 rounded-lg text-sm text-foreground" />
+                    )}
+                    {a.action_type === 'set_date' && (
+                      <div className="grid grid-cols-2 gap-2">
+                        <select value={a.action_params.field || ''} onChange={e => updExtraParams(i, { field: e.target.value })} className="w-full bg-secondary/50 border border-border p-2 rounded-lg text-sm text-foreground">
+                          <option value="">{t('auto_select_dash')}</option>
+                          {DATE_FIELDS.map(f => <option key={f} value={f}>{f}</option>)}
+                        </select>
+                        <input type="number" placeholder="días (0=hoy)" value={a.action_params.days ?? ''} onChange={e => updExtraParams(i, { days: e.target.value, mode: Number(e.target.value) > 0 ? 'offset' : 'today' })} className="w-full bg-secondary/50 border border-border p-2 rounded-lg text-sm text-foreground" />
+                      </div>
+                    )}
+                    {(a.action_type === 'notify_push' || a.action_type === 'notify_slack') && (
+                      <input placeholder="mensaje ({order_number}...)" value={a.action_params.message || ''} onChange={e => updExtraParams(i, { message: e.target.value })} className="w-full bg-secondary/50 border border-border p-2 rounded-lg text-sm text-foreground" />
+                    )}
+                  </div>
+                ))}
+                <button onClick={addExtraAction} className="text-xs font-bold text-cyan-500 hover:text-cyan-400 flex items-center gap-1">
+                  <Plus className="w-3.5 h-3.5" /> Agregar acción
+                </button>
+              </div>
+            )}
 
             <div className="flex justify-between pt-6">
               <button onClick={() => setWizardStep(1)} className="bg-secondary text-foreground px-6 py-2 rounded-xl font-bold flex items-center hover:bg-secondary/80">
@@ -903,8 +1029,13 @@ const AutomationCenter = () => {
                     <Settings className="w-4 h-4" />
                   </div>
                   <div>
-                    <div className="text-xs font-black uppercase tracking-wider text-cyan-500 mb-1">{t('auto_then_execute')} {ACTION_LABELS[currentAuto.action_type]}</div>
-                    <div className="text-sm font-medium text-foreground">{getActionParamString(currentAuto.action_type, currentAuto.action_params)}</div>
+                    <div className="text-xs font-black uppercase tracking-wider text-cyan-500 mb-1">{t('auto_then_execute')} {currentAuto.trigger_type === 'guard' ? ACTION_LABELS.require : ACTION_LABELS[currentAuto.action_type]}</div>
+                    <div className="text-sm font-medium text-foreground">{getActionParamString(currentAuto.trigger_type === 'guard' ? 'require' : currentAuto.action_type, currentAuto.action_params)}</div>
+                    {currentAuto.trigger_type !== 'guard' && extraActions.length > 0 && (
+                      <ul className="mt-1 text-xs text-muted-foreground list-disc ml-4">
+                        {extraActions.map((a, i) => <li key={i}>{ACTION_LABELS[a.action_type]}: {getActionParamString(a.action_type, a.action_params)}</li>)}
+                      </ul>
+                    )}
                   </div>
                 </div>
               </div>

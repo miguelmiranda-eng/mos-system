@@ -298,7 +298,29 @@ async def check_guards(existing: dict, update_data: dict, user: dict,
             return msg
     return None
 
+def _fmt(tpl, order):
+    """Rellena una plantilla con los campos de la orden ('{order_number}'),
+    tolerante a campos faltantes o None (a diferencia de un .format(**order) crudo,
+    que revienta con KeyError)."""
+    try:
+        return (tpl or "").format(**{k: ("" if v is None else v) for k, v in (order or {}).items()})
+    except Exception:
+        return tpl or ""
+
+
 async def execute_action(action_type, params, target_obj, user=None):
+    # Multi-acción (Fase 3, Track 3): una regla ejecuta VARIAS acciones en orden.
+    # No se anida (un paso "multi" se ignora) para evitar recursión.
+    if action_type == "multi":
+        for step in (params.get("actions") or []):
+            st = step.get("action_type")
+            if not st or st == "multi":
+                continue
+            try:
+                await execute_action(st, step.get("action_params") or {}, target_obj, user)
+            except Exception as e:
+                logger.error(f"[automation] sub-acción {st} falló: {e}")
+        return
     if action_type == "send_email":
         await send_automation_email(params, target_obj)
     elif action_type == "move_board":
@@ -358,6 +380,43 @@ async def execute_action(action_type, params, target_obj, user=None):
                      "via": "automation"},
                     previous_data={"order_id": target_obj.get("order_id"),
                                    "fields": {field: old_value}})
+    elif action_type == "add_comment":
+        # Deja un comentario/nota en la orden (mismo formato que db.comments).
+        if "order_id" in target_obj:
+            actor = user or {"user_id": "automation", "name": "Automatización"}
+            now = datetime.now(timezone.utc).isoformat()
+            await db.comments.insert_one({
+                "comment_id": f"c_{uuid.uuid4().hex[:12]}",
+                "order_id": target_obj["order_id"],
+                "content": _fmt(params.get("content"), target_obj) or "(automatización)",
+                "parent_id": None,
+                "user_id": actor.get("user_id", "automation"),
+                "user_name": actor.get("name", "Automatización"),
+                "mentions": [],
+                "created_at": now,
+                "via": "automation",
+            })
+    elif action_type == "set_date":
+        # Fija un campo de fecha: hoy, o hoy+N días (mode="offset"). Reusa la
+        # escritura de assign_field (historial + dedup).
+        field = params.get("field")
+        if field and "order_id" in target_obj:
+            from datetime import date, timedelta
+            try:
+                days = int(params.get("days") or 0)
+            except (TypeError, ValueError):
+                days = 0
+            d = date.today() + (timedelta(days=days) if (params.get("mode") == "offset") else timedelta(0))
+            await execute_action("assign_field", {"field": field, "value": d.isoformat()}, target_obj, user)
+    elif action_type == "notify_push":
+        # Notificación web-push (canal real, el mismo que usa el WMS).
+        try:
+            from services.push_notify import send_push_to_all
+            title = _fmt(params.get("title") or "MOS", target_obj)
+            body = _fmt(params.get("message") or "", target_obj)
+            await send_push_to_all(db, title, body, url=params.get("url") or "/dashboard", tag="automation")
+        except Exception as e:
+            logger.error(f"[automation] notify_push falló: {e}")
     elif action_type == "notify_slack":
         await send_slack_notification(params, target_obj)
 
