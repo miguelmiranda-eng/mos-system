@@ -94,6 +94,16 @@ _SIZE_TOKENS = set(SIZES_MAP.keys())
 # Nickname brand per retailer (first CUST word -> brand). Matches existing invoices.
 RETAILER_BRAND = {"SPENCER": "SPENCERS", "TRACTOR": "TRACTOR SUPPLY"}
 
+# ── Muestra física: se LEE del PO (antes se dejaba TOPS NEEDED vacío para que
+# Viviana lo tecleara — el comentario decía "el detalle NO está en el PDF", falso).
+# El PO trae DOS señales:
+#   · Encabezado 'SAMPLE Y/N' — booleano autoritativo, SIEMPRE presente.
+#   · Bloque 'TOPS NEEDED\n<detalle>' (p.ej. '1 SM') — el detalle, solo en algunos POs.
+# 'SAMPLE' en mayúscula + Y/N: no matchea el 'samples' minúscula del boilerplate legal.
+_SAMPLE_HDR_RE = re.compile(r"\bSAMPLE\s+([YN])\b")
+# Detalle del bloque TOPS NEEDED, hasta el pie 'Note :' (o fin de página).
+_TOPS_NEEDED_RE = re.compile(r"\bTOPS NEEDED\b\s*\n(.+?)(?=\n\s*Note\s*:|\Z)", re.S)
+
 
 def _sizes_from_pack_text(text: str):
     """Sizes from the clean PACK notes block, e.g. 'MD - 288'. Returns (sizes, total, pack_lines)."""
@@ -287,6 +297,14 @@ def _parse_goodie_page(page):
     rs = re.search(r"(SIZED:\s*RE-SIZE.*?)(?=\nNote :|\Z)", text, re.S)
     photo_approval = bool(re.search(r"\*\*PHOTO APPROVAL\*\*", text))
 
+    # Muestra física del PO: booleano del encabezado (SAMPLE Y/N) + detalle del
+    # bloque TOPS NEEDED (una línea por renglón, p.ej. '1 SM'). Se rellena en el
+    # quote (_tops_needed_desc); sin esto la línea salía vacía y se perdía el dato.
+    _sm = _SAMPLE_HDR_RE.search(text)
+    sample_required = bool(_sm and _sm.group(1).upper() == "Y")
+    _tn = _TOPS_NEEDED_RE.search(text)
+    tops_needed = "\n".join(l.strip() for l in _tn.group(1).splitlines() if l.strip()) if _tn else ""
+
     qty_declared = int(m.group("qty").replace(",", ""))
 
     # Sizes: prefer the clean PACK notes block (preserves the exact Spencers format);
@@ -326,6 +344,8 @@ def _parse_goodie_page(page):
         "blanks_to_use": (b2u.group(1).strip() if b2u else ""),   # e.g. GI5000-WHITE
         "resize": (rs.group(1).strip() if rs else ""),            # SIZED: RE-SIZE ... block
         "photo_approval": photo_approval,
+        "sample_required": sample_required,  # encabezado SAMPLE Y/N del PO
+        "tops_needed": tops_needed,          # detalle del bloque TOPS NEEDED (o "")
         "qty": qty_declared,
         "unit_price": float(m.group("price").replace(",", "")) if m.group("price") else 0.0,
         "sizes": sizes,
@@ -559,6 +579,21 @@ def _status_disp(r):
     return "n/a" if s.upper() == "ORIGINAL" else s
 
 
+def _tops_needed_desc(r):
+    """Línea 'TOPS NEEDED:' del quote, pre-llenada desde el PO (Opción A):
+      · si el PO trae el bloque TOPS NEEDED -> el detalle verbatim ('1 SM');
+      · si no trae bloque pero el encabezado dice SAMPLE Y -> se marca igual
+        ('SAMPLE Y'), porque SAMPLE Y = lleva muestra aunque no detalle los tops;
+      · si el PO no pide muestra (SAMPLE N / sin dato) -> header vacío como antes.
+    El cuerpo no vacío es lo que el forward sync (_sample_signal) lee como "SI"."""
+    detail = (r.get("tops_needed") or "").strip()
+    if detail:
+        return "TOPS NEEDED:\n" + detail
+    if r.get("sample_required"):
+        return "TOPS NEEDED:\nSAMPLE Y"
+    return "TOPS NEEDED:"
+
+
 def _spencers_groups(r, sizes_input, category_id=None):
     """2-group SPENCERS template. Alineado con el master invoice #2406
     (SPENCERS PO#21767 - 323354 - THT0109M1000 - ROLLOUT):
@@ -577,10 +612,10 @@ def _spencers_groups(r, sizes_input, category_id=None):
     g1 = [
         _li(PRODUCTION_DEPT),
         _li(_garment_description(r), color=r["color"], sizes=sizes_input, price=r["unit_price"]),
-        # Bloque de muestras: el detalle (1 MD, 1 LG, ECOM SAMPLE, M-1...) NO
-        # esta en el PDF; Viviana lo completa. Dejamos solo el header editable.
-        # TOPS NEEDED y FRONT PRINT llevan categoria Screen Printing (master #2406).
-        _li("TOPS NEEDED:", category_id=category_id),
+        # Bloque de muestras: se PRE-LLENA desde el PO (encabezado SAMPLE Y/N +
+        # bloque TOPS NEEDED del PDF, ver _tops_needed_desc). Viviana ajusta si
+        # hace falta. TOPS NEEDED y FRONT PRINT llevan categoria Screen Printing (#2406).
+        _li(_tops_needed_desc(r), category_id=category_id),
         _li(front, category_id=category_id),
         _li("APPROVAL METHOD:\n" + APPROVAL_METHOD_DEFAULT),
         _li(ALLOWED_SHORTAGE_DEFAULT),
