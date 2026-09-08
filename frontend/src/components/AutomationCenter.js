@@ -13,8 +13,22 @@ const TRIGGER_LABELS = {
   move: 'Movimiento de Tablero',
   update: 'Actualización',
   status_change: 'Cambio de Estado',
+  time: 'Por tiempo / SLA',
   guard: 'Guarda / Validación (bloquea)'
 };
+
+// Reglas por tiempo: sobre qué marca temporal se mide.
+const TIME_BASES = [
+  { basis: 'production_status_at', label: 'Tiempo en el status actual' },
+  { basis: 'updated_at', label: 'Tiempo desde el último cambio' },
+  { basis: 'created_at', label: 'Antigüedad de la orden' },
+  { basis: 'cancel_date', label: 'Respecto al Cancel Date' },
+  { basis: 'due_date', label: 'Respecto a la Entrega (due)' },
+  { basis: 'final_bill', label: 'Respecto al Final Bill' },
+  { basis: 'ship_by', label: 'Respecto al Ship By' },
+];
+const TIME_DATE_BASES = ['cancel_date', 'due_date', 'final_bill', 'ship_by'];
+const TIME_COND_KEYS = ['basis', 'amount', 'unit', 'direction'];
 
 const ACTION_LABELS = {
   move_board: 'Mover Tablero',
@@ -103,6 +117,7 @@ const AutomationCenter = () => {
   const [automations, setAutomations] = useState([]);
   const [loading, setLoading] = useState(true);
   const [options, setOptions] = useState({});
+  const [sla, setSla] = useState(null);   // config del motor de reglas por tiempo
   const [watchFields, setWatchFields] = useState(() => buildWatchFields());
 
   // Tipo de condición sobre el campo observado. Se persiste dentro de
@@ -130,7 +145,7 @@ const AutomationCenter = () => {
   const GUARD_COND_KEYS = ['on', 'to_status', 'to_board'];
   const [extraCond, setExtraCond] = useState({ enabled: false, field: '', value: '' });
   const deriveExtraCond = (conds = {}) => {
-    const skip = [...RESERVED_COND_KEYS, ...GUARD_COND_KEYS];
+    const skip = [...RESERVED_COND_KEYS, ...GUARD_COND_KEYS, ...TIME_COND_KEYS];
     const key = Object.keys(conds).find(k => !skip.includes(k) && conds[k]);
     return key ? { enabled: true, field: key, value: conds[key] } : { enabled: false, field: '', value: '' };
   };
@@ -198,6 +213,19 @@ const AutomationCenter = () => {
   // Helper to safely get the trigger condition string
   const getTriggerCondString = (conds) => {
     if (!conds) return t('auto_any_change');
+    // Regla por tiempo: resumen del umbral + condiciones.
+    if (conds.basis) {
+      const b = TIME_BASES.find(x => x.basis === conds.basis);
+      const u = conds.unit === 'hours' ? 'h' : 'd';
+      let s = `${conds.amount || 0}${u} · ${b ? b.label : conds.basis}`;
+      if (TIME_DATE_BASES.includes(conds.basis)) s += conds.direction === 'before' ? ' (antes)' : ' (vencida)';
+      const tp = [s];
+      Object.keys(conds)
+        .filter(k => ![...TIME_COND_KEYS, 'advanced', 'watch_field', 'watch_value'].includes(k) && conds[k])
+        .forEach(k => tp.push(`si ${fieldLabel(k)} = ${conds[k]}`));
+      (conds.advanced || []).forEach(c => { if (c.field) tp.push(`${fieldLabel(c.field)} ${ADV_OP_SYMBOL[c.op] || c.op} ${ADV_NO_VALUE.includes(c.op) ? '' : (c.value || '')}`.trim()); });
+      return tp.join(' · ');
+    }
     // Guarda: resumen propio (on / to_status / to_board / condición de flag).
     if (conds.on) {
       const gp = [conds.on === 'move' ? 'al mover de tablero' : 'al cambiar el status'];
@@ -290,10 +318,28 @@ const AutomationCenter = () => {
     }
   };
 
+  const fetchSla = async () => {
+    try {
+      const res = await fetch(`${API}/automation-sla`, { credentials: 'include' });
+      if (res.ok) setSla(await res.json());
+    } catch (e) { console.error(e); }
+  };
+
+  const toggleSla = async () => {
+    try {
+      const res = await fetch(`${API}/automation-sla`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
+        body: JSON.stringify({ enabled: !(sla && sla.enabled) }),
+      });
+      if (res.ok) setSla(await res.json());
+    } catch (e) { console.error(e); }
+  };
+
   useEffect(() => {
     fetchAutomations();
     fetchOptions();
     fetchColumns();
+    fetchSla();
   }, []);
 
   const handleToggleActive = async (auto) => {
@@ -381,7 +427,9 @@ const AutomationCenter = () => {
       // "condición extra" y no se deben borrar al reconstruir.
       const keepKeys = currentAuto.trigger_type === 'guard'
         ? [...RESERVED_COND_KEYS, 'on', 'to_status', 'to_board']
-        : RESERVED_COND_KEYS;
+        : currentAuto.trigger_type === 'time'
+          ? [...RESERVED_COND_KEYS, ...TIME_COND_KEYS]
+          : RESERVED_COND_KEYS;
       Object.keys(conds).forEach(k => { if (!keepKeys.includes(k)) delete conds[k]; });
       if (extraCond.enabled && extraCond.field && String(extraCond.value).trim() !== '') {
         conds[extraCond.field] = extraCond.value;
@@ -472,12 +520,18 @@ const AutomationCenter = () => {
               value={currentAuto.trigger_type}
               onChange={e => {
                 const tt = e.target.value;
+                const wasGuardOrTime = currentAuto.trigger_type === 'guard';
                 if (tt === 'guard') {
                   // Guarda: cambia el vocabulario a on/requisito. Semilla mínima.
                   setExtraCond({ enabled: false, field: '', value: '' });
                   setCurrentAuto({ ...currentAuto, trigger_type: 'guard', action_type: 'require',
                     trigger_conditions: { on: 'status_change', to_status: '', to_board: '' },
                     action_params: { requirement: 'photo', message: '' } });
+                } else if (tt === 'time') {
+                  // Por tiempo: semilla del umbral. Usa acciones normales.
+                  setCurrentAuto({ ...currentAuto, trigger_type: 'time',
+                    ...(wasGuardOrTime ? { action_type: 'notify_push', action_params: { title: 'MOS', message: '' } } : {}),
+                    trigger_conditions: { basis: 'production_status_at', amount: 3, unit: 'days', direction: 'after' } });
                 } else {
                   // Volver de guarda a una regla normal: restablece acción por defecto.
                   const wasGuard = currentAuto.trigger_type === 'guard';
@@ -714,6 +768,42 @@ const AutomationCenter = () => {
                   )}
                   <p className="text-[10px] text-muted-foreground italic">Ej. Sample (playerita) = SI: la guarda solo bloquea las órdenes que llevan muestra.</p>
                 </div>
+              </div>
+            )}
+
+            {currentAuto.trigger_type === 'time' && (
+              <div className="p-4 border border-teal-500/20 bg-teal-500/5 rounded-xl space-y-4">
+                <label className="block text-sm font-bold text-muted-foreground uppercase tracking-widest">Umbral de tiempo</label>
+                <select
+                  value={currentAuto.trigger_conditions.basis || 'production_status_at'}
+                  onChange={e => setCurrentAuto({ ...currentAuto, trigger_conditions: { ...currentAuto.trigger_conditions, basis: e.target.value } })}
+                  className="w-full bg-secondary/50 border border-border p-2 rounded-lg text-sm text-foreground"
+                >
+                  {TIME_BASES.map(b => <option key={b.basis} value={b.basis}>{b.label}</option>)}
+                </select>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <span className="text-xs text-muted-foreground mb-1 block">Cantidad</span>
+                    <input type="number" min="0" value={currentAuto.trigger_conditions.amount ?? ''} onChange={e => setCurrentAuto({ ...currentAuto, trigger_conditions: { ...currentAuto.trigger_conditions, amount: e.target.value } })} className="w-full bg-secondary/50 border border-border p-2 rounded-lg text-sm text-foreground" placeholder="3" />
+                  </div>
+                  <div>
+                    <span className="text-xs text-muted-foreground mb-1 block">Unidad</span>
+                    <select value={currentAuto.trigger_conditions.unit || 'days'} onChange={e => setCurrentAuto({ ...currentAuto, trigger_conditions: { ...currentAuto.trigger_conditions, unit: e.target.value } })} className="w-full bg-secondary/50 border border-border p-2 rounded-lg text-sm text-foreground">
+                      <option value="days">días</option>
+                      <option value="hours">horas</option>
+                    </select>
+                  </div>
+                </div>
+                {TIME_DATE_BASES.includes(currentAuto.trigger_conditions.basis) && (
+                  <div>
+                    <span className="text-xs text-muted-foreground mb-1 block">Respecto a la fecha</span>
+                    <select value={currentAuto.trigger_conditions.direction || 'after'} onChange={e => setCurrentAuto({ ...currentAuto, trigger_conditions: { ...currentAuto.trigger_conditions, direction: e.target.value } })} className="w-full bg-secondary/50 border border-border p-2 rounded-lg text-sm text-foreground">
+                      <option value="before">Antes de la fecha (faltan N)</option>
+                      <option value="after">Después de la fecha (vencida por N)</option>
+                    </select>
+                  </div>
+                )}
+                <p className="text-[10px] text-muted-foreground italic">Se revisa periódicamente en segundo plano. Cada regla dispara una vez por orden. Combina con condiciones abajo (ej. Sample = SI).</p>
               </div>
             )}
 
@@ -1262,6 +1352,20 @@ const AutomationCenter = () => {
           </button>
         )}
       </header>
+
+      {/* Motor de reglas por tiempo (SLA): control on/off */}
+      {!showWizard && sla && (
+        <div className={`mb-4 flex items-center justify-between px-4 py-3 rounded-xl border ${sla.enabled ? 'border-teal-500/30 bg-teal-500/10' : 'border-border bg-secondary/30'}`}>
+          <div className="text-sm">
+            <span className="font-bold uppercase tracking-wide text-xs">Motor de reglas por tiempo (SLA):</span>{' '}
+            <span className={sla.enabled ? 'text-teal-500 font-bold' : 'text-muted-foreground'}>{sla.enabled ? `Activo · cada ${sla.poll_minutes} min` : 'Apagado'}</span>
+            {sla.last_run_at && <span className="text-muted-foreground text-xs ml-2">(última: {new Date(sla.last_run_at).toLocaleString()})</span>}
+          </div>
+          <button onClick={toggleSla} className={`px-4 py-1.5 rounded-lg text-xs font-bold ${sla.enabled ? 'bg-secondary text-foreground hover:bg-secondary/70' : 'bg-teal-500 text-white hover:bg-teal-400'}`}>
+            {sla.enabled ? 'Apagar' : 'Encender'}
+          </button>
+        </div>
+      )}
 
       {/* Main Content */}
       <div className="relative z-10">

@@ -193,6 +193,59 @@ def _advanced_match(conditions_or_cond: dict, order: dict) -> bool:
     return True
 
 
+# ── Reglas por TIEMPO / SLA (Fase 3, Track 1) ────────────────────────────────
+# Un trigger_type:"time" dispara cuando una orden lleva/queda cierto tiempo
+# respecto a una marca temporal. Las evalúa un scheduler (automation_scheduler.py),
+# no el CRUD. `basis` = campo temporal a medir; `amount`+`unit` = umbral;
+# `direction` (solo fechas) = 'before'/'after'. Más `boards` (scope) y condiciones
+# de flag/avanzadas sobre la orden.
+_DATE_BASES = ("due_date", "cancel_date", "final_bill", "ship_by")
+_TIME_KEYS = {"basis", "amount", "unit", "direction", "advanced"}
+
+
+def _parse_dt(v):
+    """ISO datetime o 'YYYY-MM-DD' -> datetime UTC aware, o None."""
+    if not v:
+        return None
+    s = str(v).strip()
+    try:
+        if len(s) == 10 and s[4:5] == "-":
+            return datetime.strptime(s, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+        return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+    except Exception:
+        return None
+
+
+def time_rule_due(cond: dict, order: dict, now) -> bool:
+    """¿La orden cumple el umbral de tiempo de la regla ahora? Elapsed para
+    status_at/updated/created (now-ts >= umbral); fechas: 'before' (now >= due-umbral)
+    o 'after' (now >= due+umbral)."""
+    from datetime import timedelta
+    basis = cond.get("basis") or "production_status_at"
+    amount = _num(cond.get("amount")) or 0
+    unit = (cond.get("unit") or "days").strip().lower()
+    delta = timedelta(hours=amount) if unit == "hours" else timedelta(days=amount)
+    ts = _parse_dt(order.get(basis))
+    if ts is None:
+        return False
+    if basis in _DATE_BASES:
+        direction = (cond.get("direction") or "after").strip().lower()
+        return now >= (ts - delta) if direction == "before" else now >= (ts + delta)
+    return (now - ts) >= delta
+
+
+def time_conditions_ok(cond: dict, order: dict) -> bool:
+    """Condiciones (flags plano + avanzadas) de una regla de tiempo — ESTRICTAS:
+    un flag ausente NO casa (se quiere apuntar a órdenes concretas)."""
+    for k, v in cond.items():
+        if k in _TIME_KEYS or not v:
+            continue
+        if not _values_match(order.get(k), v):
+            return False
+    return _advanced_match(cond, order)
+
+
 # ── GUARDAS / VALIDACIONES (Fase 2) ──────────────────────────────────────────
 # Reglas que BLOQUEAN un cambio de status o de tablero hasta que se cumple un
 # requisito (foto de evidencia, campo lleno, otro badge en estado X). A
