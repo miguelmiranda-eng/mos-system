@@ -12,7 +12,8 @@ const TRIGGER_LABELS = {
   create: 'Nueva Orden',
   move: 'Movimiento de Tablero',
   update: 'Actualización',
-  status_change: 'Cambio de Estado'
+  status_change: 'Cambio de Estado',
+  guard: 'Guarda / Validación (bloquea)'
 };
 
 const ACTION_LABELS = {
@@ -20,7 +21,15 @@ const ACTION_LABELS = {
   change_status: 'Cambio de Estado',
   send_email: 'Enviar Email',
   assign_field: 'Asignar Campo',
-  notify_slack: 'Notificar Slack'
+  notify_slack: 'Notificar Slack',
+  require: 'Requerir (bloquear el cambio)'
+};
+
+// Requisitos que una guarda puede exigir antes de dejar pasar el cambio.
+const REQUIREMENT_LABELS = {
+  photo: 'Foto de evidencia adjunta',
+  field: 'Un campo debe estar lleno',
+  flag: 'Otro badge en cierto estado',
 };
 
 // "Campo a observar": todas las columnas del tablero (default + personalizadas),
@@ -91,9 +100,12 @@ const AutomationCenter = () => {
   // columna de la orden tiene cierto valor. Se persiste como clave extra en
   // trigger_conditions ({cliente: "X"}) — el backend ya evalúa esas claves.
   const RESERVED_COND_KEYS = ['watch_field', 'watch_value', 'from_board', 'to_board'];
+  // Llaves propias de las guardas: tampoco son la "condición extra" (el flag).
+  const GUARD_COND_KEYS = ['on', 'to_status', 'to_board'];
   const [extraCond, setExtraCond] = useState({ enabled: false, field: '', value: '' });
   const deriveExtraCond = (conds = {}) => {
-    const key = Object.keys(conds).find(k => !RESERVED_COND_KEYS.includes(k) && conds[k]);
+    const skip = [...RESERVED_COND_KEYS, ...GUARD_COND_KEYS];
+    const key = Object.keys(conds).find(k => !skip.includes(k) && conds[k]);
     return key ? { enabled: true, field: key, value: conds[key] } : { enabled: false, field: '', value: '' };
   };
 
@@ -134,6 +146,16 @@ const AutomationCenter = () => {
   // Helper to safely get the trigger condition string
   const getTriggerCondString = (conds) => {
     if (!conds) return t('auto_any_change');
+    // Guarda: resumen propio (on / to_status / to_board / condición de flag).
+    if (conds.on) {
+      const gp = [conds.on === 'move' ? 'al mover de tablero' : 'al cambiar el status'];
+      if (conds.on === 'status_change' && conds.to_status) gp.push(`hacia "${conds.to_status}"`);
+      if (conds.on === 'move' && conds.to_board) gp.push(`hacia "${conds.to_board}"`);
+      Object.keys(conds)
+        .filter(k => !['on', 'to_status', 'to_board', 'watch_field', 'watch_value'].includes(k) && conds[k])
+        .forEach(k => gp.push(`si ${fieldLabel(k)} = ${conds[k]}`));
+      return gp.join(' · ');
+    }
     const parts = [];
     if (conds.watch_field && conds.watch_value) {
       if (conds.watch_value === 'date_updated') parts.push(t('auto_any_change_in', { field: fieldLabel(conds.watch_field) }));
@@ -153,6 +175,14 @@ const AutomationCenter = () => {
 
   const getActionParamString = (type, params) => {
     if (!params) return '';
+    if (type === 'require') {
+      const req = params.requirement;
+      const base = req === 'photo' ? 'requiere foto de evidencia adjunta'
+        : req === 'field' ? `requiere que "${fieldLabel(params.field) || params.field || '?'}" esté lleno`
+        : req === 'flag' ? `requiere ${fieldLabel(params.field) || params.field || '?'} = ${params.value || '?'}`
+        : 'requisito';
+      return params.message ? `${base} — "${params.message}"` : base;
+    }
     if (type === 'move_board') return t('auto_to_board', { board: params.target_board || '?' });
     if (type === 'change_status') return t('auto_change_to', { field: params.field || '?', value: params.value || '?' });
     if (type === 'send_email') return t('auto_to_email', { email: params.to_email || '?' });
@@ -263,7 +293,12 @@ const AutomationCenter = () => {
       // Reconstruir la condición adicional: limpiar cualquier clave extra vieja
       // y escribir la vigente solo si está activa y completa.
       const conds = { ...(currentAuto.trigger_conditions || {}) };
-      Object.keys(conds).forEach(k => { if (!RESERVED_COND_KEYS.includes(k)) delete conds[k]; });
+      // Las guardas guardan on/to_status/to_board en trigger_conditions; no son
+      // "condición extra" y no se deben borrar al reconstruir.
+      const keepKeys = currentAuto.trigger_type === 'guard'
+        ? [...RESERVED_COND_KEYS, 'on', 'to_status', 'to_board']
+        : RESERVED_COND_KEYS;
+      Object.keys(conds).forEach(k => { if (!keepKeys.includes(k)) delete conds[k]; });
       if (extraCond.enabled && extraCond.field && String(extraCond.value).trim() !== '') {
         conds[extraCond.field] = extraCond.value;
       }
@@ -328,9 +363,24 @@ const AutomationCenter = () => {
 
           <div className="w-full max-w-lg space-y-4">
             <label className="block text-sm font-bold text-muted-foreground uppercase tracking-widest">{t('auto_trigger_type')}</label>
-            <select 
+            <select
               value={currentAuto.trigger_type}
-              onChange={e => setCurrentAuto({...currentAuto, trigger_type: e.target.value})}
+              onChange={e => {
+                const tt = e.target.value;
+                if (tt === 'guard') {
+                  // Guarda: cambia el vocabulario a on/requisito. Semilla mínima.
+                  setExtraCond({ enabled: false, field: '', value: '' });
+                  setCurrentAuto({ ...currentAuto, trigger_type: 'guard', action_type: 'require',
+                    trigger_conditions: { on: 'status_change', to_status: '', to_board: '' },
+                    action_params: { requirement: 'photo', message: '' } });
+                } else {
+                  // Volver de guarda a una regla normal: restablece acción por defecto.
+                  const wasGuard = currentAuto.trigger_type === 'guard';
+                  setCurrentAuto({ ...currentAuto, trigger_type: tt,
+                    ...(wasGuard ? { action_type: 'move_board', action_params: {},
+                                     trigger_conditions: { watch_field: '', watch_value: '' } } : {}) });
+                }
+              }}
               className="w-full bg-secondary/50 border border-border p-3 rounded-xl text-foreground"
             >
               {Object.entries(TRIGGER_LABELS).map(([k, v]) => (
@@ -498,8 +548,72 @@ const AutomationCenter = () => {
               </div>
             )}
 
+            {currentAuto.trigger_type === 'guard' && (
+              <div className="p-4 border border-rose-500/20 bg-rose-500/5 rounded-xl space-y-4">
+                <label className="block text-sm font-bold text-muted-foreground uppercase tracking-widest">¿Qué intento bloquear?</label>
+                <select
+                  value={currentAuto.trigger_conditions.on || 'status_change'}
+                  onChange={e => setCurrentAuto({ ...currentAuto, trigger_conditions: { ...currentAuto.trigger_conditions, on: e.target.value, to_status: '', to_board: '' } })}
+                  className="w-full bg-secondary/50 border border-border p-2 rounded-lg text-sm text-foreground"
+                >
+                  <option value="status_change">Al cambiar el status</option>
+                  <option value="move">Al mover de tablero</option>
+                </select>
+                {(currentAuto.trigger_conditions.on || 'status_change') === 'status_change' && (
+                  <div>
+                    <span className="text-xs text-muted-foreground mb-1 block">Solo hacia el status (opcional)</span>
+                    <select
+                      value={currentAuto.trigger_conditions.to_status || ''}
+                      onChange={e => setCurrentAuto({ ...currentAuto, trigger_conditions: { ...currentAuto.trigger_conditions, to_status: e.target.value } })}
+                      className="w-full bg-secondary/50 border border-border p-2 rounded-lg text-sm text-foreground"
+                    >
+                      <option value="">Cualquier status</option>
+                      {(options.production_statuses || []).map(s => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                  </div>
+                )}
+                {currentAuto.trigger_conditions.on === 'move' && (
+                  <div>
+                    <span className="text-xs text-muted-foreground mb-1 block">Solo hacia el tablero (opcional)</span>
+                    <select
+                      value={currentAuto.trigger_conditions.to_board || ''}
+                      onChange={e => setCurrentAuto({ ...currentAuto, trigger_conditions: { ...currentAuto.trigger_conditions, to_board: e.target.value } })}
+                      className="w-full bg-secondary/50 border border-border p-2 rounded-lg text-sm text-foreground"
+                    >
+                      <option value="">Cualquier tablero</option>
+                      {(options.boards || BOARDS).map(b => <option key={b} value={b}>{b}</option>)}
+                    </select>
+                  </div>
+                )}
+                {/* Condición opcional (flag): la guarda solo aplica si además esto casa. */}
+                <div className="border-t border-border/50 pt-3 space-y-3">
+                  <label className="flex items-center gap-2 cursor-pointer select-none">
+                    <input type="checkbox" checked={extraCond.enabled} onChange={e => setExtraCond({ ...extraCond, enabled: e.target.checked })} className="w-4 h-4 accent-rose-500" />
+                    <span className="text-sm font-bold text-muted-foreground uppercase tracking-widest">Solo si (condición)</span>
+                  </label>
+                  {extraCond.enabled && (
+                    <div className="grid grid-cols-2 gap-4">
+                      <select value={extraCond.field} onChange={e => setExtraCond({ ...extraCond, field: e.target.value, value: '' })} className="w-full bg-secondary/50 border border-border p-2 rounded-lg text-sm text-foreground">
+                        <option value="">{t('auto_select_dash')}</option>
+                        {watchFields.map(f => <option key={f.key} value={f.key}>{f.label}</option>)}
+                      </select>
+                      {getValueOptions(extraCond.field) ? (
+                        <select value={extraCond.value} onChange={e => setExtraCond({ ...extraCond, value: e.target.value })} className="w-full bg-secondary/50 border border-border p-2 rounded-lg text-sm text-foreground">
+                          <option value="">{t('auto_select_dash')}</option>
+                          {getValueOptions(extraCond.field).map(v => <option key={v} value={v}>{v}</option>)}
+                        </select>
+                      ) : (
+                        <input type="text" value={extraCond.value} onChange={e => setExtraCond({ ...extraCond, value: e.target.value })} className="w-full bg-secondary/50 border border-border p-2 rounded-lg text-sm text-foreground" placeholder={t('auto_extra_value_placeholder')} />
+                      )}
+                    </div>
+                  )}
+                  <p className="text-[10px] text-muted-foreground italic">Ej. Sample (playerita) = SI: la guarda solo bloquea las órdenes que llevan muestra.</p>
+                </div>
+              </div>
+            )}
+
             <label className="block text-sm font-bold text-muted-foreground uppercase tracking-widest pt-4">{t('auto_boards_apply')}</label>
-            <select 
+            <select
               multiple
               value={currentAuto.boards || []}
               onChange={e => {
@@ -535,13 +649,64 @@ const AutomationCenter = () => {
           </div>
 
           <div className="w-full max-w-lg space-y-4">
+            {currentAuto.trigger_type === 'guard' && (
+              <>
+                <label className="block text-sm font-bold text-muted-foreground uppercase tracking-widest">Requisito para permitir el cambio</label>
+                <select
+                  value={currentAuto.action_params.requirement || 'photo'}
+                  onChange={e => setCurrentAuto({ ...currentAuto, action_params: { ...currentAuto.action_params, requirement: e.target.value, field: '', value: '' } })}
+                  className="w-full bg-secondary/50 border border-border p-3 rounded-xl text-foreground"
+                >
+                  {Object.entries(REQUIREMENT_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                </select>
+                <div className="p-4 border border-rose-500/20 bg-rose-500/5 rounded-xl space-y-4">
+                  {currentAuto.action_params.requirement === 'field' && (
+                    <div>
+                      <span className="text-xs text-muted-foreground mb-1 block">Campo que debe estar lleno</span>
+                      <select value={currentAuto.action_params.field || ''} onChange={e => setCurrentAuto({ ...currentAuto, action_params: { ...currentAuto.action_params, field: e.target.value } })} className="w-full bg-secondary/50 border border-border p-2 rounded-lg text-sm text-foreground">
+                        <option value="">{t('auto_select_dash')}</option>
+                        {watchFields.map(f => <option key={f.key} value={f.key}>{f.label}</option>)}
+                      </select>
+                    </div>
+                  )}
+                  {currentAuto.action_params.requirement === 'flag' && (
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <span className="text-xs text-muted-foreground mb-1 block">Badge / campo</span>
+                        <select value={currentAuto.action_params.field || ''} onChange={e => setCurrentAuto({ ...currentAuto, action_params: { ...currentAuto.action_params, field: e.target.value, value: '' } })} className="w-full bg-secondary/50 border border-border p-2 rounded-lg text-sm text-foreground">
+                          <option value="">{t('auto_select_dash')}</option>
+                          {watchFields.map(f => <option key={f.key} value={f.key}>{f.label}</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <span className="text-xs text-muted-foreground mb-1 block">Debe estar en</span>
+                        {getValueOptions(currentAuto.action_params.field) ? (
+                          <select value={currentAuto.action_params.value || ''} onChange={e => setCurrentAuto({ ...currentAuto, action_params: { ...currentAuto.action_params, value: e.target.value } })} className="w-full bg-secondary/50 border border-border p-2 rounded-lg text-sm text-foreground">
+                            <option value="">{t('auto_select_dash')}</option>
+                            {getValueOptions(currentAuto.action_params.field).map(v => <option key={v} value={v}>{v}</option>)}
+                          </select>
+                        ) : (
+                          <input type="text" value={currentAuto.action_params.value || ''} onChange={e => setCurrentAuto({ ...currentAuto, action_params: { ...currentAuto.action_params, value: e.target.value } })} className="w-full bg-secondary/50 border border-border p-2 rounded-lg text-sm text-foreground" placeholder={t('auto_value_placeholder')} />
+                        )}
+                      </div>
+                    </div>
+                  )}
+                  <div>
+                    <span className="text-xs text-muted-foreground mb-1 block">Mensaje al bloquear</span>
+                    <input type="text" value={currentAuto.action_params.message || ''} onChange={e => setCurrentAuto({ ...currentAuto, action_params: { ...currentAuto.action_params, message: e.target.value } })} className="w-full bg-secondary/50 border border-border p-2 rounded-lg text-sm text-foreground" placeholder="Ej. Sube una foto de evidencia antes de cambiar el status." />
+                  </div>
+                </div>
+              </>
+            )}
+
+            {currentAuto.trigger_type !== 'guard' && (<>
             <label className="block text-sm font-bold text-muted-foreground uppercase tracking-widest">{t('auto_action_type')}</label>
-            <select 
+            <select
               value={currentAuto.action_type}
               onChange={e => setCurrentAuto({...currentAuto, action_type: e.target.value})}
               className="w-full bg-secondary/50 border border-border p-3 rounded-xl text-foreground"
             >
-              {Object.entries(ACTION_LABELS).map(([k, v]) => (
+              {Object.entries(ACTION_LABELS).filter(([k]) => k !== 'require').map(([k, v]) => (
                 <option key={k} value={k}>{v}</option>
               ))}
             </select>
@@ -624,6 +789,7 @@ const AutomationCenter = () => {
                 </div>
               )}
             </div>
+            </>)}
 
             <div className="flex justify-between pt-6">
               <button onClick={() => setWizardStep(1)} className="bg-secondary text-foreground px-6 py-2 rounded-xl font-bold flex items-center hover:bg-secondary/80">
