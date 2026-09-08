@@ -5,7 +5,7 @@ import {
   ArrowLeft, Pencil, Trash2, CheckCircle2, XCircle, AlertCircle,
   ClipboardList, BadgeX, Camera, Image as ImageIcon,
   Link2, Bell, Download, BarChart2, ChevronLeft, ChevronRight,
-  History, Clock, Lock, LockOpen, Tag, MessageSquare, LogOut,
+  History, Clock, Lock, LockOpen, Tag, MessageSquare, LogOut, Shirt,
 } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, Cell,
@@ -18,6 +18,7 @@ import { cn } from '../lib/utils';
 import { toast } from 'sonner';
 import { Toaster } from 'sonner';
 import { CommentsModal } from './dashboard/CommentsModal';
+import SampleEvidenceModal from './SampleEvidenceModal';
 import QCInspectionsTab from './QCInspectionsTab';
 import QCInspectionModal from './QCInspectionModal';
 import { mapPool } from '../lib/uploadPool';
@@ -954,6 +955,7 @@ export default function QCDashboard() {
   const [newStatus, setNewStatus] = useState('');
   const [savingStatus, setSavingStatus] = useState(false);
   const [commentsOrder, setCommentsOrder] = useState(null);
+  const [evidenceOrder, setEvidenceOrder] = useState(null);  // modal de evidencia de sample
 
   // Global order search (like the main dashboard bar) — searches ALL orders
   // via /orders?search= and lists matches so the inspector can act on any order,
@@ -1413,6 +1415,11 @@ export default function QCDashboard() {
                                   <Tag className="w-3 h-3" /> {t('qc_status')}
                                 </button>
                               )}
+                              <button onClick={() => setEvidenceOrder(order)}
+                                className={cn("p-1.5 rounded-lg transition-colors", order.sample_printavo === 'SI' ? "text-violet-500 hover:bg-violet-500/10" : (isDark ? "hover:bg-white/10 text-white/40 hover:text-white" : "hover:bg-slate-100 text-slate-400 hover:text-slate-700"))}
+                                title="Evidencia de sample (playerita)">
+                                <Shirt className="w-3.5 h-3.5" />
+                              </button>
                               <button onClick={() => setCommentsOrder(order)}
                                 className={cn("p-1.5 rounded-lg transition-colors", isDark ? "hover:bg-white/10 text-white/50 hover:text-white" : "hover:bg-slate-100 text-slate-400 hover:text-slate-700")}
                                 title={t('comments')}>
@@ -1566,6 +1573,11 @@ export default function QCDashboard() {
                                   <Tag className="w-3 h-3" /> {t('qc_change_status')}
                                 </button>
                               )}
+                              <button onClick={() => setEvidenceOrder(order)}
+                                className={cn("p-1.5 rounded-lg transition-colors", order.sample_printavo === 'SI' ? "text-violet-500 hover:bg-violet-500/10" : (isDark ? "hover:bg-white/10 text-white/40 hover:text-white" : "hover:bg-slate-100 text-slate-400 hover:text-slate-700"))}
+                                title="Evidencia de sample (playerita)">
+                                <Shirt className="w-3.5 h-3.5" />
+                              </button>
                               <button onClick={() => setCommentsOrder(order)}
                                 className={cn("p-1.5 rounded-lg transition-colors relative", isDark ? "hover:bg-white/10 text-white/50 hover:text-white" : "hover:bg-slate-100 text-slate-400 hover:text-slate-700")}
                                 title={t('comments')}>
@@ -1696,6 +1708,8 @@ export default function QCDashboard() {
         onClose={() => setCommentsOrder(null)}
         currentUser={currentUser}
       />
+
+      {evidenceOrder && <SampleEvidenceModal order={evidenceOrder} onClose={() => setEvidenceOrder(null)} />}
 
       {statusEditOrder && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" onClick={() => !savingStatus && setStatusEditOrder(null)}>
