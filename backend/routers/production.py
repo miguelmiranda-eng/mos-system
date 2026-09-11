@@ -1072,7 +1072,13 @@ async def _compute_production_analytics(preset, date_from, date_to, machine, ope
     ]
 
     # Distinct filters
-    distinct_machines = sorted([m["machine"] for m in machines_data if m["machine"] != "?"])
+    # Filtro de máquinas: TODAS las reales (tableros MAQUINA<n>) más las que
+    # tengan capturas en el periodo aunque ya no existan como tablero, en
+    # orden numérico. Antes solo salían las que habían capturado.
+    from deps import machine_number
+    distinct_machines = sorted(
+        set(await get_machines()) | {m["machine"] for m in machines_data if m["machine"] != "?"},
+        key=lambda n: (machine_number(n) == 0, machine_number(n), n))
     distinct_operators = sorted([o["operator"] for o in operators_data if o["operator"] != "?"])
     distinct_clients = sorted([c["client"] for c in clients_data if c["client"] != "Sin cliente"])
 

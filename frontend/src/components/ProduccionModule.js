@@ -9,7 +9,7 @@ import * as Popover from "@radix-ui/react-popover";
 import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Cell,
 } from "recharts";
-import { API } from "../lib/constants";
+import { API, machineNumber } from "../lib/constants";
 import { useTheme } from "../contexts/ThemeContext";
 import { useLang } from "../contexts/LanguageContext";
 import { useAuth } from "../App";
@@ -28,6 +28,15 @@ import { useAuth } from "../App";
 
 const PALETTE = ["#3b82f6", "#22c55e", "#eab308", "#8b5cf6", "#06b6d4", "#f97316", "#ec4899", "#14b8a6"];
 const fmtInt = (n) => (Number(n) || 0).toLocaleString("es-MX");
+// Máquinas a mostrar en las gráficas: TODAS las reales (plan de capacidad,
+// que sale de los tableros MAQUINA<n>) más cualquiera que tenga capturas en
+// el periodo aunque ya no exista como tablero, en orden numérico. Sin esto
+// una máquina nueva sin capturas (o una parada) no aparecía en Hora x Hora
+// ni en la gráfica por máquina, y parecía que el sistema no la conocía.
+const allMachines = (cap, withData = []) => {
+  const set = new Set([...(cap?.machines || []).map(m => m.machine), ...withData]);
+  return [...set].filter(Boolean).sort((x, y) => machineNumber(x) - machineNumber(y));
+};
 
 const PERIODS = [
   { id: "today", label: "Hoy" },
@@ -320,7 +329,7 @@ export default function ProduccionModule() {
                 canEditGoal={canEditGoal} onGoalSaved={() => load(true)} />
             )}
             {tab === "maquinas" && <MaquinasTab a={analytics} cap={capacity} chart={chartProps} />}
-            {tab === "horas" && <HoraPorHoraTab a={analytics} multiDay={!singleDay} chart={chartProps} />}
+            {tab === "horas" && <HoraPorHoraTab a={analytics} cap={capacity} multiDay={!singleDay} chart={chartProps} />}
             {tab === "empaque" && <EmpaqueTab a={analytics} boards={boards} />}
             {tab === "ordenes" && <OrdenesTab a={analytics} />}
             {tab === "operadores" && <OperadoresTab a={analytics} />}
@@ -667,10 +676,16 @@ function GeneralTab({ a, trend, singleDay, chart, goalDate = "default", canEditG
 
 function MaquinasTab({ a, cap, chart }) {
   const { t } = useLang();
-  const byMachine = (a?.by_machine || [])
-    .filter(m => (m._id || m.machine) && (m._id || m.machine) !== "?")
-    .map(m => ({ label: (m._id || m.machine).replace("MAQUINA", "M"), produced: m.produced, count: m.count }))
-    .sort((x, y) => y.produced - x.produced);
+  const producedBy = {};
+  (a?.by_machine || []).forEach(m => {
+    const name = m._id || m.machine;
+    if (name && name !== "?") producedBy[name] = { produced: m.produced, count: m.count };
+  });
+  // Todas las máquinas reales, con 0 las que no capturaron en el periodo;
+  // ordenadas por producido y las paradas al final en orden numérico.
+  const byMachine = allMachines(cap, Object.keys(producedBy))
+    .map(name => ({ label: name.replace("MAQUINA", "M"), produced: producedBy[name]?.produced || 0, count: producedBy[name]?.count || 0, n: machineNumber(name) }))
+    .sort((x, y) => (y.produced - x.produced) || (x.n - y.n));
   const machines = cap?.machines || [];
 
   // Tarjeta de carga de una máquina — se renderiza igual en la variante
@@ -838,7 +853,7 @@ const T1_HOURS = [7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18];
 const T2_HOURS = [19, 20, 21, 22, 23, 0, 1, 2, 3, 4, 5, 6];
 const isT1 = (h) => h >= 7 && h <= 18;
 
-function HoraPorHoraTab({ a, multiDay, chart }) {
+function HoraPorHoraTab({ a, cap, multiDay, chart }) {
   const { t } = useLang();
   const [modo, setModo] = useState("grafica");
   const matrix = useMemo(() => {
@@ -857,10 +872,9 @@ function HoraPorHoraTab({ a, multiDay, chart }) {
       grandTotal += r.produced;
       maxCell = Math.max(maxCell, cells[k]);
     });
-    const machines = [...machineSet].sort((x, y) =>
-      (parseInt(x.replace(/\D/g, ""), 10) || 0) - (parseInt(y.replace(/\D/g, ""), 10) || 0));
+    const machines = allMachines(cap, [...machineSet]);
     return { machines, cells, rowTotals, colTotals, t1Totals, t2Totals, t1Grand, t2Grand, grandTotal, maxCell };
-  }, [a]);
+  }, [a, cap]);
 
   const { machines, cells, rowTotals, colTotals, t1Totals, t2Totals, t1Grand, t2Grand, grandTotal, maxCell } = matrix;
   const hh = (h) => `${String(h).padStart(2, "0")}h`;
@@ -869,7 +883,7 @@ function HoraPorHoraTab({ a, multiDay, chart }) {
   // Serie global por hora en orden de turno, para la gráfica de ritmo.
   const hourSeries = allHours.map(h => ({ label: hh(h), produced: colTotals[h] || 0, t1: isT1(h) }));
 
-  if (machines.length === 0) {
+  if (machines.length === 0 || grandTotal === 0) {
     return <div className="text-sm text-muted-foreground py-16 text-center">{t("prod_no_captures_period")}</div>;
   }
 
