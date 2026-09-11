@@ -1,24 +1,19 @@
-import { useState, useRef } from "react";
+import { useState } from "react";
 import { Pin, PinOff, Pencil, Trash2 } from "lucide-react";
 import { CommentContent } from "./CommentContent";
 import { canModifyComment } from "./roles";
 import { useLang } from "../../../contexts/LanguageContext";
 
-const EMOJI_LIST = ["👍", "❤️", "😂", "😮", "😢", "🔥"];
-
 // Un comentario del hilo (y sus respuestas, recursivamente). Mantiene su propio
-// estado de edición y de hover del selector de reacciones — antes vivían
-// levantados en el modal, lo que hacía que editar uno ocultara la barra de
-// acciones de TODOS. Las mutaciones llegan por callbacks del hook useComments.
+// estado de edición — antes vivía levantado en el modal, lo que hacía que
+// editar uno ocultara la barra de acciones de TODOS. Las mutaciones llegan por
+// callbacks del hook useComments. Las reacciones con emoji se retiraron
+// (pedido 2026-09-11); las guardadas en comentarios viejos ya no se muestran.
 export function CommentItem({ comment, repliesMap, isReply = false, currentUser, isAdmin, actions }) {
   const { t } = useLang();
   const [editing, setEditing] = useState(false);
   const [editContent, setEditContent] = useState("");
   const [editLoading, setEditLoading] = useState(false);
-  const [reactionOpen, setReactionOpen] = useState(false);
-  const reactionTimeout = useRef(null);
-
-  const reactions = comment.reactions || {};
   const isPinned = comment.pinned === true;
   const canModify = canModifyComment(comment, currentUser);
   const replies = repliesMap[comment.comment_id] || [];
@@ -140,40 +135,7 @@ export function CommentItem({ comment, repliesMap, isReply = false, currentUser,
 
       {/* Barra de acciones */}
       {!editing && (
-        <div className="flex items-center gap-4 mt-2 border-t border-border/10 pt-2 relative">
-          <div
-            className="flex items-center gap-1 h-8 relative"
-            onMouseEnter={() => {
-              if (reactionTimeout.current) clearTimeout(reactionTimeout.current);
-              setReactionOpen(true);
-            }}
-            onMouseLeave={() => {
-              reactionTimeout.current = setTimeout(() => setReactionOpen(false), 200);
-            }}
-          >
-            <button className="text-[10px] font-bold text-muted-foreground hover:text-primary transition-colors">
-              {t('comment_react')}
-            </button>
-            {reactionOpen && (
-              <div className="absolute bottom-full left-0 pb-3 flex animate-in fade-in slide-in-from-bottom-2 duration-200 z-50">
-                <div className="bg-popover border border-border rounded-full p-1.5 shadow-2xl flex gap-2 px-3">
-                  {EMOJI_LIST.map((emoji) => (
-                    <button
-                      key={emoji}
-                      onClick={() => {
-                        actions.onReact(comment.comment_id, emoji);
-                        setReactionOpen(false);
-                      }}
-                      className="text-3xl hover:scale-125 transition-transform duration-200 p-1 active:scale-95"
-                    >
-                      {emoji}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-
+        <div className="flex items-center gap-4 mt-2 border-t border-border/10 pt-2 min-h-[32px]">
           {!isReply && (
             <button
               onClick={() => actions.onReply(comment)}
@@ -183,26 +145,6 @@ export function CommentItem({ comment, repliesMap, isReply = false, currentUser,
             </button>
           )}
 
-          <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
-            {Object.entries(reactions).map(([emoji, ids]) => {
-              const hasReacted = ids.map((id) => String(id)).includes(String(currentUser?.user_id));
-              return (
-                <button
-                  key={emoji}
-                  onClick={() => actions.onReact(comment.comment_id, emoji)}
-                  className={`flex items-center gap-1 px-1.5 py-0.5 rounded-full border text-[11px] font-bold transition-all shadow-sm active:scale-95 ${
-                    hasReacted
-                      ? "bg-primary/20 border-primary/40 text-primary"
-                      : "bg-secondary/40 border-border/50 hover:border-border text-muted-foreground"
-                  }`}
-                  title={ids.length > 1 ? t('comment_people', { n: ids.length }) : t('comment_one_person')}
-                >
-                  <span className="text-sm">{emoji}</span>
-                  {ids.length > 0 && <span className="font-mono">{ids.length}</span>}
-                </button>
-              );
-            })}
-          </div>
         </div>
       )}
 

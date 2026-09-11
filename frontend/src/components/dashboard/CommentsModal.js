@@ -25,11 +25,10 @@ export const CommentsModal = ({ order, isOpen, onClose, currentUser }) => {
     editComment,
     deleteComment,
     pinComment,
-    reactToComment,
     addLink,
     deleteLink,
     users,
-  } = useComments(order, isOpen, currentUser);
+  } = useComments(order, isOpen);
 
   // Borrador controlado aquí para que la guardia de cierre pueda avisar de
   // texto/adjuntos sin enviar.
@@ -102,7 +101,6 @@ export const CommentsModal = ({ order, isOpen, onClose, currentUser }) => {
   const isAdmin = canModerate(currentUser);
   const actions = {
     onReply: (c) => setReplyingTo(c),
-    onReact: reactToComment,
     onPin: pinComment,
     onEditSave: editComment,
     onDelete: deleteComment,

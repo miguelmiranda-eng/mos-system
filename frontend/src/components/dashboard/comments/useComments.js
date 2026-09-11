@@ -8,7 +8,7 @@ import { useLang } from "../../../contexts/LanguageContext";
 // users) + las mutaciones contra la API. Los sub-componentes solo consumen las
 // acciones que devuelve este hook; nadie más hace fetch. Se refresca solo al
 // abrir el modal sobre una orden.
-export function useComments(order, isOpen, currentUser) {
+export function useComments(order, isOpen) {
   const { t } = useLang();
   const [comments, setComments] = useState([]);
   const [links, setLinks] = useState([]);
@@ -176,53 +176,6 @@ export function useComments(order, isOpen, currentUser) {
     }
   };
 
-  const reactToComment = async (commentId, emoji) => {
-    if (!currentUser) return toast.error(t('comment_login_to_react'));
-
-    // Optimista
-    const userId = String(currentUser.user_id);
-    setComments((prev) =>
-      prev.map((c) => {
-        if (c.comment_id !== commentId) return c;
-        const reactions = { ...(c.reactions || {}) };
-        const reacted = (reactions[emoji] || []).map((id) => String(id));
-        if (reacted.includes(userId)) {
-          reactions[emoji] = reacted.filter((id) => id !== userId);
-          if (reactions[emoji].length === 0) delete reactions[emoji];
-        } else {
-          reactions[emoji] = [...reacted, userId];
-        }
-        return { ...c, reactions };
-      })
-    );
-
-    try {
-      const res = await fetch(`${API}/orders/${orderId}/comments/${commentId}/react`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ emoji }),
-      });
-      if (!res.ok) {
-        const errorData = await res.json().catch(() => ({}));
-        throw new Error(errorData.detail || t('dash_server_error'));
-      }
-      // Sincroniza en silencio con lo confirmado por el servidor
-      const data = await res.json();
-      setComments((prev) =>
-        prev.map((c) => (c.comment_id === commentId ? { ...c, reactions: data.reactions } : c))
-      );
-      if (data.action === "added") {
-        toast.success(t('comment_reacted', { emoji }), { icon: emoji, duration: 1500 });
-      } else {
-        toast.info(t('comment_unreacted', { emoji }), { duration: 1500 });
-      }
-    } catch (err) {
-      toast.error(err.message || t('comment_react_err'));
-      fetchComments(); // revierte al estado del servidor
-    }
-  };
-
   const addLink = async (url, description) => {
     if (!url.trim()) return false;
     try {
@@ -266,7 +219,6 @@ export function useComments(order, isOpen, currentUser) {
     editComment,
     deleteComment,
     pinComment,
-    reactToComment,
     addLink,
     deleteLink,
   };
