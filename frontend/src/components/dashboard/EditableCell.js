@@ -183,8 +183,8 @@ const EditableCellBase = ({ value, field, orderId, options, groupConfig, onUpdat
   if (isEditing) {
     if (options && options.length > 0) {
       return (
-        <div className="min-w-[150px]">
-          <SearchableSelect 
+        <div className="w-full min-w-[150px]">
+          <SearchableSelect
             options={options}
             value={editValue}
             onChange={(v) => {
@@ -194,6 +194,9 @@ const EditableCellBase = ({ value, field, orderId, options, groupConfig, onUpdat
             }}
             placeholder="- Seleccionar -"
             allowCreate={true}
+            colorize
+            defaultOpen
+            onOpenChange={(o) => { if (!o) setIsEditing(false); }}
           />
         </div>
       );
@@ -268,7 +271,7 @@ const EditableCellBase = ({ value, field, orderId, options, groupConfig, onUpdat
 
   return (
     <div onClick={() => setIsEditing(true)}
-      className={`cursor-pointer min-h-[32px] flex items-center px-1 hover:bg-secondary/50 rounded transition-colors group ${className}`} title={t('click_to_edit')}>
+      className={`cursor-pointer w-full h-full min-h-[32px] flex items-center px-1 hover:bg-secondary/50 rounded transition-colors group ${className}`} title={t('click_to_edit')}>
       {isSelectField ? <ColoredBadge value={value} isDark={isDark} /> :
        type === 'link' ? <span className="text-muted-foreground text-sm">+ {t('link')}</span> :
        (value ? <span className="text-foreground font-semibold text-base truncate" title={typeof value === 'string' ? value : undefined}>{displayValue(value, type)}</span> : <span className="text-muted-foreground/50">-</span>)}

@@ -2,10 +2,27 @@ import { useState, useRef, useEffect } from "react";
 import { ChevronDown, X, Plus, Search } from "lucide-react";
 import { useLang } from "../contexts/LanguageContext";
 import * as Popover from "@radix-ui/react-popover";
+import { getStatusColor } from "../lib/constants";
 
-export default function SearchableSelect({ options = [], value, onChange, placeholder, allowCreate = true, testId = "", disabled = false }) {
+// Chip con el color del catálogo (STATUS_COLORS). Si el valor no tiene color,
+// se muestra como texto normal: así el desplegable se ve igual que la celda.
+const Chip = ({ value }) => {
+  const c = getStatusColor(value);
+  if (!c) return <span className="truncate">{value}</span>;
+  return (
+    <span className="inline-block max-w-full truncate px-2 py-0.5 rounded text-[11px] font-black uppercase tracking-wide" style={{ backgroundColor: c.bg, color: c.text }}>
+      {value}
+    </span>
+  );
+};
+
+// colorize: pinta valor y opciones con el color del catálogo (celdas del board).
+// defaultOpen: abre la lista al montar (la celda entra en edición con UN clic).
+// onOpenChange: avisa al padre cuando se cierra sin elegir, para salir de edición.
+export default function SearchableSelect({ options = [], value, onChange, placeholder, allowCreate = true, testId = "", disabled = false, colorize = false, defaultOpen = false, onOpenChange }) {
   const { t } = useLang();
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(defaultOpen);
+  useEffect(() => { onOpenChange?.(open); }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
   const [search, setSearch] = useState("");
   const inputRef = useRef(null);
 
@@ -36,8 +53,8 @@ export default function SearchableSelect({ options = [], value, onChange, placeh
           className={`w-full flex items-center justify-between px-3 py-2 bg-secondary/50 border border-border rounded-lg text-sm text-foreground text-left outline-none focus:ring-2 focus:ring-primary/20 transition-all ${disabled ? 'opacity-60 cursor-not-allowed' : 'hover:border-primary/50'}`}
           data-testid={testId}
         >
-          <span className={value ? "text-foreground truncate font-medium" : "text-muted-foreground truncate"}>
-            {value || placeholder || t('select_placeholder')}
+          <span className={`min-w-0 ${value ? "text-foreground truncate font-medium" : "text-muted-foreground truncate"}`}>
+            {value ? (colorize ? <Chip value={value} /> : value) : (placeholder || t('select_placeholder'))}
           </span>
           <div className="flex items-center gap-1 flex-shrink-0">
             {value && (
@@ -107,12 +124,12 @@ export default function SearchableSelect({ options = [], value, onChange, placeh
                 key={opt} 
                 onClick={() => select(opt)}
                 className={`w-full px-3 py-2 text-sm text-left rounded-lg transition-all ${
-                  opt === value 
-                    ? "bg-primary text-primary-foreground font-bold shadow-lg shadow-primary/20" 
+                  opt === value
+                    ? (colorize ? "ring-1 ring-primary bg-primary/10" : "bg-primary text-primary-foreground font-bold shadow-lg shadow-primary/20")
                     : "text-foreground hover:bg-secondary"
                 }`}
               >
-                {opt}
+                {colorize ? <Chip value={opt} /> : opt}
               </button>
             ))}
           </div>
