@@ -710,6 +710,130 @@ def _get_preset_query(preset: str, date_from: str = None, date_to: str = None):
             query["created_at"] = date_q
     return query
 
+# ==================== METAS DE PRODUCCIÓN ====================
+# La meta la captura el gerente desde el tablero de Producción: por día y por
+# turno. Antes la "meta" era la suma de las órdenes en máquinas con capturas
+# en el periodo, y sin capturas quedaba en 0 → eficiencia de 1,013,100 %.
+# Colección production_goals: {date: "YYYY-MM-DD" | "default", day, shifts:
+# {"TURNO 1": n, "TURNO 2": n}, updated_by, updated_at}. El doc "default" es
+# la meta fija que aplica a cualquier día sin captura propia.
+
+GOAL_SHIFTS = ("TURNO 1", "TURNO 2")
+
+
+def _period_local_days(preset, date_from, date_to):
+    """Días locales (Tijuana) que cubre el periodo, como YYYY-MM-DD.
+    Espejo de _get_preset_query: mismos límites, pero en días."""
+    from datetime import date
+    today = datetime.now(_TIJUANA_TZ).date()
+    if preset == "today":
+        d1 = d2 = today
+    elif preset == "yesterday":
+        d1 = d2 = today - timedelta(days=1)
+    elif preset == "week":
+        d1, d2 = today - timedelta(days=7), today
+    elif preset == "month":
+        d1, d2 = today - timedelta(days=30), today
+    else:
+        try:
+            d1 = date.fromisoformat(date_from) if date_from else today
+            d2 = date.fromisoformat(date_to) if date_to else today
+        except ValueError:
+            d1 = d2 = today
+    if d1 > d2:
+        d1, d2 = d2, d1
+    n = min((d2 - d1).days, 366)
+    return [(d1 + timedelta(days=i)).isoformat() for i in range(n + 1)]
+
+
+def _clean_goal(body) -> dict:
+    """Normaliza el cuerpo de una meta: enteros positivos o nada. Si solo
+    vienen turnos, la meta del día es su suma."""
+    def num(v):
+        try:
+            n = int(v)
+        except (TypeError, ValueError):
+            return None
+        return n if n > 0 else None
+    raw_shifts = body.get("shifts") or {}
+    shifts = {s: num(raw_shifts.get(s)) for s in GOAL_SHIFTS}
+    shifts = {k: v for k, v in shifts.items() if v}
+    day = num(body.get("day"))
+    if not day and shifts:
+        day = sum(shifts.values())
+    return {"day": day, "shifts": shifts}
+
+
+async def _goals_for_days(days):
+    """{date: {day, shifts, source}} para los días con meta: la propia del
+    día si existe, si no la fija ("default"). Días sin ninguna no aparecen."""
+    docs = await db.production_goals.find(
+        {"date": {"$in": list(days) + ["default"]}}, {"_id": 0}
+    ).to_list(400)
+    by = {d["date"]: d for d in docs}
+    default = by.get("default")
+    out = {}
+    for d in days:
+        doc = by.get(d)
+        if doc and doc.get("day"):
+            out[d] = {"day": doc["day"], "shifts": doc.get("shifts") or {}, "source": "day"}
+        elif default and default.get("day"):
+            out[d] = {"day": default["day"], "shifts": default.get("shifts") or {}, "source": "default"}
+    return out
+
+
+def _sum_goals(goals):
+    day = sum(g.get("day") or 0 for g in goals.values())
+    shifts = {}
+    for g in goals.values():
+        for s, v in (g.get("shifts") or {}).items():
+            shifts[s] = shifts.get(s, 0) + (v or 0)
+    return day, shifts
+
+
+def _fmt_pct(v):
+    return "—" if v is None else f"{v}%"
+
+
+@router.get("/production-goals")
+async def get_production_goal(request: Request, date: str = None):
+    await require_auth(request)
+    d = date or datetime.now(_TIJUANA_TZ).date().isoformat()
+    goals = await _goals_for_days([d])
+    default = await db.production_goals.find_one({"date": "default"}, {"_id": 0})
+    return {"date": d, "goal": goals.get(d), "default": default}
+
+
+@router.put("/production-goals/{date}")
+async def set_production_goal(date: str, request: Request):
+    """Captura la meta de un día (YYYY-MM-DD) o la fija ("default").
+    Cuerpo: {day, shifts: {"TURNO 1", "TURNO 2"}, apply_as_default}.
+    Sin día ni turnos, borra la meta de esa fecha."""
+    user = await require_admin(request)
+    if date != "default":
+        try:
+            datetime.strptime(date, "%Y-%m-%d")
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Fecha inválida (YYYY-MM-DD)")
+    body = await request.json()
+    g = _clean_goal(body)
+    now = datetime.now(timezone.utc).isoformat()
+    targets = [date] + (["default"] if body.get("apply_as_default") and date != "default" else [])
+    for tgt in targets:
+        if not g["day"]:
+            await db.production_goals.delete_one({"date": tgt})
+        else:
+            await db.production_goals.update_one(
+                {"date": tgt},
+                {"$set": {"date": tgt, "day": g["day"], "shifts": g["shifts"],
+                          "updated_by": user.get("email") or user.get("name"), "updated_at": now}},
+                upsert=True,
+            )
+    invalidate_cache("prod_")   # la analítica cachea la meta junto con lo producido
+    await log_activity(user, "set_production_goal", {"date": date, **g, "targets": targets})
+    return {"date": date, "goal": g if g["day"] else None, "targets": targets}
+
+
 async def _compute_production_analytics(preset, date_from, date_to, machine, operator, client, order_number, shift: str = None):
 
     query = _get_preset_query(preset, date_from, date_to)
@@ -972,10 +1096,33 @@ async def _compute_production_analytics(preset, date_from, date_to, machine, ope
         for d in result.get("by_day", [])
     ]
 
+    # Meta del periodo: suma de la meta de cada día cubierto (propia o fija).
+    # Con filtro de turno, la meta es la de ese turno. Con filtro de máquina,
+    # operador, cliente u orden no hay meta que aplique (la meta es de planta)
+    # y la eficiencia se reporta como None, nunca como un número inventado.
+    goal_days = _period_local_days(preset, date_from, date_to)
+    goals = await _goals_for_days(goal_days)
+    goal_total, goal_shifts = _sum_goals(goals)
+    goal_sources = {g["source"] for g in goals.values()}
+    for sd in shifts_data:
+        gs = goal_shifts.get(sd["shift"])
+        sd["goal"] = gs
+        sd["pct"] = round(sd["produced"] / gs * 100, 1) if gs else None
+    if shift:
+        goal_total = goal_shifts.get(shift) or 0
+    if machine or operator or client or order_number:
+        goal_total = 0
+    efficiency = round(total_produced / goal_total * 100, 1) if goal_total > 0 else None
+
     response_data = {
         "total_produced": total_produced, "total_target": total_target,
         "total_remaining": total_remaining,
-        "efficiency": round(total_produced / max(total_target, 1) * 100, 1),
+        "efficiency": efficiency,
+        "goal": goal_total or None,
+        "goal_remaining": max(goal_total - total_produced, 0) if goal_total else None,
+        "goal_shifts": goal_shifts,
+        "goal_days": len(goal_days), "goal_days_set": len(goals),
+        "goal_source": ("mixed" if len(goal_sources) > 1 else next(iter(goal_sources), None)),
         "avg_setup": int(round(avg_setup)), "total_logs": total_logs,
         "by_machine": machines_data, "by_operator": operators_data,
         "by_shift": shifts_data, "by_client": clients_data,
@@ -1059,10 +1206,15 @@ async def build_production_report(fmt="excel", preset=None, filters=None):
         c = l.get("client", "Sin Cliente")
         by_client[c] = by_client.get(c, 0) + l.get("quantity_produced", 0)
 
+    # Misma meta que el tablero: la capturada por el gerente para los días del
+    # periodo. Sin meta, el reporte imprime "—" en vez de un porcentaje inventado.
+    goal_total, _ = _sum_goals(await _goals_for_days(
+        _period_local_days(preset, filters.get("date_from"), filters.get("date_to"))))
     summary = {
         "total_produced": total_produced,
         "avg_setup": int(round(avg_setup)),
-        "efficiency": round((total_produced / sum(o.get("target", 0) for o in by_po.values())) * 100, 1) if by_po else 0,
+        "goal": goal_total or None,
+        "efficiency": round(total_produced / goal_total * 100, 1) if goal_total > 0 else None,
         "by_po": sorted(list(by_po.values()), key=lambda x: x["produced"], reverse=True),
         "by_machine": sorted([{"machine": k, "produced": v} for k, v in by_machine.items()], key=lambda x: x["produced"], reverse=True),
         "by_client": sorted([{"client": k, "produced": v} for k, v in by_client.items()], key=lambda x: x["produced"], reverse=True)
@@ -1140,7 +1292,7 @@ async def _generate_excel_report(logs, summary, filters):
     
     # Eficiencia Card
     ws_res.write(4, 2, "EFICIENCIA GLOBAL", kpi_label_blue)
-    ws_res.write(5, 2, f"{summary.get('efficiency', 0)}%", kpi_value_blue)
+    ws_res.write(5, 2, _fmt_pct(summary.get('efficiency')), kpi_value_blue)
     
     # Setup Card
     ws_res.write(4, 3, "PROMEDIO SETUP", kpi_label_rose)
@@ -1258,7 +1410,7 @@ async def _generate_pdf_report(logs, summary, filters):
         ],
         [
             Paragraph(f"{summary.get('total_produced', 0):,}", styles['MetricValue']),
-            Paragraph(f"{summary.get('efficiency', 0)}%", styles['MetricValue']),
+            Paragraph(_fmt_pct(summary.get('efficiency')), styles['MetricValue']),
             Paragraph(f"{summary.get('avg_setup', 0)} min", styles['MetricValue'])
         ]
     ]

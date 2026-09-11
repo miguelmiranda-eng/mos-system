@@ -3,14 +3,16 @@ import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import {
   ArrowLeft, RefreshCw, Loader2, Gauge, Cog, Package, ClipboardList, Users,
-  TrendingUp, Target, Clock, Boxes, Activity, Zap, CheckCircle2, AlertTriangle, Tv, X, CalendarDays,
+  TrendingUp, Target, Clock, Boxes, Activity, Zap, CheckCircle2, AlertTriangle, Tv, X, CalendarDays, Pencil,
 } from "lucide-react";
+import * as Popover from "@radix-ui/react-popover";
 import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Cell,
 } from "recharts";
 import { API } from "../lib/constants";
 import { useTheme } from "../contexts/ThemeContext";
 import { useLang } from "../contexts/LanguageContext";
+import { useAuth } from "../App";
 
 // ── Producción — tablero muy visual de la nave. Toda la data sale de endpoints
 // que ya existen: /production-analytics (por hora/turno/máquina/PO, meta y
@@ -64,6 +66,9 @@ export default function ProduccionModule() {
   const { t } = useLang();
   const { theme } = useTheme();
   const isDark = theme === "dark";
+  // La meta la captura el gerente: admin o supersu (el backend exige admin).
+  const { user } = useAuth();
+  const canEditGoal = ["admin", "supersu"].includes(user?.role);
 
   const [period, setPeriod] = useState("today");
   // Rango libre (periodo "custom"). Se ordena de menor a mayor al consultar,
@@ -309,7 +314,11 @@ export default function ProduccionModule() {
           <div className="h-full flex items-center justify-center"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>
         ) : (
           <>
-            {tab === "general" && <GeneralTab a={analytics} trend={trend} singleDay={singleDay} chart={chartProps} />}
+            {tab === "general" && (
+              <GeneralTab a={analytics} trend={trend} singleDay={singleDay} chart={chartProps}
+                goalDate={period === "today" ? isoDay(new Date()) : period === "yesterday" ? daysAgo(1) : (period === "custom" && from === to) ? from : "default"}
+                canEditGoal={canEditGoal} onGoalSaved={() => load(true)} />
+            )}
             {tab === "maquinas" && <MaquinasTab a={analytics} cap={capacity} chart={chartProps} />}
             {tab === "horas" && <HoraPorHoraTab a={analytics} multiDay={!singleDay} chart={chartProps} />}
             {tab === "empaque" && <EmpaqueTab a={analytics} boards={boards} />}
@@ -392,15 +401,100 @@ function FitBox({ children, maxScale = 1.25 }) {
   );
 }
 
-function Kpi({ icon: Icon, label, value, sub, accent = "text-primary" }) {
+function Kpi({ icon: Icon, label, value, sub, accent = "text-primary", action = null, subClass = "text-muted-foreground" }) {
   return (
-    <div className="bg-card border border-border rounded-lg px-3 py-2.5">
+    <div className="bg-card border border-border rounded-lg px-3 py-2.5 relative">
       <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
         <Icon className={`w-4 h-4 ${accent}`} /> {label}
+        {action && <div className="ml-auto">{action}</div>}
       </div>
       <div className="mt-1.5 text-xl md:text-2xl font-semibold tabular-nums leading-none">{value}</div>
-      {sub && <div className="mt-1 text-[11px] text-muted-foreground truncate">{sub}</div>}
+      {sub && <div className={`mt-1 text-[11px] truncate ${subClass}`}>{sub}</div>}
     </div>
+  );
+}
+
+// Editor de la meta (día + turnos). Vive en la tarjeta "Meta del día"; para
+// periodos de varios días edita la meta FIJA ("default"), que aplica a todo
+// día sin meta propia. Guarda con PUT /production-goals/{fecha}.
+function GoalEditor({ date, current, onSaved }) {
+  const { t } = useLang();
+  const [open, setOpen] = useState(false);
+  const [day, setDay] = useState("");
+  const [t1, setT1] = useState("");
+  const [t2, setT2] = useState("");
+  const [asDefault, setAsDefault] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const isDefault = date === "default";
+
+  useEffect(() => {
+    if (!open) return;
+    setDay(current?.day ? String(current.day) : "");
+    setT1(current?.shifts?.["TURNO 1"] ? String(current.shifts["TURNO 1"]) : "");
+    setT2(current?.shifts?.["TURNO 2"] ? String(current.shifts["TURNO 2"]) : "");
+    setAsDefault(false);
+  }, [open, current]);
+
+  const save = async (clear = false) => {
+    setSaving(true);
+    try {
+      const body = clear ? {} : { day: day || null, shifts: { "TURNO 1": t1 || null, "TURNO 2": t2 || null }, apply_as_default: asDefault };
+      const res = await fetch(`${API}/production-goals/${encodeURIComponent(date)}`, {
+        method: "PUT", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+      });
+      if (!res.ok) throw new Error();
+      toast.success(t("prod_goal_saved"));
+      setOpen(false);
+      onSaved?.();
+    } catch { toast.error(t("prod_goal_save_err")); }
+    finally { setSaving(false); }
+  };
+
+  const numInput = (label, val, set, testId) => (
+    <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+      {label}
+      <input type="number" min="0" inputMode="numeric" value={val} onChange={e => set(e.target.value)}
+        className="h-8 px-2 rounded-md bg-secondary border border-border text-sm text-foreground tabular-nums outline-none focus:border-primary"
+        data-testid={testId} />
+    </label>
+  );
+
+  return (
+    <Popover.Root open={open} onOpenChange={setOpen}>
+      <Popover.Trigger asChild>
+        <button type="button" className="p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
+          title={t("prod_goal_edit")} data-testid="goal-edit-btn">
+          <Pencil className="w-3.5 h-3.5" />
+        </button>
+      </Popover.Trigger>
+      <Popover.Portal>
+        <Popover.Content align="end" sideOffset={6} className="z-[1000] w-72 rounded-xl border border-border bg-popover shadow-2xl p-3 space-y-2.5">
+          <div className="text-sm font-semibold">{isDefault ? t("prod_goal_default_title") : t("prod_goal_for_date", { d: date })}</div>
+          {isDefault && <p className="text-[11px] text-muted-foreground leading-snug">{t("prod_goal_multi_hint")}</p>}
+          {numInput(t("prod_goal_day_input"), day, setDay, "goal-day")}
+          <div className="grid grid-cols-2 gap-2">
+            {numInput(t("prod_goal_shift1"), t1, setT1, "goal-t1")}
+            {numInput(t("prod_goal_shift2"), t2, setT2, "goal-t2")}
+          </div>
+          <p className="text-[11px] text-muted-foreground leading-snug">{t("prod_goal_sum_hint")}</p>
+          {!isDefault && (
+            <label className="flex items-start gap-2 text-[11px] text-muted-foreground cursor-pointer">
+              <input type="checkbox" checked={asDefault} onChange={e => setAsDefault(e.target.checked)} className="mt-0.5 accent-primary" />
+              <span>{t("prod_goal_apply_default")}</span>
+            </label>
+          )}
+          <div className="flex items-center gap-2 pt-1">
+            <button type="button" disabled={saving} onClick={() => save(false)}
+              className="flex-1 h-8 rounded-md bg-primary text-primary-foreground text-xs font-bold uppercase tracking-wide disabled:opacity-60"
+              data-testid="goal-save">{t("save")}</button>
+            {current?.day && (
+              <button type="button" disabled={saving} onClick={() => save(true)}
+                className="h-8 px-2 rounded-md border border-border text-xs text-muted-foreground hover:text-destructive hover:border-destructive/50">{t("prod_goal_clear")}</button>
+            )}
+          </div>
+        </Popover.Content>
+      </Popover.Portal>
+    </Popover.Root>
   );
 }
 
@@ -427,15 +521,23 @@ function RankBars({ rows, colorAt }) {
   return (
     <div className="space-y-2">
       {rows.length === 0 && <div className="text-sm text-muted-foreground py-2">{t("prod_no_data_period")}</div>}
-      {rows.map((r, i) => (
-        <div key={r.label + i} className="flex items-center gap-3">
-          <div className="w-28 shrink-0 text-xs font-medium truncate" title={r.label}>{r.label}</div>
-          <div className="flex-1 h-5 rounded-md bg-muted/50 overflow-hidden">
-            <div className="h-full rounded-md transition-all" style={{ width: `${(r.value / max) * 100}%`, background: colorAt ? colorAt(i) : PALETTE[i % PALETTE.length] }} />
+      {rows.map((r, i) => {
+        // Con meta por renglón (turnos), la barra mide avance contra SU meta
+        // y el texto dice "producido / meta · %"; sin meta, es ranking relativo.
+        const pct = r.goal ? Math.min(100, (r.value / r.goal) * 100) : (r.value / max) * 100;
+        const done = r.goal && r.value >= r.goal;
+        return (
+          <div key={r.label + i} className="flex items-center gap-3">
+            <div className="w-28 shrink-0 text-xs font-medium truncate" title={r.label}>{r.label}</div>
+            <div className="flex-1 h-5 rounded-md bg-muted/50 overflow-hidden">
+              <div className="h-full rounded-md transition-all" style={{ width: `${pct}%`, background: done ? "#22c55e" : colorAt ? colorAt(i) : PALETTE[i % PALETTE.length] }} />
+            </div>
+            <div className={`shrink-0 text-right text-sm font-semibold tabular-nums ${r.goal ? "w-40 text-xs" : "w-16"}`}>
+              {r.goal ? t("prod_of_goal_pct", { a: fmtInt(r.value), b: fmtInt(r.goal), p: Math.round((r.value / r.goal) * 100) }) : fmtInt(r.value)}
+            </div>
           </div>
-          <div className="w-16 shrink-0 text-right text-sm font-semibold tabular-nums">{fmtInt(r.value)}</div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
@@ -482,17 +584,30 @@ function ProgressRow({ label, produced, target }) {
 
 /* ── Pestañas ────────────────────────────────────────────────────────────── */
 
-function GeneralTab({ a, trend, singleDay, chart }) {
+function GeneralTab({ a, trend, singleDay, chart, goalDate = "default", canEditGoal = false, onGoalSaved }) {
   const { t } = useLang();
   if (!a) return null;
-  const shifts = (a.by_shift || []).map(s => ({ label: s._id || s.shift || "?", value: s.produced }));
+  const shifts = (a.by_shift || []).map(s => ({ label: s._id || s.shift || "?", value: s.produced, goal: s.goal || null }));
+  const hasGoal = !!a.goal;
+  const goalCurrent = { day: a.goal, shifts: a.goal_shifts || {} };
+  const gs = a.goal_shifts || {};
+  const goalSub = !hasGoal
+    ? t("prod_goal_none")
+    : goalDate === "default"
+      ? t("prod_goal_days_set", { a: a.goal_days_set, b: a.goal_days })
+      : (gs["TURNO 1"] || gs["TURNO 2"])
+        ? `${t("prod_goal_shifts_sub", { a: fmtInt(gs["TURNO 1"]), b: fmtInt(gs["TURNO 2"]) })}${a.goal_source === "default" ? ` · ${t("prod_goal_fixed")}` : ""}`
+        : `${t("prod_remain_n", { n: fmtInt(a.goal_remaining) })}${a.goal_source === "default" ? ` · ${t("prod_goal_fixed")}` : ""}`;
   return (
     <div className="h-full min-h-[520px] flex flex-col gap-3">
       {/* KPIs */}
       <div className="flex-none grid grid-cols-2 lg:grid-cols-4 gap-3">
         <Kpi icon={TrendingUp} label={t("prod_produced")} value={fmtInt(a.total_produced)} sub={t("prod_n_records", { n: fmtInt(a.total_logs) })} accent="text-emerald-500" />
-        <Kpi icon={Target} label={t("prod_target_orders")} value={fmtInt(a.total_target)} sub={t("prod_remain_n", { n: fmtInt(a.total_remaining) })} accent="text-blue-500" />
-        <Kpi icon={Zap} label={t("prod_efficiency")} value={`${a.efficiency ?? 0}%`} sub={t("prod_produced_vs_target")} accent="text-violet-500" />
+        <Kpi icon={Target} label={goalDate === "default" ? t("prod_goal_period") : t("prod_goal_day")}
+          value={hasGoal ? fmtInt(a.goal) : "—"} sub={goalSub} subClass={hasGoal ? "text-muted-foreground" : "text-amber-500"} accent="text-blue-500"
+          action={canEditGoal ? <GoalEditor date={goalDate} current={goalDate === "default" ? null : goalCurrent} onSaved={onGoalSaved} /> : null} />
+        <Kpi icon={Zap} label={t("prod_efficiency")} value={a.efficiency == null ? "—" : `${a.efficiency}%`}
+          sub={hasGoal ? t("prod_produced_vs_target") : t("prod_goal_capture_hint")} subClass={hasGoal ? "text-muted-foreground" : "text-amber-500"} accent="text-violet-500" />
         <Kpi icon={Clock} label={t("prod_avg_setup")} value={t("prod_n_min", { n: fmtInt(a.avg_setup) })} sub={t("prod_per_record")} accent="text-amber-500" />
       </div>
 
@@ -525,21 +640,24 @@ function GeneralTab({ a, trend, singleDay, chart }) {
           </Panel>
         </div>
 
-        {/* Eficiencia + meta */}
+        {/* Eficiencia + meta (la capturada por el gerente; lo que hay en
+            máquinas se muestra aparte, como contexto, no como meta) */}
         <Panel title={t("prod_progress_vs_target")} icon={Target} bodyClassName="overflow-auto">
-          <Ring pct={a.efficiency} label={t("prod_efficiency")} sub={t("prod_x_of_y_units", { a: fmtInt(a.total_produced), b: fmtInt(a.total_target) })} />
+          <Ring pct={a.efficiency ?? 0} label={t("prod_efficiency")}
+            sub={hasGoal ? t("prod_x_of_y_units", { a: fmtInt(a.total_produced), b: fmtInt(a.goal) }) : t("prod_goal_no_target")} />
           <div className="mt-3 space-y-3">
-            <ProgressRow label={t("prod_global_progress")} produced={a.total_produced} target={a.total_target} />
+            <ProgressRow label={t("prod_global_progress")} produced={a.total_produced} target={a.goal || 0} />
             <div className="grid grid-cols-2 gap-2 pt-1">
               <div className="rounded-md border border-border p-2 text-center">
                 <div className="text-lg font-semibold tabular-nums text-emerald-500">{fmtInt(a.total_produced)}</div>
                 <div className="text-[10px] uppercase tracking-wide text-muted-foreground">{t("prod_produced")}</div>
               </div>
               <div className="rounded-md border border-border p-2 text-center">
-                <div className="text-lg font-semibold tabular-nums text-amber-500">{fmtInt(a.total_remaining)}</div>
+                <div className="text-lg font-semibold tabular-nums text-amber-500">{hasGoal ? fmtInt(a.goal_remaining) : "—"}</div>
                 <div className="text-[10px] uppercase tracking-wide text-muted-foreground">{t("remaining")}</div>
               </div>
             </div>
+            <div className="text-[11px] text-muted-foreground text-center">{t("prod_in_machines_n", { n: fmtInt(a.total_target), m: fmtInt(a.total_remaining) })}</div>
           </div>
         </Panel>
       </div>
@@ -693,7 +811,7 @@ function OrdenesTab({ a }) {
         <Kpi icon={ClipboardList} label={t("prod_orders_with_progress")} value={fmtInt((a?.by_po || []).length)} sub={t("prod_in_period")} accent="text-blue-500" />
         <Kpi icon={TrendingUp} label={t("prod_produced")} value={fmtInt(a?.total_produced)} accent="text-emerald-500" />
         <Kpi icon={Target} label={t("prod_target")} value={fmtInt(a?.total_target)} accent="text-violet-500" />
-        <Kpi icon={Zap} label={t("prod_efficiency")} value={`${a?.efficiency ?? 0}%`} accent="text-amber-500" />
+        <Kpi icon={Zap} label={t("prod_efficiency")} value={a?.efficiency == null ? "—" : `${a.efficiency}%`} accent="text-amber-500" />
       </div>
 
       {/* Top 20 en dos columnas (≥lg): 10 renglones por lado caben completos
