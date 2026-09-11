@@ -10,7 +10,7 @@ export const ColoredBadge = ({ value, isDark }) => {
   if (color) {
     return (
       <span
-        className="inline-flex items-center text-[10px] font-black uppercase whitespace-nowrap tracking-wider"
+        className="inline-flex items-center text-xs font-black uppercase whitespace-nowrap tracking-wider"
         style={{ color: isDark ? lightenHex(color.bg, 0.35) : darkenHex(color.bg, 0.2) }}
       >
         {value}
@@ -19,7 +19,7 @@ export const ColoredBadge = ({ value, isDark }) => {
   }
 
   return (
-    <span className={`inline-flex items-center text-[10px] font-black uppercase whitespace-nowrap tracking-wider ${isDark ? 'text-zinc-400' : 'text-gray-500'}`}>
+    <span className={`inline-flex items-center text-xs font-black uppercase whitespace-nowrap tracking-wider ${isDark ? 'text-zinc-400' : 'text-gray-500'}`}>
       {value}
     </span>
   );

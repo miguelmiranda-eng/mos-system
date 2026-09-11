@@ -1084,6 +1084,12 @@ const Dashboard = () => {
     [visibleColumns]
   );
 
+  // Alto FIJO del renglón. Antes lo dictaba la columna de orden (número +
+  // board + fila de badges que se partía en dos) y llegaba a ~100px; las demás
+  // celdas ponían una línea de 14px en medio de todo ese aire. Con altura
+  // fija ninguna celda puede estirar la fila: lo que no cabe se recorta.
+  const ROW_H = 'h-14';
+
   const renderOrderRow = useCallback((order) => {
     const sq = debouncedSearchQuery.toLowerCase();
     const getVal = (v) => {
@@ -1109,7 +1115,7 @@ const Dashboard = () => {
         {/* Selection Checkbox */}
         <div
           data-order-id={order.order_id}
-          className={`py-2 px-2 sticky left-0 z-[30] border-r border-b border-border/5 flex items-center justify-center ${isSelected ? 'border-l-[4px] border-l-primary' : isHighlighted ? 'border-l-[4px] border-l-yellow-400' : 'border-l-[4px] border-l-transparent'} ${isHighlighted ? (isDark ? 'bg-yellow-900/30' : 'bg-yellow-50') : rowBgClass}`}
+          className={`${ROW_H} px-2 sticky left-0 z-[30] border-r border-b border-border/5 flex items-center justify-center ${isSelected ? 'border-l-[4px] border-l-primary' : isHighlighted ? 'border-l-[4px] border-l-yellow-400' : 'border-l-[4px] border-l-transparent'} ${isHighlighted ? (isDark ? 'bg-yellow-900/30' : 'bg-yellow-50') : rowBgClass}`}
           style={{ width: 48, minWidth: 48, maxWidth: 48 }}>
           <input
             type="checkbox"
@@ -1120,7 +1126,7 @@ const Dashboard = () => {
         </div>
 
         {/* Quick Actions (Sticky Column 2) */}
-        <div className={`py-2 px-1 sticky left-[48px] z-[30] border-r border-b border-border/5 flex items-center justify-center ${isHighlighted ? (isDark ? 'bg-yellow-900/30' : 'bg-yellow-50') : rowBgClass}`} style={{ width: 64, minWidth: 64, maxWidth: 64 }}>
+        <div className={`${ROW_H} px-1 sticky left-[48px] z-[30] border-r border-b border-border/5 flex items-center justify-center ${isHighlighted ? (isDark ? 'bg-yellow-900/30' : 'bg-yellow-50') : rowBgClass}`} style={{ width: 64, minWidth: 64, maxWidth: 64 }}>
           <div className="flex flex-row gap-2 items-center justify-center">
             <button onClick={() => setCommentsOrder(order)} className="p-1 rounded-lg transition-all hover:bg-secondary hover:scale-110 active:scale-95 text-slate-500 dark:text-slate-400 hover:text-primary relative" title={t('comments')}>
               <MessageSquare className="w-4 h-4" />
@@ -1136,32 +1142,55 @@ const Dashboard = () => {
 
         {/* Order Number / Board (Sticky Column 3) */}
         <div
-          className={`py-2 px-3 sticky left-[112px] z-[30] border-r border-b border-border/10 group/order flex flex-col justify-center items-center ${isHighlighted ? (isDark ? 'bg-yellow-900/30' : 'bg-yellow-50') : rowBgClass}`}
+          className={`${ROW_H} px-2.5 sticky left-[112px] z-[30] border-r border-b border-border/10 group/order flex flex-col justify-center gap-1 overflow-hidden ${isHighlighted ? (isDark ? 'bg-yellow-900/30' : 'bg-yellow-50') : rowBgClass}`}
           style={{ width: 200, minWidth: 200, maxWidth: 200 }}
         >
-          {/* Order number (centered, large, bold) */}
-          <div className="flex flex-col items-center justify-center w-full min-w-0">
-            <span className={`font-black text-xl tracking-tight leading-none text-slate-800 dark:text-slate-100 ${isSearchMatch ? 'text-primary' : ''}`}>
-              {order.order_number}
-            </span>
-            {(currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') && (
-              <div className="flex items-center gap-1 mt-1">
-                {order.packing_link && (
-                  <span title={`${t('dash_packing_imported')}${order.packing_link_label ? `: ${order.packing_link_label}` : ''}`} className="inline-flex text-emerald-500" data-testid={`order-imported-${order.order_id}`}>
-                    <Truck className="w-3 h-3" />
-                  </span>
-                )}
-                <span className="w-fit px-1.5 py-0.5 rounded-[2px] text-[9px] font-bold uppercase tracking-tighter text-white" style={{ backgroundColor: BOARD_COLORS[order.board]?.accent || '#666' }}>
-                  {order.board}
+          {/* Línea 1: número a la izquierda (ancla visual para barrer la lista)
+              y a la derecha lo que antes iba debajo y estiraba la fila: la
+              fecha de envío programado y la etiqueta del board. Si coinciden
+              las dos, gana la fecha y el board se vuelve un punto de color con
+              tooltip. Altura fija: ningún contenido de esta columna puede
+              volver a dictar el alto del renglón. */}
+          {(() => {
+            const showBoard = currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS';
+            const shipRaw = order.order_number && shipMap[order.order_number] !== undefined
+              ? String(shipMap[order.order_number] || '').slice(0, 10) : '';
+            const p = shipRaw.split('-');           // [YYYY, MM, DD] sin corrimiento de zona
+            const shipDm = p.length === 3 ? `${p[2]}/${p[1]}` : '';
+            const hasShip = !!shipRaw;
+            return (
+              <div className="flex items-center justify-between gap-1.5 min-w-0">
+                <span className={`font-black text-[22px] tracking-tight leading-none text-slate-800 dark:text-slate-100 truncate ${isSearchMatch ? 'text-primary' : ''}`}>
+                  {order.order_number}
                 </span>
+                <div className="flex items-center gap-1 shrink-0">
+                  {hasShip && (
+                    <span
+                      className="px-1.5 py-0.5 rounded-full text-[9px] font-extrabold tracking-wide leading-none border inline-flex items-center gap-0.5 bg-sky-100 text-sky-600 dark:bg-sky-950/40 dark:text-sky-400 border-sky-200/20"
+                      title={`${t('dash_scheduled_ship')}: ${shipRaw}`}
+                      data-testid={`order-ship-badge-${order.order_id}`}
+                    >
+                      <Clock className="w-2.5 h-2.5" />
+                      {shipDm && <span>{shipDm}</span>}
+                    </span>
+                  )}
+                  {showBoard && (hasShip ? (
+                    <span className="w-2.5 h-2.5 rounded-full shrink-0" title={order.board} style={{ backgroundColor: BOARD_COLORS[order.board]?.accent || '#666' }} />
+                  ) : (
+                    <span className="w-fit max-w-[90px] truncate px-1.5 py-0.5 rounded-[2px] text-[9px] font-bold uppercase tracking-tighter text-white" style={{ backgroundColor: BOARD_COLORS[order.board]?.accent || '#666' }}>
+                      {order.board}
+                    </span>
+                  ))}
+                </div>
               </div>
-            )}
-          </div>
+            );
+          })()}
 
-          {/* TWIN / NECK / SEP / PL badges horizontal row (centered).
-              Padding y gap reducidos para que los 4 quepan sin apretarse en la
-              columna de 200px. */}
-          <div className="flex flex-row flex-wrap items-center justify-center gap-1 mt-2 w-full shrink-0">
+          {/* Línea 2: TWIN / NECK / SEP / playerita / PL en UNA fila, sin
+              envolver. Padding de 6px (no 8) para que las cinco piezas quepan
+              en los 180px útiles; si algún día no caben, se recortan por
+              overflow en vez de partir la fila. */}
+          <div className="flex flex-row flex-nowrap items-center gap-1 w-full shrink-0 overflow-hidden">
             {/* TWIN Badge */}
             {order.twin_order_number ? (
               <button
@@ -1177,19 +1206,19 @@ const Dashboard = () => {
                     toast.success(`Twin: ${twin.order_number} → ${twin.board}`);
                   } catch { toast.error(t('dash_twin_search_err')); }
                 }}
-                className="px-2 py-0.5 rounded-full text-[9px] font-extrabold tracking-wide leading-none bg-fuchsia-100 text-fuchsia-600 dark:bg-fuchsia-950/40 dark:text-fuchsia-400 border border-fuchsia-200/20 hover:bg-fuchsia-500 hover:text-white transition-all cursor-pointer"
+                className="px-1.5 py-0.5 rounded-full text-[9px] font-extrabold tracking-wide leading-none bg-fuchsia-100 text-fuchsia-600 dark:bg-fuchsia-950/40 dark:text-fuchsia-400 border border-fuchsia-200/20 hover:bg-fuchsia-500 hover:text-white transition-all cursor-pointer"
                 title={t('dash_twin_title', { n: order.twin_order_number })}
               >
                 TWIN
               </button>
             ) : (
-              <span className="px-2 py-0.5 rounded-full text-[9px] font-extrabold tracking-wide leading-none bg-slate-100/50 text-slate-300 dark:bg-slate-800/40 dark:text-slate-600 border border-transparent" title="No Twin Order linked">
+              <span className="px-1.5 py-0.5 rounded-full text-[9px] font-extrabold tracking-wide leading-none bg-slate-100/50 text-slate-300 dark:bg-slate-800/40 dark:text-slate-600 border border-transparent" title="No Twin Order linked">
                 TWIN
               </span>
             )}
 
             {/* NECK Badge */}
-            <span className={`px-2 py-0.5 rounded-full text-[9px] font-extrabold tracking-wide leading-none border transition-all ${order.art_neck_status
+            <span className={`px-1.5 py-0.5 rounded-full text-[9px] font-extrabold tracking-wide leading-none border transition-all ${order.art_neck_status
               ? 'bg-blue-100 text-blue-600 dark:bg-blue-950/40 dark:text-blue-400 border-blue-200/20'
               : 'bg-slate-100/50 text-slate-300 dark:bg-slate-800/40 dark:text-slate-600 border-transparent'
               }`} title={order.art_neck_status ? t('dash_neck_ready') : t('dash_neck_pending')}>
@@ -1197,7 +1226,7 @@ const Dashboard = () => {
             </span>
 
             {/* SEP Badge */}
-            <span className={`px-2 py-0.5 rounded-full text-[9px] font-extrabold tracking-wide leading-none border transition-all ${order.art_sep_status
+            <span className={`px-1.5 py-0.5 rounded-full text-[9px] font-extrabold tracking-wide leading-none border transition-all ${order.art_sep_status
               ? 'bg-emerald-100 text-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-400 border-emerald-200/20'
               : 'bg-slate-100/50 text-slate-300 dark:bg-slate-800/40 dark:text-slate-600 border-transparent'
               }`} title={order.art_sep_status ? t('dash_sep_ready') : t('dash_sep_pending')}>
@@ -1227,24 +1256,6 @@ const Dashboard = () => {
               data-testid={`order-pl-badge-${order.order_id}`}>
               <Truck className="w-2.5 h-2.5" />
             </span>
-
-            {/* ENVÍO programado — reloj + fecha (dd/mm). Se enciende cuando la
-                orden está programada en el módulo de Envíos (scheduled_shipments). */}
-            {order.order_number && shipMap[order.order_number] !== undefined && (() => {
-              const raw = String(shipMap[order.order_number] || '').slice(0, 10);
-              const p = raw.split('-');           // [YYYY, MM, DD] sin corrimiento de zona
-              const dm = p.length === 3 ? `${p[2]}/${p[1]}` : '';
-              return (
-                <span
-                  className="px-1.5 py-0.5 rounded-full text-[9px] font-extrabold tracking-wide leading-none border inline-flex items-center gap-0.5 bg-sky-100 text-sky-600 dark:bg-sky-950/40 dark:text-sky-400 border-sky-200/20"
-                  title={raw ? `${t('dash_scheduled_ship')}: ${raw}` : t('dash_scheduled_ship')}
-                  data-testid={`order-ship-badge-${order.order_id}`}
-                >
-                  <Clock className="w-2.5 h-2.5" />
-                  {dm && <span>{dm}</span>}
-                </span>
-              );
-            })()}
           </div>
         </div>
 
@@ -1258,7 +1269,7 @@ const Dashboard = () => {
           return (
             <div
               key={col.key}
-              className={`py-4 px-3 border-r border-b border-border/5 transition-colors flex items-center ${col.type === 'checkbox' ? 'justify-center' : ''} ${isHighlighted ? (isDark ? 'bg-yellow-900/10' : 'bg-yellow-50/50') : ''} ${rowBgClass}`}
+              className={`${ROW_H} px-3 border-r border-b border-border/5 transition-colors flex items-center overflow-hidden ${col.type === 'checkbox' ? 'justify-center' : ''} ${isHighlighted ? (isDark ? 'bg-yellow-900/10' : 'bg-yellow-50/50') : ''} ${rowBgClass}`}
               style={{ width: width, minWidth: width, maxWidth: 'none' }}
             >
               {isProgressCol && typeof val === 'number' ? (
@@ -1300,7 +1311,7 @@ const Dashboard = () => {
         })}
 
         {/* Action Buttons & Progress Bar */}
-        <div className={`py-4 px-4 border-b border-border/5 flex flex-col justify-center gap-2 ${rowBgClass}`} style={{ minWidth: 180 }}>
+        <div className={`${ROW_H} px-4 border-b border-border/5 flex flex-col justify-center gap-1 overflow-hidden ${rowBgClass}`} style={{ minWidth: 180 }}>
           {(() => {
             const prodData = productionSummary[order.order_number] || { total_produced: 0 };
             const total = order.quantity || 0;
@@ -1338,7 +1349,7 @@ const Dashboard = () => {
         </div>
 
         {/* Avance Neck — solo porcentaje (compacto) */}
-        <div className={`py-4 px-3 border-b border-border/5 flex flex-col items-center justify-center ${rowBgClass}`} style={{ minWidth: 110 }} data-testid={`row-restante-neck-${order.order_id}`}>
+        <div className={`${ROW_H} px-3 border-b border-border/5 flex flex-col items-center justify-center ${rowBgClass}`} style={{ minWidth: 110 }} data-testid={`row-restante-neck-${order.order_id}`}>
           {(() => {
             const neckData = neckSummary?.[order.order_number] || { total_neck_cut: 0 };
             const total = order.quantity || 0;

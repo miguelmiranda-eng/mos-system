@@ -25,6 +25,24 @@ const userRole = () => {
 // row/selection/search-highlight change re-rendered every cell. Props from the
 // parent are stable (handleCellUpdate/options are useOrders refs, columns is
 // memoized), so the default shallow compare skips cells whose data didn't change.
+// Presentación de lectura: fechas ISO en corto ("09 sep", con año solo si no
+// es el actual) y números con separador de miles. El VALOR guardado no cambia;
+// al editar se sigue capturando YYYY-MM-DD / entero como siempre.
+const MESES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+export const displayValue = (value, type) => {
+  if (value === null || value === undefined || value === '') return value;
+  if (type === 'number' && typeof value === 'number') return value.toLocaleString('en-US');
+  if (type === 'date' && typeof value === 'string') {
+    const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
+    if (m) {
+      const y = Number(m[1]);
+      const mon = MESES[Number(m[2]) - 1] || m[2];
+      return y === new Date().getFullYear() ? `${m[3]} ${mon}` : `${m[3]} ${mon} ${String(y).slice(2)}`;
+    }
+  }
+  return value;
+};
+
 const EditableCellBase = ({ value, field, orderId, options, groupConfig, onUpdate, type = "text", isDark, allOrders, order, productionSummary, columns: allCols, readOnly = false, className = "" }) => {
   const { t } = useLang();
   const [isEditing, setIsEditing] = useState(false);
@@ -103,14 +121,14 @@ const EditableCellBase = ({ value, field, orderId, options, groupConfig, onUpdat
       const p = parseLinkDesc(value);
       if (!p.url && !p.desc) return <span className="text-muted-foreground text-sm">—</span>;
       const label = p.desc || normalizePublicUrl(p.url).replace(/^https?:\/\//, '').split('/')[0] || '—';
-      if (p.url) return <a href={normalizePublicUrl(p.url).startsWith('http') ? normalizePublicUrl(p.url) : `https://${normalizePublicUrl(p.url)}`} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline text-sm truncate block px-1" onClick={(e) => e.stopPropagation()}>{label}</a>;
-      return <span className="text-sm text-foreground/70 px-1 truncate block">{label}</span>;
+      if (p.url) return <a href={normalizePublicUrl(p.url).startsWith('http') ? normalizePublicUrl(p.url) : `https://${normalizePublicUrl(p.url)}`} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline text-base font-semibold truncate block px-1" onClick={(e) => e.stopPropagation()}>{label}</a>;
+      return <span className="text-base text-foreground/70 px-1 truncate block">{label}</span>;
     }
     if (options && options.length > 0) {
       const color = getStatusColor(value) || (isDark ? { bg: '#374151', text: '#D1D5DB' } : { bg: '#F3F4F6', text: '#374151' });
       return <span className="px-2.5 py-1 rounded text-xs font-bold whitespace-nowrap" style={{ backgroundColor: color.bg, color: color.text }}>{value || '—'}</span>;
     }
-    return <span className="text-sm font-medium text-foreground">{value || '—'}</span>;
+    return <span className="text-base font-semibold text-foreground truncate" title={typeof value === 'string' ? value : undefined}>{displayValue(value, type) || '—'}</span>;
   }
 
   // link_desc editing and display
@@ -143,9 +161,9 @@ const EditableCellBase = ({ value, field, orderId, options, groupConfig, onUpdat
         <div className="min-h-[32px] flex items-center gap-1 px-1 group">
           {p.url ? (
             <a href={normalizePublicUrl(p.url).startsWith('http') ? normalizePublicUrl(p.url) : `https://${normalizePublicUrl(p.url)}`} target="_blank" rel="noopener noreferrer"
-              className="text-primary hover:underline text-sm truncate flex-1" onClick={(e) => e.stopPropagation()} data-testid={`link-cell-${field}`}>{label}</a>
+              className="text-primary hover:underline text-base font-semibold truncate flex-1" onClick={(e) => e.stopPropagation()} data-testid={`link-cell-${field}`}>{label}</a>
           ) : (
-            <span className="text-sm text-foreground truncate flex-1">{label}</span>
+            <span className="text-base font-semibold text-foreground truncate flex-1">{label}</span>
           )}
           <button onClick={(e) => { e.stopPropagation(); setIsEditing(true); }}
             className="p-0.5 hover:bg-secondary rounded opacity-0 group-hover:opacity-100 flex-shrink-0" title={t('edit_link')}>
@@ -224,7 +242,7 @@ const EditableCellBase = ({ value, field, orderId, options, groupConfig, onUpdat
     let result = '';
     if (order) { try { result = evaluateFormula(field, order, allCols); } catch { result = '#ERROR'; } }
     return (
-      <div className="min-h-[32px] flex items-center px-1 font-mono text-sm text-primary" title={t('calculated_value')} data-testid={`formula-${field}-${orderId}`}>
+      <div className="min-h-[32px] flex items-center px-1 font-mono text-base text-primary" title={t('calculated_value')} data-testid={`formula-${field}-${orderId}`}>
         {result !== '' && result !== undefined ? result : '-'}
       </div>
     );
@@ -235,7 +253,7 @@ const EditableCellBase = ({ value, field, orderId, options, groupConfig, onUpdat
     return (
       <div className="flex items-center gap-1 min-h-[32px] px-1">
         <a href={cleanUrl.startsWith('http') ? cleanUrl : `https://${cleanUrl}`} target="_blank" rel="noopener noreferrer"
-          className="text-primary hover:underline text-sm truncate max-w-[150px]" title={cleanUrl}
+          className="text-primary hover:underline text-base font-semibold truncate max-w-[150px]" title={cleanUrl}
           onClick={(e) => e.stopPropagation()} data-testid={`link-cell-${field}`}>
           <ExternalLink className="w-3.5 h-3.5 inline mr-1" />
           {cleanUrl.replace(/^https?:\/\//, '').split('/')[0]}
@@ -253,7 +271,7 @@ const EditableCellBase = ({ value, field, orderId, options, groupConfig, onUpdat
       className={`cursor-pointer min-h-[32px] flex items-center px-1 hover:bg-secondary/50 rounded transition-colors group ${className}`} title={t('click_to_edit')}>
       {isSelectField ? <ColoredBadge value={value} isDark={isDark} /> :
        type === 'link' ? <span className="text-muted-foreground text-sm">+ {t('link')}</span> :
-       (value ? <span className="text-foreground font-medium text-sm">{value}</span> : <span className="text-muted-foreground/50">-</span>)}
+       (value ? <span className="text-foreground font-semibold text-base truncate" title={typeof value === 'string' ? value : undefined}>{displayValue(value, type)}</span> : <span className="text-muted-foreground/50">-</span>)}
     </div>
   );
 };
