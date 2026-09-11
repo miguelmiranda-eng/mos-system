@@ -44,6 +44,10 @@ async def create_board(request: Request):
         raise HTTPException(status_code=400, detail="Board already exists")
     boards.append(name)
     await save_boards(boards)
+    # Un tablero MAQUINA<n> nuevo es una máquina nueva: el plan de capacidad
+    # (caché prod_, TTL 5 min) debe recalcularse ya, no cuando expire.
+    from routers.production import invalidate_cache
+    invalidate_cache("prod_")
     return {"boards": boards, "created": name}
 
 @router.delete("/boards/{board_name}")
@@ -58,6 +62,8 @@ async def delete_board(request: Request, board_name: str):
     await db.orders.update_many({"board": board_name}, {"$set": {"board": "MASTER"}})
     boards.remove(board_name)
     await save_boards(boards)
+    from routers.production import invalidate_cache
+    invalidate_cache("prod_")
     return {"boards": boards, "deleted": board_name}
 
 @router.get("/columns")

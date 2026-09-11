@@ -2,11 +2,26 @@ const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'http://localhost:8000'
 export const API = `${BACKEND_URL}/api`;
 export const DASHBOARD_URL = 'https://ceo-dashboard-git-main-mirandatm.vercel.app';
 
+// Máquinas. Respaldo ESTÁTICO: la lista viva son los tableros MAQUINA<n> que
+// devuelve /config/boards (ver machinesFrom). Antes el 14 vivía repetido en
+// seis componentes y al crear los tableros 15 y 16 nadie se enteró.
+export const MACHINE_RE = /^MAQUINA(\d+)$/;
+export const machineNumber = (name) => {
+  const m = MACHINE_RE.exec(String(name || ''));
+  return m ? parseInt(m[1], 10) : 0;
+};
+export const MACHINES = Array.from({ length: 16 }, (_, i) => `MAQUINA${i + 1}`);
+// Máquinas reales a partir de una lista de tableros, en orden numérico
+// ('MAQUINA10' iría antes que 'MAQUINA2' si se ordenara como texto). Si la
+// lista aún no llegó (o no trae máquinas), regresa el respaldo estático.
+export const machinesFrom = (boards) => {
+  const found = (boards || []).filter(b => MACHINE_RE.test(b)).sort((a, b) => machineNumber(a) - machineNumber(b));
+  return found.length > 0 ? found : MACHINES;
+};
+
 export const BOARDS = [
   "MASTER", "SCHEDULING", "READY TO SCHEDULED", "BLANKS", "SCREENS", "NECK", "EDI", "COMPLETOS",
-  "MAQUINA1", "MAQUINA2", "MAQUINA3", "MAQUINA4",
-  "MAQUINA5", "MAQUINA6", "MAQUINA7", "MAQUINA8", "MAQUINA9", "MAQUINA10",
-  "MAQUINA11", "MAQUINA12", "MAQUINA13", "MAQUINA14", "FINAL BILL"
+  ...MACHINES, "FINAL BILL"
 ];
 
 export const STATUS_COLORS = {

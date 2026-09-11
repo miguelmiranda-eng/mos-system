@@ -140,7 +140,8 @@ DEFAULT_OPTIONS = {
         "MASTER", "SCHEDULING", "READY TO SCHEDULED", "BLANKS", "SCREENS", "NECK", "COMPLETOS", "EDI",
         "MAQUINA1", "MAQUINA2", "MAQUINA3", "MAQUINA4",
         "MAQUINA5", "MAQUINA6", "MAQUINA7", "MAQUINA8", "MAQUINA9", "MAQUINA10",
-        "MAQUINA11", "MAQUINA12", "MAQUINA13", "MAQUINA14", "FINAL BILL", "CONTROL DE CALIDAD"
+        "MAQUINA11", "MAQUINA12", "MAQUINA13", "MAQUINA14", "MAQUINA15", "MAQUINA16",
+        "FINAL BILL", "CONTROL DE CALIDAD"
     ],
     "trigger_types": ["create", "move", "update", "status_change"],
     "action_types": ["send_email", "move_board", "assign_field", "change_status", "add_comment", "set_date", "notify_push", "notify_slack"],
@@ -182,7 +183,24 @@ DEFAULT_OPTIONS = {
 }
 
 BOARDS = DEFAULT_OPTIONS["boards"]
-MACHINES = [f"MAQUINA{i}" for i in range(1, 15)]
+
+# Máquinas. La lista VIVA sale de los tableros (board_config): un tablero
+# "MAQUINA<n>" es una máquina, y punto. `MACHINES` es solo el respaldo estático
+# para instalaciones sin board_config; los indicadores (capacity-plan, alta de
+# registros de producción) deben usar get_machines(). Antes el número 14 vivía
+# repetido aquí y en production.py, y al crear los tableros 15 y 16 los
+# indicadores no se enteraron.
+MACHINE_RE = re.compile(r"^MAQUINA(\d+)$")
+MACHINES = [f"MAQUINA{i}" for i in range(1, 17)]
+
+def machine_number(name):
+    m = MACHINE_RE.match(str(name or ""))
+    return int(m.group(1)) if m else 0
+
+def machines_from_boards(boards):
+    """Filtra los tableros MAQUINA<n> y los ordena por número (no alfabético:
+    'MAQUINA10' iría antes que 'MAQUINA2')."""
+    return sorted((b for b in boards or [] if MACHINE_RE.match(str(b))), key=machine_number)
 
 # Posiciones de impresión que puede llevar una orden. Conjunto CERRADO, a
 # diferencia de `size` en un registro de producción: de esto dependen los
@@ -206,6 +224,10 @@ async def get_dynamic_boards():
     # en Mongo como parking de PROV-, pero no debe verse en el sidebar).
     _hide = {"PAPELERA DE RECICLAJE", "EJEMPLOS"}
     return [b for b in boards if b not in _hide]
+
+async def get_machines():
+    """Máquinas reales según los tableros; respaldo estático si no hay ninguna."""
+    return machines_from_boards(await get_dynamic_boards()) or list(MACHINES)
 
 async def save_boards(boards_list):
     """Persist boards to DB."""

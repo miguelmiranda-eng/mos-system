@@ -151,11 +151,13 @@ class TestCapacityPlanEndpoint:
         assert response.status_code == 200
         data = response.json()
         
-        expected_machines = [f"MAQUINA{i}" for i in range(1, 15)]
+        # La lista sale de los tableros MAQUINA<n> reales (board_config), en
+        # orden numérico; el conteo ya no es un 14 fijo.
         actual_machines = [m["machine"] for m in data["machines"]]
-        
-        assert actual_machines == expected_machines
-        print("PASS: Machine names are MAQUINA1-14 in correct order")
+        nums = [int(m.replace("MAQUINA", "")) for m in actual_machines]
+        assert all(m.startswith("MAQUINA") for m in actual_machines)
+        assert nums == sorted(nums) and len(nums) >= 14
+        print(f"PASS: {len(nums)} machines in numeric order")
 
     def test_capacity_plan_load_status_values(self, api_client, auth_headers):
         """Load status should be idle, green, yellow, or red"""

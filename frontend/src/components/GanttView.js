@@ -4,11 +4,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Loader2, ChevronLeft, ChevronRight, Calendar, Clock, Package } from "lucide-react";
 import { useLang } from "../contexts/LanguageContext";
 import { toast } from "sonner";
+import { machinesFrom } from "../lib/constants";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
-
-const MACHINES = Array.from({ length: 14 }, (_, i) => `MAQUINA${i + 1}`);
 
 const ORDER_COLORS = [
   '#3b82f6', '#ef4444', '#22c55e', '#f59e0b', '#8b5cf6',
@@ -54,8 +53,10 @@ const getDaysBetween = (start, end) => {
   return days;
 };
 
-const GanttView = ({ isOpen, onClose, isDark }) => {
+const GanttView = ({ isOpen, onClose, isDark, boards = [] }) => {
   const { t } = useLang();
+  // Máquinas = tableros MAQUINA<n> reales (los pasa el Dashboard); respaldo estático si no llegaron.
+  const MACHINES = useMemo(() => machinesFrom(boards), [boards]);
   const [loading, setLoading] = useState(false);
   const [bars, setBars] = useState([]);
   const [pending, setPending] = useState([]);
@@ -119,7 +120,7 @@ const GanttView = ({ isOpen, onClose, isDark }) => {
       if (result[bar.machine]) result[bar.machine].push(bar);
     });
     return result;
-  }, [bars]);
+  }, [bars, MACHINES]);
 
   const getBarStyle = (bar) => {
     const barStart = new Date(bar.start_date);

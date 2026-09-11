@@ -7,13 +7,12 @@ import {
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { saveAs } from "file-saver";
-import { API } from "../lib/constants";
+import { API, machinesFrom } from "../lib/constants";
 import { useAuth } from "../App";
 import { useLang } from "../contexts/LanguageContext";
 
 const PAGE_SIZE = 100;
 const SHIFTS = ['', 'TURNO 1', 'TURNO 2'];
-const MACHINES = ['', ...Array.from({ length: 14 }, (_, i) => `MAQUINA${i + 1}`)];
 
 // Centralized log viewer — two tabs (Producción / Neck), shared filter bar,
 // paginated table and Excel export. Replaces the per-order-only history that
@@ -37,11 +36,19 @@ const LogsCenter = () => {
   const [loading, setLoading] = useState(false);
   const [operatorsList, setOperatorsList] = useState([]);
 
-  // Load operators list for the typeahead.
+  // Máquinas del filtro = tableros MAQUINA<n> reales; respaldo estático mientras carga.
+  const [boards, setBoards] = useState([]);
+  const MACHINES = useMemo(() => ['', ...machinesFrom(boards)], [boards]);
+
+  // Load operators list for the typeahead, and boards for the machine filter.
   useEffect(() => {
     fetch(`${API}/operators`, { credentials: 'include' })
       .then(r => r.ok ? r.json() : [])
       .then(data => setOperatorsList(data.filter(op => op.active)))
+      .catch(() => {});
+    fetch(`${API}/config/boards`, { credentials: 'include' })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (Array.isArray(d?.boards)) setBoards(d.boards); })
       .catch(() => {});
   }, []);
 

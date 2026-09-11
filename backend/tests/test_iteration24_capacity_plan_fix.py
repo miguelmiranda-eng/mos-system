@@ -93,15 +93,15 @@ class TestCapacityPlanFix:
         response = requests.get(f"{BASE_URL}/api/capacity-plan", headers=self.headers)
         assert response.status_code == 200
         data = response.json()
-        assert len(data["machines"]) == 14, f"Expected 14 machines, got {len(data['machines'])}"
+        assert len(data["machines"]) >= 14, f"Expected at least 14 machines, got {len(data['machines'])}"
         
-        # Verify machine names
+        # Verify machine names (las máquinas salen de los tableros MAQUINA<n>)
         machine_names = [m["machine"] for m in data["machines"]]
         for i in range(1, 15):
             expected_name = f"MAQUINA{i}"
             assert expected_name in machine_names, f"{expected_name} missing from machines"
         
-        print("PASS: All 14 machines present in response")
+        print(f"PASS: {len(machine_names)} machines present in response")
     
     def test_08_machine_structure_correct(self):
         """Each machine should have correct fields"""

@@ -1,6 +1,6 @@
 """Production logs, gantt data, capacity plan, email routes."""
 from fastapi import APIRouter, HTTPException, Request, Response
-from deps import db, require_auth, require_admin, log_activity, ProductionLogCreate, NeckLogCreate, EmailRequest, MACHINES, logger, MASTER_API_KEY, json_response_bytes
+from deps import db, require_auth, require_admin, log_activity, ProductionLogCreate, NeckLogCreate, EmailRequest, get_machines, logger, MASTER_API_KEY, json_response_bytes
 from ws_manager import ws_manager
 from datetime import datetime, timezone, timedelta
 import zoneinfo
@@ -147,7 +147,7 @@ async def create_production_log(log: ProductionLogCreate, request: Request):
     order = await db.orders.find_one({"order_id": log.order_id}, {"_id": 0})
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
-    if log.machine not in MACHINES:
+    if log.machine not in await get_machines():
         raise HTTPException(status_code=400, detail=f"Invalid machine")
     log_doc = {
         "log_id": f"plog_{uuid.uuid4().hex[:12]}", "order_id": log.order_id,
@@ -527,8 +527,11 @@ async def _compute_capacity_plan():
     # Get all active orders with their boards
     all_orders = await db.orders.find({"board": {"$ne": "PAPELERA DE RECICLAJE"}}, {"_id": 0, "order_id": 1, "quantity": 1, "board": 1, "order_number": 1, "client": 1, "priority": 1}).to_list(10000)
     orders_map = {o["order_id"]: o for o in all_orders}
-    # Orders physically in each machine board
-    machine_boards = {f"MAQUINA{i}" for i in range(1, 15)}
+    # Orders physically in each machine board. La lista sale de los tableros
+    # reales (board_config), no de un 14 fijo: al dar de alta MAQUINA15/16 como
+    # tableros, entran solas a los indicadores.
+    machines = await get_machines()
+    machine_boards = set(machines)
     orders_by_machine = {}
     for o in all_orders:
         if o.get("board") in machine_boards:
@@ -576,8 +579,7 @@ async def _compute_capacity_plan():
         produced_by_order = {r["_id"]: r["total_produced"] for r in prod_results}
 
     machines_plan = []
-    for i in range(1, 15):
-        machine_name = f"MAQUINA{i}"
+    for machine_name in machines:
         physical_orders = orders_by_machine.get(machine_name, [])
         stats = stats_map.get(machine_name, {})
         avg_daily = stats.get("avg_daily_production", 0)

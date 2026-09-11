@@ -2748,9 +2748,9 @@ const Dashboard = () => {
       {isAdmin && <FormFieldsManagerModal isOpen={showFormFields} onClose={() => setShowFormFields(false)} columns={columns} />}
       <AddColumnModal isOpen={showAddColumn} onClose={() => setShowAddColumn(false)} onAdd={handleAddColumn} existingColumns={columns} options={options} sampleRow={orders?.[0] || allOrders?.[0] || null} />
       <AnalyticsView isOpen={showAnalytics} onClose={() => setShowAnalytics(false)} allOrders={allOrders} options={options} />
-      <ProductionModal isOpen={showProduction} onClose={() => setShowProduction(false)} orders={allOrders} onProductionUpdate={() => { fetchProductionSummary(); fetchOrders(); }} isAdmin={isAdmin} />
+      <ProductionModal isOpen={showProduction} onClose={() => setShowProduction(false)} orders={allOrders} onProductionUpdate={() => { fetchProductionSummary(); fetchOrders(); }} isAdmin={isAdmin} boards={dynamicBoards} />
       <NeckCaptureModal isOpen={showNeckCapture} onClose={() => setShowNeckCapture(false)} orders={allOrders} onNeckUpdate={() => { fetchNeckSummary(); fetchOrders(); }} isAdmin={isAdmin} />
-      <GanttView isOpen={showGantt} onClose={() => setShowGantt(false)} isDark={isDark} />
+      <GanttView isOpen={showGantt} onClose={() => setShowGantt(false)} isDark={isDark} boards={dynamicBoards} />
       <CapacityPlanModal isOpen={showCapacityPlan} onClose={() => setShowCapacityPlan(false)} />
       <PrintedReportModal isOpen={showPrintedReport} onClose={() => setShowPrintedReport(false)} />
       {showProductionScreen && <ProductionScreen onClose={() => setShowProductionScreen(false)} isDark={isDark} />}
@@ -3004,9 +3004,9 @@ const Dashboard = () => {
         </DialogContent>
       </Dialog>
       {/* System Guide Modal — triggered by secret code 201492 */}
-      <ProductionModal isOpen={showProduction} onClose={() => setShowProduction(false)} orders={allOrders} onProductionUpdate={() => { fetchProductionSummary(); fetchOrders(); }} isAdmin={isAdmin} />
+      <ProductionModal isOpen={showProduction} onClose={() => setShowProduction(false)} orders={allOrders} onProductionUpdate={() => { fetchProductionSummary(); fetchOrders(); }} isAdmin={isAdmin} boards={dynamicBoards} />
       <NeckCaptureModal isOpen={showNeckCapture} onClose={() => setShowNeckCapture(false)} orders={allOrders} onNeckUpdate={() => { fetchNeckSummary(); fetchOrders(); }} isAdmin={isAdmin} />
-      <GanttView isOpen={showGantt} onClose={() => setShowGantt(false)} isDark={isDark} />
+      <GanttView isOpen={showGantt} onClose={() => setShowGantt(false)} isDark={isDark} boards={dynamicBoards} />
       <CapacityPlanModal isOpen={showCapacityPlan} onClose={() => setShowCapacityPlan(false)} />
       <PrintedReportModal isOpen={showPrintedReport} onClose={() => setShowPrintedReport(false)} />
       {showProductionScreen && <ProductionScreen onClose={() => setShowProductionScreen(false)} isDark={isDark} />}

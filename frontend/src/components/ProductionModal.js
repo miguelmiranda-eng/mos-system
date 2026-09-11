@@ -6,9 +6,8 @@ import { Loader2, Plus, Trash2, ClipboardList, Factory, Search, CheckCircle2 } f
 import { useLang } from "../contexts/LanguageContext";
 import { toast } from "sonner";
 
-import { API } from "../lib/constants";
+import { API, machinesFrom } from "../lib/constants";
 
-const MACHINES = Array.from({ length: 14 }, (_, i) => `MAQUINA${i + 1}`);
 const SHIFTS = ['TURNO 1', 'TURNO 2'];
 const DESIGN_TYPES = ['FRENTE', 'ESPALDA', 'MANGA'];
 const SETUP_KEY = 'production_setup_value';
@@ -32,7 +31,9 @@ const getSuggestedShift = () => {
   return '';
 };
 
-const ProductionModal = ({ isOpen, onClose, orders, onProductionUpdate, isAdmin }) => {
+const ProductionModal = ({ isOpen, onClose, orders, onProductionUpdate, isAdmin, boards = [] }) => {
+  // Máquinas = tableros MAQUINA<n> reales (los pasa el Dashboard); respaldo estático si no llegaron.
+  const MACHINES = machinesFrom(boards);
   const { t } = useLang();
   const [orderSearch, setOrderSearch] = useState('');
   const [matchedOrder, setMatchedOrder] = useState(null);

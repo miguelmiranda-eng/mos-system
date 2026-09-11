@@ -2,6 +2,7 @@ import { useState, useMemo, useRef } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "./ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { Download, BarChart3, PieChart as PieIcon, Filter, FileText, Loader2 } from "lucide-react";
+import { machinesFrom } from "../lib/constants";
 import { BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, CartesianGrid } from "recharts";
 import { useLang } from "../contexts/LanguageContext";
 import * as XLSX from 'xlsx';
@@ -96,10 +97,11 @@ const AnalyticsView = ({ isOpen, onClose, allOrders, options }) => {
     return Object.entries(counts).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value);
   }, [filteredOrders, t]);
 
+  // options.boards trae los tableros reales (/config/options los lee de
+  // board_config), así que las máquinas nuevas entran solas al filtro.
   const BOARDS = [
     "MASTER", "SCHEDULING", "BLANKS", "SCREENS", "NECK", "EJEMPLOS", "COMPLETOS",
-    "MAQUINA1", "MAQUINA2", "MAQUINA3", "MAQUINA4", "MAQUINA5", "MAQUINA6", "MAQUINA7",
-    "MAQUINA8", "MAQUINA9", "MAQUINA10", "MAQUINA11", "MAQUINA12", "MAQUINA13", "MAQUINA14"
+    ...machinesFrom(options?.boards)
   ];
 
   const handleExportExcel = () => {

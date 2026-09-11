@@ -8,7 +8,7 @@ import {
 import { useLang } from '../contexts/LanguageContext';
 import { toast } from 'sonner';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
-import { API, BOARDS } from '../lib/constants';
+import { API, BOARDS, machinesFrom } from '../lib/constants';
 
 const PERM_OPTIONS = [
   { value: 'edit', label: 'Editar', icon: Pencil, color: 'text-green-500' },
@@ -17,17 +17,17 @@ const PERM_OPTIONS = [
 ];
 
 // Boards an operator can be permanently assigned to. Matches the dropdown in
-// MachineOperatorView so the two stay in sync.
-const OPERATOR_BOARDS = [
-  ...Array.from({ length: 14 }, (_, i) => `MAQUINA${i + 1}`),
-  'NECK', 'BLANKS', 'SCREENS',
-];
+// MachineOperatorView so the two stay in sync: máquinas = tableros MAQUINA<n>
+// reales (/config/boards), con respaldo estático mientras cargan.
+const operatorBoardsFrom = (boards) => [...machinesFrom(boards), 'NECK', 'BLANKS', 'SCREENS'];
 
 const UserManagementCenter = () => {
   const navigate = useNavigate();
   const { t } = useLang();
   
   const [users, setUsers] = useState([]);
+  const [boards, setBoards] = useState([]);
+  const OPERATOR_BOARDS = operatorBoardsFrom(boards);
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteRole, setInviteRole] = useState('general');
   const [loading, setLoading] = useState(false);
@@ -99,6 +99,10 @@ const UserManagementCenter = () => {
     fetchUsers();
     fetchCustomers();
     fetchModuleAccess();
+    fetch(`${API}/config/boards`, { credentials: 'include' })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (Array.isArray(d?.boards)) setBoards(d.boards); })
+      .catch(() => {});
     fetch(`${API}/auth/me`, { credentials: 'include' })
       .then(r => r.ok ? r.json() : null)
       .then(u => setCurrentUser(u))

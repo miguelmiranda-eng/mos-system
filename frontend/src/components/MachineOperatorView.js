@@ -9,7 +9,7 @@ import {
 import ProductionModal from "./ProductionModal";
 import { CommentsModal } from "./dashboard/CommentsModal";
 import { EditableCell } from "./dashboard/EditableCell";
-import { DEFAULT_COLUMNS } from "../lib/constants";
+import { DEFAULT_COLUMNS, MACHINES } from "../lib/constants";
 import { apiFetch } from "../lib/http";
 
 const BACKEND = process.env.REACT_APP_BACKEND_URL;
@@ -18,7 +18,7 @@ const WS_URL = `${BACKEND}`.replace(/^http/, "ws") + "/api/ws";
 const STORAGE_BOARD = "operator_board";
 
 const FALLBACK_BOARDS = [
-  ...Array.from({ length: 14 }, (_, i) => `MAQUINA${i + 1}`),
+  ...MACHINES,
   "NECK", "BLANKS", "SCREENS",
 ];
 
