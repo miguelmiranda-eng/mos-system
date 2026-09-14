@@ -29,7 +29,7 @@ export default class ErrorBoundary extends React.Component {
             {String((e && (e.stack || e.message)) || e)}
           </pre>
           <button
-            onClick={() => { this.setState({ error: null }); window.location.reload(); }}
+            onClick={() => { this.setState({ error: null }); window.__mosProgrammaticReload = true; window.location.reload(); }}
             style={{ marginTop: 14, padding: "12px 18px", background: "#3d5bff", color: "#fff", border: "none", borderRadius: 10, fontWeight: 800, fontSize: 14 }}
           >
             Recargar

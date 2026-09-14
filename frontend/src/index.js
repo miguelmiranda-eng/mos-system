@@ -13,6 +13,15 @@ root.render(
   </React.StrictMode>,
 );
 
+// Recarga iniciada por la app (no por el usuario). Marca la bandera que el
+// guard de beforeunload en App.js consulta para NO mostrar el dialogo
+// "¿Quieres volver a cargar el sitio?": ese dialogo es para cierres a mano,
+// no para una actualizacion que decidimos nosotros.
+export function programmaticReload() {
+  window.__mosProgrammaticReload = true;
+  window.location.reload();
+}
+
 // PWA: register the service worker so the PDA picker is installable + offline-shell.
 if ("serviceWorker" in navigator) {
   // Auto-update: cuando un SW nuevo (nuevo deploy) toma el control, recarga UNA
@@ -24,7 +33,7 @@ if ("serviceWorker" in navigator) {
   navigator.serviceWorker.addEventListener("controllerchange", () => {
     if (reloading || !hadController) return;
     reloading = true;
-    window.location.reload();
+    programmaticReload();
   });
   window.addEventListener("load", () => {
     navigator.serviceWorker
@@ -43,8 +52,10 @@ if ("serviceWorker" in navigator) {
 // asi que se compara contra el que esta corriendo.
 (function autoUpdateOnDeploy() {
   const CHECK_MS = 3 * 60 * 1000;
+  const IDLE_MS = 2 * 60 * 1000;
   let running = null;
   let reloading = false;
+  let pending = false;
 
   const readMainHash = async () => {
     const res = await fetch(`/asset-manifest.json?t=${Date.now()}`, { cache: "no-store" });
@@ -53,11 +64,27 @@ if ("serviceWorker" in navigator) {
     return (j.files && j.files["main.js"]) || null;
   };
 
-  // No recargar encima de alguien que esta tecleando (un escaneo a medias se
-  // perderia). Se pospone al siguiente chequeo.
+  // Ultima interaccion real del usuario. Recargar encima de alguien que esta
+  // trabajando (modal abierto, filtros, un escaneo a medias) le tira el estado
+  // de la SPA aunque no salga ningun dialogo; se espera a un momento seguro.
+  let lastActivity = Date.now();
+  const touch = () => { lastActivity = Date.now(); };
+  ["pointerdown", "keydown", "wheel", "touchstart"].forEach((ev) =>
+    window.addEventListener(ev, touch, { passive: true, capture: true }),
+  );
+
   const isBusy = () => {
     const el = document.activeElement;
     return !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA") && !!el.value;
+  };
+  const isSafeMoment = () =>
+    document.visibilityState === "hidden" ||
+    (Date.now() - lastActivity >= IDLE_MS && !isBusy());
+
+  const applyIfSafe = () => {
+    if (!pending || reloading || !isSafeMoment()) return;
+    reloading = true;
+    programmaticReload();
   };
 
   const check = async () => {
@@ -66,10 +93,8 @@ if ("serviceWorker" in navigator) {
       const main = await readMainHash();
       if (!main) return;
       if (running === null) { running = main; return; }
-      if (main !== running && !isBusy()) {
-        reloading = true;
-        window.location.reload();
-      }
+      if (main !== running) pending = true;
+      applyIfSafe();
     } catch {
       /* sin red: se reintenta en el siguiente ciclo */
     }
@@ -77,8 +102,11 @@ if ("serviceWorker" in navigator) {
 
   check();
   setInterval(check, CHECK_MS);
-  // Al volver a primer plano: en la PDA suspendida los timers se congelan.
+  // Con actualizacion pendiente, el mejor momento es cuando la pestaña deja de
+  // verse: el usuario vuelve y ya esta en el bundle nuevo, sin notarlo.
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "visible") check();
+    if (document.visibilityState === "hidden") applyIfSafe();
+    // Al volver a primer plano: en la PDA suspendida los timers se congelan.
+    else check();
   });
 })();

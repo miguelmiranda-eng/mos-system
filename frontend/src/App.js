@@ -131,6 +131,9 @@ const AuthProvider = ({ children }) => {
   // Global tab-close guard
   useEffect(() => {
     const handleBeforeUnload = (e) => {
+      // Recargas decididas por la app (nuevo deploy, SW nuevo, ErrorBoundary)
+      // no deben pedir confirmacion: ver programmaticReload() en index.js.
+      if (window.__mosProgrammaticReload) return;
       if (user) {
         e.preventDefault();
         e.returnValue = ""; // Standard browser requirement
