@@ -69,8 +69,6 @@ export const LocationsModule = ({ currentUser }) => {
   // Light tabs render zone contents inline by default — same UX as before.
   const isHeavyTab = HEAVY_TABS.has(activeTab);
   // Bulk-move state: { from: locObj, to: '' } when modal is open
-  const [moveBulk, setMoveBulk] = useState(null);
-  const [movingBulk, setMovingBulk] = useState(false);
   // Progressive rendering: with thousands of system locations, painting every
   // card up front lags the browser. Show this many zones at a time and let the
   // user request more. Reset when the search/tab changes.
@@ -565,28 +563,6 @@ export const LocationsModule = ({ currentUser }) => {
     }
   };
 
-  const handleBulkMove = async () => {
-    if (!moveBulk || !moveBulk.to?.trim()) { toast.error(t('wms_select_dest')); return; }
-    const dst = moveBulk.to.trim().toUpperCase();
-    const src = moveBulk.from.name;
-    if (dst === src.toUpperCase()) { toast.error(t('wms_dest_must_differ')); return; }
-    setMovingBulk(true);
-    try {
-      const res = await poster('/move-location', { from: src, to: dst });
-      if (res.ok) {
-        const data = await res.json();
-        toast.success(data.message || t('wms_stock_moved'));
-        setMoveBulk(null);
-        load();
-      } else {
-        const err = await res.json().catch(() => ({}));
-        toast.error(err.detail || t('wms_move_err'));
-      }
-    } catch (err) {
-      logLoadError('bulk move')(err);
-      toast.error(t('wms_err_connection'));
-    } finally { setMovingBulk(false); }
-  };
 
   const filtered = locations.filter(l => {
     const summary = l.inventory_summary || { total_units: 0, skus_count: 0, items: [] };
@@ -878,15 +854,6 @@ export const LocationsModule = ({ currentUser }) => {
                             {l.on_hold ? <Unlock className="w-3.5 h-3.5" /> : <Lock className="w-3.5 h-3.5" />}
                           </button>
                         )}
-                        {!isEmpty && (
-                          <button
-                            onClick={() => setMoveBulk({ from: l, to: '' })}
-                            className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted rounded-md transition-colors"
-                            title={t('wms_move_all_title', { name: l.name })}
-                          >
-                            <ArrowRightLeft className="w-3.5 h-3.5" />
-                          </button>
-                        )}
                         {!SYSTEM_TRANSIT_NAMES.has((l.name || '').toUpperCase()) && (
                           <>
                             <button
@@ -933,65 +900,6 @@ export const LocationsModule = ({ currentUser }) => {
         })()}
         </div>
       </div>
-      {moveBulk && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm animate-in fade-in duration-150">
-          <div className="w-full max-w-md p-6 bg-card border border-border rounded-lg shadow-xl space-y-5 mx-4">
-            <div className="flex items-start justify-between">
-              <div className="min-w-0">
-                <h3 className="text-sm font-semibold">{t('wms_move_all_stock')}</h3>
-                <p className="text-xs text-muted-foreground mt-0.5">Bulk relocation</p>
-              </div>
-              <button onClick={() => setMoveBulk(null)} className="p-1 hover:bg-muted rounded-md transition-colors" disabled={movingBulk}>
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="bg-muted/40 rounded-lg p-4 border border-border">
-              <div className="text-xs font-medium text-muted-foreground mb-1">{t('wms_origin')}</div>
-              <div className="font-mono font-semibold text-lg">{moveBulk.from.name}</div>
-              <div className="text-xs text-muted-foreground mt-1">
-                {moveBulk.from.inventory_summary?.skus_count || 0} SKUs · {(moveBulk.from.inventory_summary?.total_units || 0).toLocaleString()} {t('wms_units_lc')}
-              </div>
-            </div>
-
-            <div>
-              <label className="text-xs font-medium text-muted-foreground mb-1 block">{t('wms_dest_loc')}</label>
-              <input
-                value={moveBulk.to}
-                onChange={e => setMoveBulk(m => ({ ...m, to: e.target.value.toUpperCase() }))}
-                placeholder={t('wms_dest_example')}
-                className={`${cls.input} font-mono`}
-                data-testid="bulk-move-dst"
-                autoFocus
-              />
-              <p className="text-xs text-muted-foreground mt-2">
-                {t('wms_bulk_move_hint')}
-              </p>
-            </div>
-
-            <div className="flex gap-3">
-              <Btn
-                variant="primary"
-                onClick={handleBulkMove}
-                disabled={movingBulk || !moveBulk.to?.trim()}
-                className="flex-1"
-                data-testid="bulk-move-confirm"
-              >
-                {movingBulk ? <Loader2 className="w-4 h-4 animate-spin" /> : <ArrowRightLeft className="w-4 h-4" />}
-                {t('wms_move')}
-              </Btn>
-              <Btn
-                onClick={() => setMoveBulk(null)}
-                disabled={movingBulk}
-                className="flex-1"
-              >
-                {t('cancel')}
-              </Btn>
-            </div>
-          </div>
-        </div>
-      )}
-
       {editingLoc && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
           <div className="w-full max-w-md p-6 bg-card border border-border rounded-lg shadow-xl space-y-6 mx-4">

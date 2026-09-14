@@ -1959,82 +1959,12 @@ async def list_location_zones(request: Request):
     return sorted(by_zone.values(), key=lambda r: r["zone"])
 
 
-@router.post("/move-location")
-async def move_location_bulk(request: Request):
-    """Move ALL inventory from one location to another in one operation.
-    Body: { from: str, to: str }. Both must already exist. Performs:
-      1. wms_boxes.update_many({location: from}, {location: to})
-      2. wms_inventory: handles duplicate SKUs at the destination by merging
-         (sum units_on_hand + units_allocated + total_boxes, delete source row).
-      3. Single 'bulk_relocation' movement logged with totals.
+MAX_RELOCATE_BOXES = 50  # tope por llamada a /boxes/relocate; ver comentario ahí
 
-    Admin nivel 5+ / supersu: barrer una ubicación ENTERA es la operación más
-    destructiva del Mover (arrastra toda caja, con o sin piezas). Antes solo
-    pedía `require_auth`, así que cualquier usuario podía dispararla por API
-    aunque la UI le ocultara el botón; se cerró a nivel 5.
-    """
-    user = await require_admin_level(request, 5)
-    body = await request.json()
-    src = (body.get("from") or "").strip().upper()
-    dst = (body.get("to") or "").strip().upper()
-    if not src or not dst:
-        raise HTTPException(400, "from y to son obligatorios")
-    if src == dst:
-        raise HTTPException(400, "from y to no pueden ser iguales")
-
-    # Both locations must exist
-    src_loc = await db.wms_locations.find_one({"name": {"$regex": f"^{re.escape(src)}$", "$options": "i"}})
-    dst_loc = await db.wms_locations.find_one({"name": {"$regex": f"^{re.escape(dst)}$", "$options": "i"}})
-    if not src_loc:
-        raise HTTPException(404, f"Ubicación origen '{src}' no encontrada")
-    if not dst_loc:
-        raise HTTPException(404, f"Ubicación destino '{dst}' no encontrada. Créala primero.")
-    await _assert_not_on_hold(user, src, dst)
-
-    # LA CAJA MANDA: se mueven las CAJAS y el resumen se recalcula desde
-    # ellas. Cambio de comportamiento deliberado: los saldos SIN cajas ya no
-    # "viajan" con la ubicación — un renglón sin caja no representa nada
-    # movible; se queda en el origen marcado para conteo por la reproyección.
-    src_box_filter = {"location": {"$regex": f"^{re.escape(src)}$", "$options": "i"}}
-    # OJO: proyección vía ledger.box_projection() — DEBE traer los campos del
-    # lote o la firma sale ('','') y el renglón del origen sobrevive con sus
-    # unidades (PS06-A04, 194u duplicadas en papel, 2026-07-23).
-    boxes_src = await db.wms_boxes.find(
-        src_box_filter, ledger.box_projection()).to_list(10000)
-    moved_box_ids = [b["box_id"] for b in boxes_src if b.get("box_id")]
-    tocados = {}
-    for b in boxes_src:
-        k = (b.get("style") or "", b.get("sku") or "", b.get("color", ""), b.get("size", ""))
-        tocados.setdefault(k, set()).add(ledger.row_signature(b))
-    units_moved = sum(int(b.get("units") or b.get("qty") or 0) for b in boxes_src)
-    skus_moved = len(tocados)
-
-    box_res = await db.wms_boxes.update_many(src_box_filter, {"$set": {"location": dst, "last_transferred_at": now_iso(), "last_transferred_by": user.get("name", user.get("email", ""))}})
-    boxes_moved = box_res.modified_count
-
-    for (t_style, t_sku, t_color, t_size), sigs in tocados.items():
-        await _reproject_material_rows(t_style, t_sku, t_color, t_size, src,
-                                       user=user, moved_sigs=sigs)
-        await _reproject_material_rows(t_style, t_sku, t_color, t_size, dst, user=user)
-
-    await log_movement(user, MovementType.BULK_RELOCATION, {
-        "trigger": MovementTrigger.LOCATION_SWEEP,   # se barrió la ubicación ENTERA — nadie escaneó cajas
-        "from": src, "to": dst,                      # legado
-        "origins": [src], "destination": dst,        # normalizado
-        "boxes_moved": boxes_moved,
-        "skus_moved": skus_moved,
-        "units_moved": units_moved,                  # legado (total del lote)
-        "units_batch": units_moved,                  # normalizado (total del lote)
-        "box_units": _box_units_snapshot(boxes_src), # {box_id: u} → "esta caja: X u" (0 = cartón vacío arrastrado)
-        "box_ids": moved_box_ids[:MOVEMENT_BOX_UNITS_CAP],  # cap log payload (alineado con box_units)
-    })
-    await notify_badge_change("all")
-
-    return {
-        "message": f"Movidas {skus_moved} SKUs ({units_moved} unidades, {boxes_moved} cajas) de {src} a {dst}",
-        "from": src, "to": dst,
-        "skus_moved": skus_moved, "units_moved": units_moved, "boxes_moved": boxes_moved,
-    }
+# /move-location ("Toda la ubicación") se ELIMINÓ de raíz (2026-09-14): barría
+# una ubicación entera, con o sin piezas, y era la operación más destructiva del
+# WMS. Mover material se hace caja por caja (/boxes/relocate) o por unidades
+# (/move-units); ambos dejan rastro por caja.
 
 
 @router.get("/transit/info")
@@ -2219,6 +2149,17 @@ async def boxes_relocate(request: Request):
     dst = (body.get("to") or "").strip().upper()
     if not box_ids:
         raise HTTPException(400, "box_ids es obligatorio")
+    # Tope por llamada: sin /move-location, esta es la única vía genérica entre
+    # ubicaciones y NO debe servir para barrer una ubicación entera mandando
+    # todos sus IDs. Medido 2026-09-14 (60 días): mediana 3 cajas, p95 19,
+    # máx 62; solo 1 llamada pasó de 50. El p99 de cajas vivas por ubicación
+    # es 40, así que 50 no estorba un pallet real.
+    if len(box_ids) > MAX_RELOCATE_BOXES:
+        raise HTTPException(
+            400,
+            f"Máximo {MAX_RELOCATE_BOXES} cajas por movimiento (recibí {len(box_ids)}). "
+            f"Mover una ubicación completa ya no existe: hazlo por tandas de cajas escaneadas.",
+        )
     if not dst:
         raise HTTPException(400, "to es obligatorio")
 

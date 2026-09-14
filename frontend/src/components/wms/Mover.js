@@ -321,9 +321,6 @@ export function MoverModule({ currentUser }) {
     }
   };
 
-  const moveAll = () => doMove(t("wms_move_all_loc"),
-    poster("/move-location", { from: origin, to: cleanScan(dest) }));
-
   const moveBoxes = () => doMove(t("wms_move_boxes"),
     poster("/boxes/relocate", { box_ids: selectedBoxes, to: cleanScan(dest) }));
 
@@ -635,12 +632,6 @@ export function MoverModule({ currentUser }) {
                   <span className="w-6 h-6 rounded-full bg-primary text-primary-foreground text-xs flex items-center justify-center font-semibold">2</span>
                   {t("wms_what_to_move")}
                 </div>
-                {canRed && (
-                <ModeButton icon={Layers} color="text-amber-400" testid="mover-mode-all"
-                  title={t("wms_mode_all")}
-                  subtitle={t("wms_mode_all_sub", { n: contents.boxes.length, units: totalUnits })}
-                  onClick={() => setMode("all")} />
-                )}
                 <ModeButton icon={Boxes} color="text-blue-400" testid="mover-mode-box"
                   title={t("wms_mode_box")}
                   subtitle={t("wms_mode_box_sub")}
@@ -663,20 +654,6 @@ export function MoverModule({ currentUser }) {
                   className="text-xs font-medium text-primary flex items-center gap-1">
                   <X className="w-3.5 h-3.5" /> {t("wms_change_move_type")}
                 </button>
-
-                {/* MODE: ALL */}
-                {mode === "all" && (
-                  <div className="bg-card border border-border rounded-lg p-5 space-y-4">
-                    <p className="text-sm">
-                      {t("wms_move_all_text_1")} <strong>{t("wms_move_all_text_all")}</strong> {t("wms_move_all_text_2")} <span className="font-mono font-medium">{origin}</span>
-                      {" "}{t("wms_move_all_text_3", { n: contents.boxes.length, units: totalUnits })}
-                    </p>
-                    <DestAndGo
-                      dest={dest} setDest={setDest} locations={locNames}
-                      disabled={submitting} onGo={moveAll}
-                      label={t("wms_move_all_to")} />
-                  </div>
-                )}
 
                 {/* MODE: BOX */}
                 {mode === "box" && (

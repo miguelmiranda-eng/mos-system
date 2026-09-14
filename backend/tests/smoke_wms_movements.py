@@ -143,9 +143,22 @@ async def main():
         check("SIN fila duplicada en origen", filas("PS07-A25", "CK001") == 1,
               f"filas={filas('PS07-A25', 'CK001')}")
 
-        print("\n== 2. /move-location: regreso completo, debe FUSIONAR no duplicar ==")
+        print("\n== 2. /move-location ya NO existe; el regreso es caja por caja ==")
         r = await c.post("/api/wms/move-location",
                          json={"from": "NA08-C37", "to": "PS07-A25"}, headers=H)
+        check("/move-location eliminado (404/405) — incluso para supersu",
+              r.status_code in (404, 405), f"{r.status_code} {r.text[:120]}")
+        # El tope por llamada frena el barrido "por la puerta de atrás" (mandar
+        # todos los IDs de la ubicación a /boxes/relocate).
+        r = await c.post("/api/wms/boxes/relocate",
+                         json={"box_ids": [f"FAKE-{i:03d}" for i in range(51)],
+                               "to": "PS07-A25"}, headers=H)
+        check("relocate con 51 cajas rebota (400)", r.status_code == 400, r.text[:160])
+        check("NADA se movió con el lote rechazado", total("NA08-C37") == 192,
+              f"={total('NA08-C37')}")
+        r = await c.post("/api/wms/boxes/relocate",
+                         json={"box_ids": [f"SMOKE-{i:03d}" for i in range(4)],
+                               "to": "PS07-A25"}, headers=H)
         check("regreso sin error", r.status_code == 200, r.text[:160])
         check("UNA sola fila CK001 en PS07-A25", filas("PS07-A25", "CK001") == 1,
               f"filas={filas('PS07-A25', 'CK001')}")
