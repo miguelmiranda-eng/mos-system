@@ -255,5 +255,5 @@ export const mergeUnique = (...lists) => {
 };
 
 // ─── WMS Context (badges + cross-module actions) ────────────────────────────
-export const WmsContext = createContext({ badges: {}, refreshBadges: () => {} });
+export const WmsContext = createContext({ badges: {}, refreshBadges: () => {}, openAsn: null });
 export const useWms = () => useContext(WmsContext);

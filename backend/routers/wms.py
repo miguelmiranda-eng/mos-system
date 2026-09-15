@@ -3666,8 +3666,8 @@ async def buscar_historial_caja(box_id: str, limit: int = 300) -> dict:
                 continue
             for k in ("customer", "manufacturer", "style", "color", "size", "sku",
                       "description", "country_of_origin", "fabric_content",
-                      "lot_number", "asn_reference", "upc"):
-                if r.get(k) and not d.get(k):
+                      "lot_number", "asn_reference", "upc", "asn_line_no", "part_number"):
+                if r.get(k) not in (None, "") and d.get(k) in (None, ""):
                     d[k] = r.get(k)
             # This specific box's received units, pulled from the receiving's box list.
             for b in (r.get("boxes") or []):
@@ -3694,6 +3694,34 @@ async def buscar_historial_caja(box_id: str, limit: int = 300) -> dict:
                         break
             m["details"] = d
 
+    # Búsqueda inversa (fase 3): de la caja a la entrada + línea + número de
+    # parte. Exacto si la caja trae asn_line_no/part_number (recibos de fase 2);
+    # best-effort por upc/sku/style para cajas viejas. Si la entrada ya se
+    # borró, se conserva lo que la caja heredó (exists=False).
+    asn_link = None
+    if box and (box.get("asn_reference") or box.get("part_number")):
+        ref = (box.get("asn_reference") or "").strip()
+        asn_doc = await db.wms_asn.find_one(
+            {"asn_id": ref},
+            {"_id": 0, "asn_id": 1, "po_number": 1, "vendor": 1, "customer": 1, "status": 1, "closed": 1, "items": 1},
+        ) if ref else None
+        a = _asn_attribute_boxes(asn_doc or {}, [box]).get(box.get("box_id")) or {}
+        line = next((it for it in (asn_doc or {}).get("items", []) if it.get("line_no") == a.get("line_no")), None)             if a.get("line_no") is not None else None
+        asn_link = {
+            "asn_id": ref or None,
+            "exists": asn_doc is not None,
+            "po_number": (asn_doc or {}).get("po_number", ""),
+            "vendor": (asn_doc or {}).get("vendor", ""),
+            "customer": (asn_doc or {}).get("customer", ""),
+            "status": (asn_doc or {}).get("status", ""),
+            "closed": bool((asn_doc or {}).get("closed")),
+            "line_no": a.get("line_no"),
+            "part_number": a.get("part_number") or box.get("part_number") or "",
+            "match": a.get("match"),
+            "line": {k: line.get(k) for k in ("line_no", "part_number", "description", "garment", "gender",
+                                              "fabric", "country", "qty_expected", "qty_received")} if line else None,
+        }
+
     # SKU/location context — only when we still know the box's dimensions.
     sku_context = []
     if box:
@@ -3710,6 +3738,7 @@ async def buscar_historial_caja(box_id: str, limit: int = 300) -> dict:
         "box_event_count": len(box_events),
         "sku_context": sku_context,
         "sku_context_count": len(sku_context),
+        "asn_link": asn_link,
         # El buscador global del header es donde más se consulta una caja
         # suelta: el aviso de cuarentena tiene que salir también aquí.
         **(marca_corrupta(box) if box else {"inventario_corrupto": False}),
@@ -10535,6 +10564,42 @@ def _box_keys(b) -> set:
     """Identifiers a box can be matched to an ASN line by."""
     return {str(b.get(k) or "").strip().upper() for k in ("upc", "sku", "style") if b.get(k)}
 
+
+def _asn_attribute_boxes(asn: dict, boxes: list) -> dict:
+    """A qué línea / número de parte de la entrada pertenece cada caja.
+
+    Fase 3: exacto cuando la caja trae `asn_line_no` (la guardó el recibo de
+    fase 2); si esa línea ya no existe en la entrada (se editó), vale el
+    `part_number` que la caja heredó. Las cajas viejas sin línea siguen con el
+    best-effort de siempre: la línea cuyo part_number es el upc/sku/style de la
+    caja (entradas legado, part_number == style). Devuelve
+    {box_id: {"line_no", "part_number", "match": "exact"|"best_effort"|None}}."""
+    items = (asn or {}).get("items", [])
+    by_line = {it.get("line_no"): it for it in items}
+    out = {}
+    for b in boxes:
+        ln = b.get("asn_line_no")
+        if ln is not None:
+            line = by_line.get(ln)
+            out[b["box_id"]] = {
+                "line_no": ln,
+                "part_number": (line or {}).get("part_number") or b.get("part_number") or "",
+                "match": "exact",
+            }
+            continue
+        if b.get("part_number"):
+            out[b["box_id"]] = {"line_no": None, "part_number": b["part_number"], "match": "exact"}
+            continue
+        keys = _box_keys(b)
+        line = next((it for it in items
+                     if str(it.get("part_number") or "").strip().upper() in keys), None)
+        if line:
+            out[b["box_id"]] = {"line_no": line.get("line_no"), "part_number": line.get("part_number"),
+                                "match": "best_effort"}
+        else:
+            out[b["box_id"]] = {"line_no": None, "part_number": "", "match": None}
+    return out
+
 # El importador de packing lists (POST /asn/import, Excel/PDF) se ELIMINÓ
 # (2026-09-15): la captura es manual en la hoja de Entradas y el número de
 # parte se compone solo (services/part_number.py). Los helpers de lectura de
@@ -11005,22 +11070,114 @@ async def get_asn_detail(asn_id: str, request: Request):
         s["units"] += u; s["boxes"] += 1; s["locations"].add(loc)
     by_sku_list = [{**v, "locations": sorted(v["locations"])} for v in by_sku.values()]
 
-    # Per ASN line: how much of that line is still on hand (best-effort match by
-    # part_number against each box's upc/sku/style).
+    # Fase 3: cada caja se atribuye a su línea / número de parte (exacto con
+    # asn_line_no; best-effort por upc/sku/style para cajas viejas) y sale con
+    # esa atribución para que el detalle filtre sin repetir la regla.
+    attrib = _asn_attribute_boxes(asn, boxes)
+    for b in boxes:
+        a = attrib.get(b["box_id"]) or {}
+        b["part_number_resolved"] = a.get("part_number") or ""
+        b["asn_line_no_resolved"] = a.get("line_no")
+        b["asn_match"] = a.get("match")
+    # Piezas con las que ENTRÓ cada caja (el recibo las congela en boxes[]);
+    # `units` de la caja es lo que queda hoy.
+    arrived_by_box = {}
+    for r in receivings:
+        for rb in (r.get("boxes") or []):
+            if rb.get("box_id"):
+                arrived_by_box[rb["box_id"]] = int(rb.get("units") or 0)
+
+    # Per ASN line: how much of that line is still on hand. Exact when the box
+    # carries asn_line_no; legacy boxes keep the best-effort key match (a legacy
+    # box counts on every line sharing its part_number, as before).
     by_line = []
     for it in asn.get("items", []):
-        pn = str(it.get("part_number") or "").strip().upper()
-        line_stock = sum(
-            int(b.get("units") or b.get("qty") or 0)
-            for b in in_stock_boxes if pn and pn in _box_keys(b)
-        )
+        ln = it.get("line_no")
+        part = str(it.get("part_number") or "").strip().upper()
+        line_boxes = [b for b in boxes if (attrib.get(b["box_id"]) or {}).get("line_no") == ln
+                      or ((attrib.get(b["box_id"]) or {}).get("match") == "best_effort"
+                          and part and part in _box_keys(b))]
+        line_stock = sum(int(b.get("units") or b.get("qty") or 0) for b in line_boxes if _box_in_stock(b))
         by_line.append({
-            "line_no": it.get("line_no"),
+            "line_no": ln,
             "part_number": it.get("part_number"),
             "qty_expected": int(it.get("qty_expected") or 0),
             "qty_received": int(it.get("qty_received") or 0),
             "qty_in_stock": line_stock,
+            "boxes": len(line_boxes),
+            "boxes_in_stock": sum(1 for b in line_boxes if _box_in_stock(b)),
         })
+
+    # Por NÚMERO DE PARTE (fase 3): un número de parte cubre todos los
+    # estilos/colores/tallas con esa prenda, composición y origen, así que es
+    # la unidad natural para comparar lo que decía el packing list contra lo
+    # que llegó. Orden = primera aparición en la hoja; las cajas que no casan
+    # con ninguna línea van al final bajo part_number None.
+    by_part: dict = {}
+    for it in asn.get("items", []):
+        key = str(it.get("part_number") or "").strip().upper()
+        p = by_part.get(key)
+        if not p:
+            p = by_part[key] = {
+                "part_number": it.get("part_number") or "",
+                "description": it.get("description") or "",
+                "garment": it.get("garment") or "", "gender": it.get("gender") or "",
+                "fabric": it.get("fabric") or "", "country": it.get("country") or "",
+                "sample": bool(it.get("sample")),
+                "line_nos": [], "qty_expected": 0, "qty_received": 0,
+                "units_arrived": 0, "units_in_stock": 0, "boxes": 0, "boxes_in_stock": 0,
+                "boxes_exact": 0, "boxes_best_effort": 0,
+                "skus": {}, "box_ids": [],
+            }
+        p["line_nos"].append(it.get("line_no"))
+        p["qty_expected"] += int(it.get("qty_expected") or 0)
+        p["qty_received"] += int(it.get("qty_received") or 0)
+    unmatched = None
+    for b in boxes:
+        a = attrib.get(b["box_id"]) or {}
+        key = str(a.get("part_number") or "").strip().upper()
+        p = by_part.get(key) if key else None
+        if p is None:
+            if unmatched is None:
+                unmatched = {
+                    "part_number": None, "unmatched": True, "description": "", "garment": "", "gender": "",
+                    "fabric": "", "country": "", "sample": False, "line_nos": [],
+                    "qty_expected": 0, "qty_received": 0,
+                    "units_arrived": 0, "units_in_stock": 0, "boxes": 0, "boxes_in_stock": 0,
+                    "boxes_exact": 0, "boxes_best_effort": 0, "skus": {}, "box_ids": [],
+                }
+            p = unmatched
+        u_now = int(b.get("units") or b.get("qty") or 0)
+        u_in = arrived_by_box.get(b["box_id"], u_now)
+        stock = _box_in_stock(b)
+        p["boxes"] += 1
+        p["units_arrived"] += u_in
+        p["box_ids"].append(b["box_id"])
+        if a.get("match") == "exact":
+            p["boxes_exact"] += 1
+        elif a.get("match") == "best_effort":
+            p["boxes_best_effort"] += 1
+        if stock:
+            p["boxes_in_stock"] += 1
+            p["units_in_stock"] += u_now
+        sk = "|".join(str(b.get(k) or "").strip().upper() for k in ("style", "color", "size"))
+        s = p["skus"].get(sk)
+        if not s:
+            s = p["skus"][sk] = {"style": b.get("style") or "", "color": b.get("color") or "",
+                                 "size": b.get("size") or "", "units_arrived": 0, "units_in_stock": 0,
+                                 "boxes": 0, "boxes_in_stock": 0, "locations": set()}
+        s["units_arrived"] += u_in
+        s["boxes"] += 1
+        if stock:
+            s["units_in_stock"] += u_now
+            s["boxes_in_stock"] += 1
+            if b.get("location"):
+                s["locations"].add(str(b["location"]).strip())
+    by_part_list = list(by_part.values()) + ([unmatched] if unmatched else [])
+    for p in by_part_list:
+        p["skus"] = sorted(
+            [{**s, "locations": sorted(s["locations"])} for s in p["skus"].values()],
+            key=lambda s: (s["style"], s["color"], s["size"]))
 
     summary = {
         "total_units": total_units,
@@ -11040,6 +11197,7 @@ async def get_asn_detail(asn_id: str, request: Request):
         "by_location": sorted(by_location.values(), key=lambda x: -x["units"]),
         "by_sku": sorted(by_sku_list, key=lambda x: -x["units"]),
         "by_line": by_line,
+        "by_part": by_part_list,
     }
 
     return {"asn": asn, "boxes": boxes, "receivings": receivings, "summary": summary}

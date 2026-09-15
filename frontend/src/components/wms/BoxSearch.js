@@ -1,9 +1,9 @@
 import { useState, useRef } from "react";
 import { createPortal } from "react-dom";
 import { toast } from "sonner";
-import { ScanLine, X, Loader2, MapPin, Package, History, AlertTriangle, Printer } from "lucide-react";
+import { ScanLine, X, Loader2, MapPin, Package, History, AlertTriangle, Printer, FileText } from "lucide-react";
 import { useLang } from "../../contexts/LanguageContext";
-import { fetcher, cleanScan, API } from "./lib";
+import { fetcher, cleanScan, API, useWms } from "./lib";
 import { Chip } from "./ui";
 
 // Friendly labels (i18n keys) for the movement types a box's timeline can surface.
@@ -117,6 +117,8 @@ export function BoxSearchBar({ compact = false }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const inputRef = useRef(null);
+  // Salto al detalle de la entrada (lo provee WMS.js; en otros hosts es null).
+  const { openAsn } = useWms();
 
   const search = async (e) => {
     e?.preventDefault();
@@ -235,6 +237,36 @@ export function BoxSearchBar({ compact = false }) {
                     ) : (
                       <div className="text-xs font-medium text-amber-600 dark:text-amber-400 mt-2 flex items-center gap-1">
                         <AlertTriangle className="w-3.5 h-3.5" /> {t("wms_bs_box_gone")}
+                      </div>
+                    )}
+                    {/* Búsqueda inversa (fase 3): de la caja a su entrada, línea y
+                        número de parte. Exacto para cajas recibidas con fase 2;
+                        ≈ = caja vieja atribuida por estilo/UPC. */}
+                    {data.found && data.asn_link && (
+                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-2 pt-2 border-t border-border/60 text-xs" data-testid="bs-asn-link">
+                        <span className="inline-flex items-center gap-1 text-muted-foreground"><FileText className="w-3.5 h-3.5" /> {t("wms_bs_asn_entry")}:</span>
+                        {data.asn_link.asn_id ? (
+                          openAsn && data.asn_link.exists ? (
+                            <button type="button" onClick={() => { openAsn(data.asn_link.asn_id); close(); }}
+                              className="font-mono font-semibold text-primary hover:underline" data-testid="bs-asn-open">
+                              {data.asn_link.asn_id}
+                            </button>
+                          ) : <b className="font-mono">{data.asn_link.asn_id}</b>
+                        ) : <span className="text-muted-foreground">—</span>}
+                        {data.asn_link.asn_id && !data.asn_link.exists && (
+                          <span className="text-amber-600 dark:text-amber-400">{t("wms_bs_asn_deleted")}</span>
+                        )}
+                        {data.asn_link.line_no != null && (
+                          <span className="text-muted-foreground">{t("wms_bs_asn_line", { n: data.asn_link.line_no })}</span>
+                        )}
+                        {data.asn_link.part_number && (
+                          <span className="font-mono font-semibold text-foreground" title={data.asn_link.match === 'best_effort' ? t("wms_bs_asn_approx") : undefined}>
+                            {data.asn_link.part_number}{data.asn_link.match === 'best_effort' ? ' ≈' : ''}
+                          </span>
+                        )}
+                        {data.asn_link.line?.description && (
+                          <span className="text-muted-foreground truncate max-w-[260px]" title={data.asn_link.line.description}>{data.asn_link.line.description}</span>
+                        )}
                       </div>
                     )}
                     {data.found && (

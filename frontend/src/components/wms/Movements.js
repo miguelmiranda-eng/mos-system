@@ -909,6 +909,11 @@ const BoxHistoryTab = () => {
                   [t('wms_lot_label'), data.box?.lot_number],
                   [t('wms_dl_receiving'), data.box?.receiving_id],
                   ['ASN', data.box?.asn_reference],
+                  // Fase 3: entrada + línea + número de parte (asn_link lo
+                  // resuelve el servidor; ≈ = caja vieja atribuida por estilo/UPC).
+                  [t('wms_bs_asn_line_label'), data.asn_link?.line_no],
+                  [t('wms_asn_part_number'), data.asn_link?.part_number
+                    ? `${data.asn_link.part_number}${data.asn_link.match === 'best_effort' ? ' ≈' : ''}` : null],
                   ['UPC', data.box?.upc],
                   [t('wms_created_f'), data.box?.created_at ? new Date(data.box.created_at).toLocaleDateString() : null],
                 ].filter(([, v]) => v != null && v !== '').map(([label, v, Icon]) => (

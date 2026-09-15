@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { toast } from "sonner";
-import { FileUp, Loader2, X, Package, Search, AlertTriangle, Trash2, Pencil, Plus, Check, CheckCircle2, RotateCcw, Lock, Columns3, Sparkles, Settings2 } from "lucide-react";
+import { FileUp, Loader2, X, Package, Search, AlertTriangle, Trash2, Pencil, Plus, Check, CheckCircle2, RotateCcw, Lock, Columns3, Sparkles, Settings2, ChevronRight, Filter } from "lucide-react";
 import * as XLSX from "xlsx";
 import { saveAs } from "file-saver";
 import { useLang } from "../../contexts/LanguageContext";
@@ -118,7 +118,10 @@ function ExtraCell({ col, line, cols, onChange, readOnly = false, grid = false }
     className={`${base} ${col.type === 'number' ? 'text-right tabular-nums' : ''}`} style={grid ? undefined : { minWidth: col.type === 'date' ? 130 : 110 }} />;
 }
 
-export const AsnModule = ({ currentUser }) => {
+// `initialDetail` = { id, n }: la búsqueda global de caja / LPN pide abrir el
+// detalle de la entrada de esa caja (fase 3, búsqueda inversa). `n` cambia en
+// cada petición para que abrir la misma entrada dos veces también dispare.
+export const AsnModule = ({ currentUser, initialDetail }) => {
   const { t } = useLang();
   // Admin y Super Usuario pueden crear/editar/reabrir ASN.
   const isSupersu = ['admin', 'supersu'].includes(currentUser?.role);
@@ -133,6 +136,11 @@ export const AsnModule = ({ currentUser }) => {
   const [detailFor, setDetailFor] = useState(null);   // asn_id
   const [detailData, setDetailData] = useState(null); // {asn, boxes}
   const [detailLoading, setDetailLoading] = useState(false);
+  // Fase 3: detalle por número de parte. `expandedParts` = partes con el
+  // desglose estilo/color/talla abierto; `partFilter` filtra la tabla de cajas
+  // (null = todas; '' = cajas sin número de parte).
+  const [expandedParts, setExpandedParts] = useState(() => new Set());
+  const [partFilter, setPartFilter] = useState(null);
 
   // SKU → ASN trace (Fase 2)
   const [showTrace, setShowTrace] = useState(false);
@@ -664,6 +672,7 @@ export const AsnModule = ({ currentUser }) => {
     setDetailLoading(true);
     setDetailData(null);
     setEditing(false); setEditDraft(null);
+    setExpandedParts(new Set()); setPartFilter(null);
     try {
       const data = await fetcher(`/asn/${encodeURIComponent(asnId)}`);
       setDetailData(data);
@@ -673,6 +682,20 @@ export const AsnModule = ({ currentUser }) => {
       setDetailFor(null);
     } finally { setDetailLoading(false); }
   };
+
+  useEffect(() => {
+    if (initialDetail?.id) openDetail(initialDetail.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialDetail]);
+
+  const togglePart = (key) => setExpandedParts(prev => {
+    const next = new Set(prev);
+    if (next.has(key)) next.delete(key); else next.add(key);
+    return next;
+  });
+  // Llave estable de un grupo de by_part (el grupo "sin número de parte" trae null).
+  const partKey = (p) => p.part_number ?? '';
+  const visibleBoxes = (detailData?.boxes || []).filter(b => partFilter == null || (b.part_number_resolved || '') === partFilter);
 
   const searched = asns.filter(a => {
     if (!query) return true;
@@ -1105,6 +1128,116 @@ export const AsnModule = ({ currentUser }) => {
                     </div>
                   )}
 
+                  {/* Fase 3: lo esperado vs lo que llegó POR NÚMERO DE PARTE. Un
+                      número de parte cubre varios estilos/colores/tallas, así que
+                      cada fila se abre al desglose de lo que llegó contra ella. */}
+                  {(detailData.summary?.by_part || []).length > 0 && (
+                    <div data-testid="asn-by-part">
+                      <h4 className="text-xs font-semibold text-muted-foreground mb-2">{t('wms_asn_by_part')}</h4>
+                      <div className="border border-border rounded-lg overflow-x-auto">
+                        <table className="w-full text-sm">
+                          <thead className="bg-muted/50 border-b border-border">
+                            <tr>
+                              <th className="px-2 py-2.5 w-8"></th>
+                              <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">{t('wms_asn_part_number')}</th>
+                              <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">{t('description')}</th>
+                              <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">{t('wms_asn_lines_n')}</th>
+                              <th className="px-3 py-2.5 text-right text-xs font-semibold text-muted-foreground">{t('wms_expected')}</th>
+                              <th className="px-3 py-2.5 text-right text-xs font-semibold text-muted-foreground">{t('wms_received')}</th>
+                              <th className="px-3 py-2.5 text-right text-xs font-semibold text-muted-foreground">{t('wms_in_inventory')}</th>
+                              <th className="px-3 py-2.5 text-right text-xs font-semibold text-muted-foreground">{t('wms_boxes')}</th>
+                              <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground w-32">{t('progress')}</th>
+                              <th className="px-3 py-2.5 w-24"></th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-border/60">
+                            {detailData.summary.by_part.map(p => {
+                              const key = partKey(p);
+                              const open = expandedParts.has(key);
+                              const exp = p.qty_expected || 0;
+                              const rcv = p.qty_received || 0;
+                              const pct = exp > 0 ? Math.min(100, Math.round((rcv / exp) * 100)) : 0;
+                              const done = exp > 0 && rcv >= exp;
+                              const canOpen = (p.skus || []).length > 0;
+                              return [
+                                <tr key={key} onClick={() => canOpen && togglePart(key)} data-testid="asn-part-row"
+                                  className={`${canOpen ? 'cursor-pointer' : ''} hover:bg-muted/40 ${p.unmatched ? 'bg-amber-500/5' : ''}`}>
+                                  <td className="px-2 py-2.5 text-muted-foreground">
+                                    {canOpen && <ChevronRight className={`w-4 h-4 transition-transform ${open ? 'rotate-90' : ''}`} />}
+                                  </td>
+                                  <td className="px-3 py-2.5 text-xs font-mono font-semibold whitespace-nowrap">
+                                    {p.unmatched ? <span className="text-amber-600 dark:text-amber-400">{t('wms_asn_no_part')}</span> : p.part_number}
+                                    {p.sample && <span className="ml-1.5 text-[10px] font-semibold px-1 py-0.5 rounded bg-muted text-muted-foreground">{t('wms_asn_sample')}</span>}
+                                    {p.boxes_best_effort > 0 && (
+                                      <span className="ml-1.5 text-[10px] font-semibold px-1 py-0.5 rounded bg-amber-500/15 text-amber-600 dark:text-amber-400" title={t('wms_asn_best_effort_hint', { n: p.boxes_best_effort })}>≈</span>
+                                    )}
+                                  </td>
+                                  <td className="px-3 py-2.5 text-xs max-w-[260px] truncate" title={p.description}>{p.description || '—'}</td>
+                                  <td className="px-3 py-2.5 text-xs font-mono text-muted-foreground">{(p.line_nos || []).join(', ') || '—'}</td>
+                                  <td className="px-3 py-2.5 text-xs text-right tabular-nums font-bold">{exp.toLocaleString()}</td>
+                                  <td className={`px-3 py-2.5 text-xs text-right tabular-nums font-medium ${done ? 'text-emerald-600 dark:text-emerald-400' : rcv > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground'}`}>{rcv.toLocaleString()}</td>
+                                  <td className="px-3 py-2.5 text-xs text-right tabular-nums font-medium">{(p.units_in_stock || 0).toLocaleString()}</td>
+                                  <td className="px-3 py-2.5 text-xs text-right tabular-nums">{(p.boxes || 0).toLocaleString()}</td>
+                                  <td className="px-3 py-2.5">
+                                    {p.unmatched ? null : (
+                                      <>
+                                        <div className="h-1.5 bg-muted rounded-full overflow-hidden">
+                                          <div className={`h-full ${done ? 'bg-emerald-500' : rcv > 0 ? 'bg-amber-500' : 'bg-blue-500/40'}`} style={{ width: `${pct}%` }} />
+                                        </div>
+                                        <div className="text-xs text-muted-foreground mt-0.5">{pct}%</div>
+                                      </>
+                                    )}
+                                  </td>
+                                  <td className="px-3 py-2.5 text-right">
+                                    {p.boxes > 0 && (
+                                      <button type="button" onClick={(e) => { e.stopPropagation(); setPartFilter(partFilter === key ? null : key); }}
+                                        className={`inline-flex items-center gap-1 text-xs font-medium whitespace-nowrap ${partFilter === key ? 'text-primary' : 'text-muted-foreground hover:text-foreground'}`}>
+                                        <Filter className="w-3 h-3" /> {t('wms_asn_show_boxes')}
+                                      </button>
+                                    )}
+                                  </td>
+                                </tr>,
+                                open && (
+                                  <tr key={`${key}__skus`} className="bg-muted/20">
+                                    <td></td>
+                                    <td colSpan={9} className="px-3 py-2">
+                                      <table className="w-full text-xs" data-testid="asn-part-skus">
+                                        <thead>
+                                          <tr className="text-muted-foreground">
+                                            <th className="px-2 py-1 text-left font-semibold">{t('wms_label_style')}</th>
+                                            <th className="px-2 py-1 text-left font-semibold">{t('wms_label_color')}</th>
+                                            <th className="px-2 py-1 text-left font-semibold">{t('wms_label_size')}</th>
+                                            <th className="px-2 py-1 text-right font-semibold">{t('wms_asn_arrived')}</th>
+                                            <th className="px-2 py-1 text-right font-semibold">{t('wms_in_inventory')}</th>
+                                            <th className="px-2 py-1 text-right font-semibold">{t('wms_boxes')}</th>
+                                            <th className="px-2 py-1 text-left font-semibold">{t('wms_locations')}</th>
+                                          </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-border/40">
+                                          {p.skus.map(sk => (
+                                            <tr key={`${sk.style}|${sk.color}|${sk.size}`}>
+                                              <td className="px-2 py-1 font-mono font-medium">{sk.style || '—'}</td>
+                                              <td className="px-2 py-1">{sk.color || '—'}</td>
+                                              <td className="px-2 py-1 font-mono">{sk.size || '—'}</td>
+                                              <td className="px-2 py-1 text-right tabular-nums font-medium">{(sk.units_arrived || 0).toLocaleString()}</td>
+                                              <td className="px-2 py-1 text-right tabular-nums">{(sk.units_in_stock || 0).toLocaleString()}</td>
+                                              <td className="px-2 py-1 text-right tabular-nums text-muted-foreground">{sk.boxes_in_stock || 0}/{sk.boxes || 0}</td>
+                                              <td className="px-2 py-1 font-mono text-muted-foreground">{(sk.locations || []).join(', ') || '—'}</td>
+                                            </tr>
+                                          ))}
+                                        </tbody>
+                                      </table>
+                                    </td>
+                                  </tr>
+                                ),
+                              ];
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+
                   {/* Inventario restante por ubicación (trazabilidad) */}
                   {(detailData.summary?.by_location || []).length > 0 && (
                     <div>
@@ -1377,9 +1510,21 @@ export const AsnModule = ({ currentUser }) => {
 
                   {/* Received boxes */}
                   <div>
-                    <h4 className="text-xs font-semibold text-muted-foreground mb-2">
-                      {t('wms_asn_boxes_received', { n: detailData.boxes?.length || 0 })}
-                    </h4>
+                    <div className="flex items-center justify-between gap-3 mb-2">
+                      <h4 className="text-xs font-semibold text-muted-foreground">
+                        {t('wms_asn_boxes_received', { n: detailData.boxes?.length || 0 })}
+                      </h4>
+                      {(detailData.summary?.by_part || []).some(p => p.boxes > 0) && (
+                        <select value={partFilter ?? '__all__'} onChange={e => { const v = e.target.value; setPartFilter(v === '__all__' ? null : v); }}
+                          data-testid="asn-boxes-part-filter"
+                          className="h-8 px-2 bg-card border border-input rounded-md text-xs font-mono focus:outline-none focus:border-primary">
+                          <option value="__all__">{t('wms_asn_all_parts')}</option>
+                          {detailData.summary.by_part.filter(p => p.boxes > 0).map(p => (
+                            <option key={partKey(p)} value={partKey(p)}>{p.unmatched ? t('wms_asn_no_part') : p.part_number} ({p.boxes})</option>
+                          ))}
+                        </select>
+                      )}
+                    </div>
                     {(!detailData.boxes || detailData.boxes.length === 0) ? (
                       <div className="text-center py-10 text-sm text-muted-foreground">
                         {t('wms_asn_no_boxes_yet')}
@@ -1390,6 +1535,7 @@ export const AsnModule = ({ currentUser }) => {
                           <thead className="bg-muted/50 border-b border-border">
                             <tr>
                               <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">Box ID</th>
+                              <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">{t('wms_asn_part_number')}</th>
                               <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">{t('wms_style_sku')}</th>
                               <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">Color / Size</th>
                               <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">{t('location')}</th>
@@ -1399,9 +1545,14 @@ export const AsnModule = ({ currentUser }) => {
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-border/60">
-                            {detailData.boxes.map(b => (
+                            {visibleBoxes.map(b => (
                               <tr key={b.box_id} className="hover:bg-muted/40">
                                 <td className="px-3 py-2.5 text-xs font-mono font-medium">{b.box_id}</td>
+                                <td className="px-3 py-2.5 text-xs font-mono whitespace-nowrap">
+                                  {b.part_number_resolved || <span className="text-muted-foreground">—</span>}
+                                  {b.asn_match === 'best_effort' && <span className="ml-1 text-amber-600 dark:text-amber-400" title={t('wms_asn_best_effort_hint', { n: 1 })}>≈</span>}
+                                  {b.asn_line_no_resolved != null && <span className="ml-1 text-muted-foreground">#{b.asn_line_no_resolved}</span>}
+                                </td>
                                 <td className="px-3 py-2.5 text-xs font-mono">{b.style || b.sku}</td>
                                 <td className="px-3 py-2.5 text-xs">{b.color || '—'} / {b.size || '—'}</td>
                                 <td className="px-3 py-2.5 text-xs font-mono">{b.location || '—'}</td>

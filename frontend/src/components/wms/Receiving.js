@@ -249,22 +249,42 @@ export const ReceivingModule = () => {
   // GET /asn/{id} devuelve las cajas ya recibidas contra ese packing list; de
   // ahí sale la matriz. Se refresca tras cada recibo exitoso (asnRefresh).
   const [asnBoxes, setAsnBoxes] = useState(null);
+  // Fase 3: números de parte de la entrada con cajas (summary.by_part) y el
+  // filtro de la matriz ('' = todas). Sigue solo a la línea casada/elegida; el
+  // operador puede cambiarlo a mano.
+  const [asnParts, setAsnParts] = useState([]);
+  const [matrixPart, setMatrixPart] = useState('');
   const [asnRefresh, setAsnRefresh] = useState(0);
   const selectedAsnId = selectedAsnDoc?.asn_id || null;
   useEffect(() => {
-    if (!selectedAsnId) { setAsnBoxes(null); return; }
+    if (!selectedAsnId) { setAsnBoxes(null); setAsnParts([]); return; }
     let alive = true;
     fetcher(`/asn/${encodeURIComponent(selectedAsnId)}`)
-      .then(d => { if (alive) setAsnBoxes(d?.boxes || []); })
-      .catch(() => { if (alive) setAsnBoxes(null); });
+      .then(d => { if (alive) { setAsnBoxes(d?.boxes || []); setAsnParts((d?.summary?.by_part || []).filter(p => p.boxes > 0)); } })
+      .catch(() => { if (alive) { setAsnBoxes(null); setAsnParts([]); } });
     return () => { alive = false; };
   }, [selectedAsnId, asnRefresh]);
+  useEffect(() => {
+    const line = selectedAsnLine != null ? (selectedAsnDoc?.items || []).find(l => l.line_no === selectedAsnLine) : null;
+    setMatrixPart(line?.part_number || '');
+  }, [selectedAsnLine, selectedAsnDoc]);
+  const matrixBoxes = useMemo(
+    () => (asnBoxes || []).filter(b => !matrixPart || (b.part_number_resolved || '') === matrixPart),
+    [asnBoxes, matrixPart]);
+  // Opciones del filtro: las partes con cajas + la parte que se está recibiendo
+  // aunque todavía no tenga cajas (así el "(0)" explica la matriz vacía).
+  const matrixPartOptions = useMemo(() => {
+    const opts = asnParts.map(p => ({ key: p.part_number ?? '', label: p.part_number || t('wms_asn_no_part'), boxes: p.boxes }));
+    if (matrixPart && !opts.some(o => o.key === matrixPart)) opts.push({ key: matrixPart, label: matrixPart, boxes: 0 });
+    return opts;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [asnParts, matrixPart]);
   const asnMatrix = useMemo(() => {
     if (!asnBoxes || asnBoxes.length === 0) return null;
     const CANON = ['XS', 'S', 'M', 'L', 'XL', '1X', '2X', '3X', '4X', '5X',
                    '2T', '3T', '4T', '5T', 'YXS', 'YS', 'YM', 'YL', 'YXL'];
     const cells = {}; const sizesSeen = new Set(); const colors = new Set();
-    for (const b of asnBoxes) {
+    for (const b of matrixBoxes) {
       const co = (b.color || '—').toUpperCase();
       const sz = (b.size || '—').toUpperCase();
       colors.add(co); sizesSeen.add(sz);
@@ -274,7 +294,7 @@ export const ReceivingModule = () => {
     const sizes = [...CANON.filter(s => sizesSeen.has(s)),
                    ...[...sizesSeen].filter(s => !CANON.includes(s)).sort()];
     return { sizes, colors: [...colors].sort(), cells };
-  }, [asnBoxes]);
+  }, [asnBoxes, matrixBoxes]);
 
   // ── Resumen previo a confirmar ─────────────────────────────────────────────
   // El submit ya no dispara directo: primero un resumen con lo que se va a
@@ -1114,10 +1134,25 @@ export const ReceivingModule = () => {
                 <div className="mt-2 border border-border bg-card rounded-lg overflow-hidden" data-testid="rcv-asn-matrix">
                   <div className="px-3 py-2 bg-muted/50 border-b border-border flex items-center gap-2">
                     <ClipboardCheck className="w-3.5 h-3.5 text-muted-foreground" />
-                    <span className="text-xs font-medium text-muted-foreground">
-                      {t('wms_rcv_asn_matrix_title', { n: (asnBoxes || []).length })}
+                    <span className="text-xs font-medium text-muted-foreground flex-1 min-w-0 truncate">
+                      {t('wms_rcv_asn_matrix_title', { n: matrixBoxes.length })}
                     </span>
+                    {/* Filtro por número de parte (fase 3): solo cuando la entrada
+                        tiene cajas de más de una parte; si no, no hay nada que elegir. */}
+                    {matrixPartOptions.length > 1 && (
+                      <select value={matrixPart} onChange={e => setMatrixPart(e.target.value)}
+                        data-testid="rcv-matrix-part"
+                        className="h-7 px-1.5 bg-card border border-input rounded-md text-[11px] font-mono focus:outline-none focus:border-primary">
+                        <option value="">{t('wms_asn_all_parts')}</option>
+                        {matrixPartOptions.map(o => (
+                          <option key={o.key} value={o.key}>{o.label} ({o.boxes})</option>
+                        ))}
+                      </select>
+                    )}
                   </div>
+                  {matrixBoxes.length === 0 && (
+                    <div className="px-3 py-2 text-[11px] text-muted-foreground" data-testid="rcv-matrix-empty">{t('wms_rcv_matrix_no_part_boxes', { pn: matrixPart })}</div>
+                  )}
                   <div className="overflow-x-auto custom-scrollbar">
                     <table className="w-full text-[11px] tabular-nums">
                       <thead>

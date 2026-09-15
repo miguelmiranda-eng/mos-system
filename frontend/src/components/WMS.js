@@ -66,7 +66,7 @@ const renderActiveModule = (moduleId, ctx) => {
     case 'trazabilidad': return <TrazabilidadModule />;
     case 'movements':    return <MovementsModule />;
     case 'cycle_count':  return <CycleCountModule />;
-    case 'asn':          return <AsnModule currentUser={ctx.currentUser} />;
+    case 'asn':          return <AsnModule currentUser={ctx.currentUser} initialDetail={ctx.asnToOpen} />;
     // Conciliación: solo super usuario. El mosaico ya viene filtrado; esta guarda
     // es por si el módulo se alcanza por otra vía. El backend igual devuelve 403.
     case 'reconciliation': return ctx.currentUser?.role === 'supersu'
@@ -270,7 +270,16 @@ export default function WMS() {
   // Subscribe to WMS events for real-time badge updates
   useWmsWebSocket(loadBadges);
 
-  const wmsCtx = useMemo(() => ({ badges, refreshBadges: loadBadges }), [badges, loadBadges]);
+  // Búsqueda inversa (Entradas fase 3): desde una caja del buscador global se
+  // salta al detalle de su entrada. `n` cambia en cada salto para que abrir la
+  // misma entrada dos veces seguidas también dispare el efecto en AsnModule.
+  const [asnToOpen, setAsnToOpen] = useState(null); // { id, n }
+  const openAsn = useCallback((asnId) => {
+    if (!asnId) return;
+    setAsnToOpen({ id: asnId, n: Date.now() });
+    setActiveModule('asn');
+  }, []);
+  const wmsCtx = useMemo(() => ({ badges, refreshBadges: loadBadges, openAsn }), [badges, loadBadges, openAsn]);
 
   // Forzar módulo inicial según rol (customer=dashboard, picker=directed)
   useEffect(() => {
@@ -640,7 +649,7 @@ export default function WMS() {
         <div className="p-3 sm:p-6 pt-2 relative">
           <div key={currentUser.role === 'customer' ? 'dashboard' : activeModule} className="animate-in fade-in duration-200">
             <Suspense fallback={<DropsLoader label={t('wms_loading_module')} />}>
-              {renderActiveModule(currentUser.role === 'customer' ? 'dashboard' : activeModule, { associatedCustomer, setActiveModule, currentUser })}
+              {renderActiveModule(currentUser.role === 'customer' ? 'dashboard' : activeModule, { associatedCustomer, setActiveModule, currentUser, asnToOpen })}
             </Suspense>
           </div>
           {moduleSwitching && (
