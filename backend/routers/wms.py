@@ -5248,6 +5248,24 @@ _SIZE_LOCS_CACHE: dict = {}
 _SIZE_LOCS_TTL = 30.0   # seg
 
 
+def _invalidate_size_locs(style: str, color: str = None) -> int:
+    """Tira del caché las entradas de un material en cuanto se le descuenta.
+
+    Sin esto, tras "Guardar y descontar" la PDA recargaba my-tickets y durante
+    30 s veía stock que ya se había llevado: dejaba escanear de más, el
+    servidor respondía 409 y encima abría una tarea de discrepancia ESPURIA.
+    Se invalida por style (y color si se da) porque la llave del caché incluye
+    la mezcla de tallas del ticket y un mismo material vive en varias llaves."""
+    st = (style or "").strip().upper()
+    co = (color or "").strip().upper() if color else None
+    if not st:
+        return 0
+    doomed = [k for k in _SIZE_LOCS_CACHE if k[0] == st and (co is None or k[1] == co)]
+    for k in doomed:
+        _SIZE_LOCS_CACHE.pop(k, None)
+    return len(doomed)
+
+
 async def _compute_size_locations(style: str, color: str, sizes: dict, strategy: str = "default") -> dict:
     """Build {size: {locations:[...], total_available}} from CURRENT inventory.
 
@@ -6235,6 +6253,7 @@ async def save_pick_progress(ticket_id: str, request: Request):
         update["partial_closed_by_name"] = user.get("name", user.get("email", ""))
 
     await db.wms_pick_tickets.update_one({"ticket_id": ticket_id}, {"$set": update})
+    _invalidate_size_locs(ticket.get("style"), ticket.get("color"))
     await log_movement(user, "pick_progress", {
         "ticket_id": ticket_id,
         "picking_status": picking_status,
@@ -6839,6 +6858,7 @@ async def pick_size(ticket_id: str, request: Request):
         "last_picked_at": now_iso(),
     }})
     await log_movement(user, "pick_size", {"ticket_id": ticket_id, "size": size, "details": details})
+    _invalidate_size_locs(ticket.get("style"), ticket.get("color"))
     return {"message": f"Talla {size} descontada ({total} pz)", "ticket_id": ticket_id,
             "size": size, "deducted": total}
 

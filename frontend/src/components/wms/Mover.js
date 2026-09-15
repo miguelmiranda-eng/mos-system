@@ -5,7 +5,7 @@ import {
   CheckCircle2, RotateCcw, Search, X, Move, Tag, Scale, Printer,
 } from "lucide-react";
 import { useLang } from "../../contexts/LanguageContext";
-import { fetcher, poster, cleanScan, logLoadError, API, useWmsSizes, useWmsCatalogs, mergeUnique, scanFeedback, duplicateScan } from "./lib";
+import { fetcher, poster, cleanScan, logLoadError, API, useWmsSizes, useWmsCatalogs, mergeUnique, scanFeedback, duplicateScan, useLocationSummary } from "./lib";
 import SearchableSelect from "../SearchableSelect";
 import { adminLevelOf } from "./modules";
 import { ModuleToolbar, SoftAlert, Btn, Chip, EmptyState } from "./ui";
@@ -349,7 +349,10 @@ export function MoverModule({ currentUser }) {
     const found = here || already;
     if (found) {
       clearBoxInput();
-      if (selectedBoxes.includes(found.box_id)) { duplicateScan(t, found.box_id); return; }
+      if (selectedBoxes.includes(found.box_id)) {
+        duplicateScan(t, found.box_id, () => setSelectedBoxes(p => p.filter(x => x !== found.box_id)));
+        return;
+      }
       setSelectedBoxes(p => p.includes(found.box_id) ? p : [...p, found.box_id]);
       scanFeedback('ok');
       return;
@@ -592,6 +595,12 @@ export function MoverModule({ currentUser }) {
                 </div>
               </div>
               <div className="flex items-center gap-4">
+                {/* Cajas Y unidades: el operador confirma el movimiento contando
+                    cajas en la tarima, no piezas. */}
+                <div className="text-right" data-testid="mover-origin-summary">
+                  <div className="text-lg font-semibold tabular-nums leading-none">{loading ? "…" : contents.boxes.length}</div>
+                  <div className="text-xs text-muted-foreground">{t("wms_boxes_lc")}</div>
+                </div>
                 <div className="text-right">
                   <div className="text-lg font-semibold tabular-nums leading-none">{loading ? "…" : totalUnits}</div>
                   <div className="text-xs text-muted-foreground">{t("wms_units_lc")}</div>
@@ -716,6 +725,10 @@ export function MoverModule({ currentUser }) {
                       <div className="bg-card border border-border rounded-lg p-4">
                         <DestAndGo
                           dest={dest} setDest={setDest} locations={locNames}
+                          adding={{
+                            boxes: selectedBoxes.length,
+                            units: [...contents.boxes, ...foreignBoxes].filter(b => selectedBoxes.includes(b.box_id)).reduce((s, b) => s + (b.units ?? b.qty ?? 0), 0),
+                          }}
                           disabled={submitting} onGo={moveBoxes}
                           label={t("wms_move_n_boxes_to", { n: selectedBoxes.length })} />
                       </div>
@@ -819,6 +832,7 @@ export function MoverModule({ currentUser }) {
                             </div>
                             <DestAndGo
                               dest={dest} setDest={setDest} locations={locNames}
+                              adding={{ boxes: 0, units: parseInt(qty) || 0 }}
                               disabled={submitting || !(parseInt(qty) > 0) || parseInt(qty) > (selectedUnitBox.units ?? selectedUnitBox.qty ?? 0)}
                               onGo={moveUnits}
                               label={t("wms_move_n_units_to", { n: parseInt(qty) || 0 })} />
@@ -839,8 +853,11 @@ export function MoverModule({ currentUser }) {
 }
 
 // Shared destination input + confirm button used by every mode.
-function DestAndGo({ dest, setDest, locations, disabled, onGo, label }) {
+function DestAndGo({ dest, setDest, locations, disabled, onGo, label, adding }) {
   const { t } = useLang();
+  // Solo se consulta cuando el destino es una ubicación real (no mientras teclea).
+  const destName = locations.some(l => (l || "").toUpperCase() === cleanScan(dest)) ? cleanScan(dest) : "";
+  const destNow = useLocationSummary(destName);
   return (
     <div className="space-y-3">
       <div className="text-xs font-medium text-muted-foreground flex items-center gap-2">
@@ -851,6 +868,21 @@ function DestAndGo({ dest, setDest, locations, disabled, onGo, label }) {
         value={dest} onChange={setDest} onSubmit={(v) => setDest(v)} onPick={(v) => setDest(v)}
         locations={locations} placeholder={t("wms_dest_loc")} testid="mover-dest-input"
       />
+      {destName && (
+        <div className="text-xs text-muted-foreground flex flex-wrap items-center gap-x-2" data-testid="mover-dest-summary">
+          <span className="font-mono font-medium text-foreground">{destName}</span>
+          {destNow === null ? <span>…</span> : (
+            <>
+              <span>{t("wms_loc_has_now", { boxes: destNow.boxes, units: destNow.units })}</span>
+              {adding && (adding.boxes > 0 || adding.units > 0) && (
+                <span className="text-emerald-600 dark:text-emerald-400 font-medium">
+                  → {t("wms_loc_after_move", { boxes: destNow.boxes + (adding.boxes || 0), units: destNow.units + (adding.units || 0) })}
+                </span>
+              )}
+            </>
+          )}
+        </div>
+      )}
       <button onClick={onGo} disabled={disabled || !dest.trim()}
         data-testid="mover-confirm"
         className="w-full h-14 rounded-md bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium flex items-center justify-center gap-2 transition-colors">

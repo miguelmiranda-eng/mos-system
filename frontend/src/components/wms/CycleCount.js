@@ -582,6 +582,23 @@ export const CycleCountModule = () => {
     // Aplica el resultado de un escaneo ya resuelto. OJO: se guarda el box_id
     // CANÓNICO que devuelve el backend (no el código tecleado), porque el
     // número físico "A-123" queda atado a la caja del sistema.
+    // Quita un LPN escaneado por error antes de cerrar la ubicación.
+    const unscanBox = async (loc, boxId) => {
+      try {
+        const res = await poster(`/cycle-counts/${selectedCount.count_id}/unscan-location`, { location: loc, box_id: boxId });
+        if (!res.ok) { const e = await res.json().catch(() => ({})); toast.error(e.detail || t('wms_cc_unscan_err')); return; }
+        const data = await res.json().catch(() => ({}));
+        const canonical = data.box_id || boxId;
+        setSelectedCount(prev => ({
+          ...prev,
+          scan_locations: prev.scan_locations.map(L => L.location === loc
+            ? { ...L, scanned_boxes: (L.scanned_boxes || []).filter(b => b !== canonical) }
+            : L)
+        }));
+        toast.success(t('wms_cc_unscanned', { box: data.scanned_code || boxId }));
+      } catch { toast.error(t('wms_conn_err')); }
+    };
+
     const applyScanResult = (loc, data) => {
       const shown = data.scanned_code || data.box_id;
       let alreadyScanned = data.duplicate;
@@ -603,7 +620,7 @@ export const CycleCountModule = () => {
           };
         })
       }));
-      if (alreadyScanned) { duplicateScan(t, shown); return; }
+      if (alreadyScanned) { duplicateScan(t, shown, () => unscanBox(loc, data.box_id)); return; }
       scanFeedback(data.expected_here ? 'ok' : 'error');
       if (data.bound) toast.success(t('wms_cc_scan_bound', { box: shown }));
       else if (!data.expected_here) toast.warning(t('wms_cc_scan_foreign', { box: shown, loc }));
@@ -639,23 +656,6 @@ export const CycleCountModule = () => {
       setScanDraft(d => ({ ...d, [loc]: '' }));
       try { await sendScan(loc, boxId); }
       catch { toast.error(t('wms_conn_err')); }
-    };
-
-    // Quita un LPN escaneado por error antes de cerrar la ubicación.
-    const unscanBox = async (loc, boxId) => {
-      try {
-        const res = await poster(`/cycle-counts/${selectedCount.count_id}/unscan-location`, { location: loc, box_id: boxId });
-        if (!res.ok) { const e = await res.json().catch(() => ({})); toast.error(e.detail || t('wms_cc_unscan_err')); return; }
-        const data = await res.json().catch(() => ({}));
-        const canonical = data.box_id || boxId;
-        setSelectedCount(prev => ({
-          ...prev,
-          scan_locations: prev.scan_locations.map(L => L.location === loc
-            ? { ...L, scanned_boxes: (L.scanned_boxes || []).filter(b => b !== canonical) }
-            : L)
-        }));
-        toast.success(t('wms_cc_unscanned', { box: data.scanned_code || boxId }));
-      } catch { toast.error(t('wms_conn_err')); }
     };
 
     // Resolución manual (nivel 3) de una ubicación en 'supervisor': por cada LPN

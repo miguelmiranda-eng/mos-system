@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../App";
 import { Toaster, toast } from "sonner";
@@ -443,6 +443,7 @@ function PickScreen({ ticket, onSave, onPickSize, onRefresh, saving }) {
   const [blankOptions, setBlankOptions] = useState([]);
   const [savingStatus, setSavingStatus] = useState(false);
 
+  // Lo que ya se descontó se sincroniza cada vez que el ticket se recarga...
   useEffect(() => {
     setPickedSizes(ticket.picked_sizes || {});
     setCommitted(new Set(
@@ -450,11 +451,22 @@ function PickScreen({ ticket, onSave, onPickSize, onRefresh, saving }) {
         .filter(([, v]) => (parseInt(v?.total ?? v) || 0) > 0)
         .map(([k]) => k)
     ));
+  }, [ticket]);
+  // ...pero la pantalla (etapa, ubicación activa, CARRITO) solo se reinicia al
+  // cambiar de ticket. Antes dependía de la identidad del objeto: cada recarga
+  // de la lista (botón Refresh, tras un commit) tiraba el carrito a medias.
+  useEffect(() => {
     setStage('sizes');
     setActiveSize(null); setActiveLocation(null); setActiveBox(null);
     setUnidentifiedLpn(null); setTakeQty(0); setCart([]); setLocBoxes([]);
     setLocScan(""); setBoxScan("");
-  }, [ticket]);
+  }, [ticket.ticket_id]);
+  // Carrito con cajas = trabajo sin confirmar: la recarga automática de
+  // versión (index.js) no debe pisarlo.
+  useEffect(() => {
+    window.__mosBusy = cart.length > 0;
+    return () => { window.__mosBusy = false; };
+  }, [cart.length]);
 
   useEffect(() => {
     let alive = true;
@@ -497,7 +509,10 @@ function PickScreen({ ticket, onSave, onPickSize, onRefresh, saving }) {
 
   const sizes = ticket.sizes || {};
   const sizeLocs = ticket.size_locations || {};
-  const activeSizes = Object.keys(sizes).filter(sz => parseInt(sizes[sz]) > 0);
+  // Derivados del ticket memorizados: PickScreen se re-renderiza en CADA
+  // caracter que teclea el lector (inputs controlados) y estos recorridos
+  // tallas x ubicaciones se repetían en cada tecla.
+  const activeSizes = useMemo(() => Object.keys(sizes).filter(sz => parseInt(sizes[sz]) > 0), [sizes]);
 
   const locsFor = (sz) => {
     const l = sizeLocs[sz]?.locations || sizeLocs[sz] || [];
@@ -524,7 +539,7 @@ function PickScreen({ ticket, onSave, onPickSize, onRefresh, saving }) {
 
   // Unión de TODAS las ubicaciones del ticket (todas las tallas), con total de
   // piezas por ubicación y desglose por talla. Es la base del flujo ubic-primero.
-  const allLocs = () => {
+  const allLocsList = useMemo(() => {
     const byLoc = {};
     activeSizes.forEach(sz => {
       locsFor(sz).forEach(l => {
@@ -542,7 +557,11 @@ function PickScreen({ ticket, onSave, onPickSize, onRefresh, saving }) {
       });
     });
     return Object.values(byLoc).sort((a, b) => b.available - a.available);
-  };
+  }, [activeSizes, sizeLocs]); // eslint-disable-line react-hooks/exhaustive-deps
+  const allLocs = () => allLocsList;
+  // Set de cajas en el carrito: la lista de cajas de la ubicación hacía un
+  // cart.some(...) por fila (cajas x carrito) en cada render.
+  const cartBoxIds = useMemo(() => new Set(cart.map(it => it.box_id)), [cart]);
   const totalRequired = activeSizes.reduce((s, sz) => s + (parseInt(sizes[sz]) || 0), 0);
   const totalCommitted = activeSizes.reduce(
     (s, sz) => s + (parseInt(pickedSizes[sz]?.total) || 0), 0);
@@ -620,8 +639,9 @@ function PickScreen({ ticket, onSave, onPickSize, onRefresh, saving }) {
     if (!lpn) return;
     // Doble escaneo: se detecta ANTES de ir al backend, comparando contra el
     // box_id y contra la etiqueta física con la que se escaneó la caja.
-    if (cart.some(it => norm(it.box_id) === norm(lpn) || norm(it.lpn) === norm(lpn))) {
-      duplicateScan(t, lpn);
+    const dupIdx = cart.findIndex(it => norm(it.box_id) === norm(lpn) || norm(it.lpn) === norm(lpn));
+    if (dupIdx >= 0) {
+      duplicateScan(t, lpn, () => setCart(prev => prev.filter((_, i) => i !== dupIdx)));
       return;
     }
     try {
@@ -675,7 +695,7 @@ function PickScreen({ ticket, onSave, onPickSize, onRefresh, saving }) {
     }
     if (cart.some(it => it.box_id === box.box_id)) {
       // Doble escaneo: aviso uniforme del WMS (toast + doble beep + vibración).
-      duplicateScan(t, lpn || box.physical_lpn || box.box_id);
+      duplicateScan(t, lpn || box.physical_lpn || box.box_id, () => setCart(prev => prev.filter(it => it.box_id !== box.box_id)));
       return;
     }
     setActiveBox({
@@ -1021,7 +1041,7 @@ function PickScreen({ ticket, onSave, onPickSize, onRefresh, saving }) {
             ) : (
               <div className="max-h-44 overflow-auto divide-y divide-white/5">
                 {locBoxes.map((b, i) => {
-                  const inCart = cart.some(it => it.box_id === b.box_id);
+                  const inCart = cartBoxIds.has(b.box_id);
                   return (
                     <div key={b.box_id || i} className="flex items-center gap-2 px-3 py-1.5">
                       <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-white/5 text-slate-300 shrink-0">{b.size}</span>

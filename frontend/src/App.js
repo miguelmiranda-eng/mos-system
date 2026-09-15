@@ -13,20 +13,27 @@ const API = `${BACKEND_URL}/api`;
 
 // Global fetch monkey-patch to send Authorization header for Safari / iPad cookie compatibility
 const originalFetch = window.fetch;
-window.fetch = async function (url, options = {}) {
+// El token se lee de localStorage una vez y se memoriza; antes se hacia
+// getItem + JSON.parse en CADA fetch (la PDA dispara decenas por minuto).
+// Se refresca cuando cambia la llave (login/logout escriben mos_user).
+let _cachedRaw = null;
+let _cachedToken = "";
+const sessionToken = () => {
   try {
     const stored = localStorage.getItem("mos_user");
-    if (stored) {
-      const userObj = JSON.parse(stored);
-      if (userObj && userObj.session_token) {
-        options.headers = {
-          ...options.headers,
-          "Authorization": `Bearer ${userObj.session_token}`
-        };
-      }
+    if (stored !== _cachedRaw) {
+      _cachedRaw = stored;
+      _cachedToken = (stored && JSON.parse(stored)?.session_token) || "";
     }
   } catch (e) {
     console.error("Fetch interceptor error:", e);
+  }
+  return _cachedToken;
+};
+window.fetch = async function (url, options = {}) {
+  const token = sessionToken();
+  if (token) {
+    options.headers = { ...options.headers, "Authorization": `Bearer ${token}` };
   }
   return originalFetch.call(this, url, options);
 };

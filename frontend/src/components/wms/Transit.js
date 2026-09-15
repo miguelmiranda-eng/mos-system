@@ -4,7 +4,7 @@ import {
   Loader2, Search, X, MapPin, ChevronRight, CheckSquare, Square, ArrowRightLeft, Truck, Edit3, Save,
   ScanLine, AlertTriangle, ClipboardCheck, CheckCircle2, Plus,
 } from "lucide-react";
-import { fetcher, poster, putter, logLoadError, cleanScan, scanFeedback, duplicateScan } from "./lib";
+import { fetcher, poster, putter, logLoadError, cleanScan, scanFeedback, duplicateScan, useLocationSummary } from "./lib";
 import { useAuth } from "../../App";
 import { useLang } from "../../contexts/LanguageContext";
 import { PutawayWizard } from "./PutawayWizard";
@@ -62,6 +62,10 @@ export const TransitModule = () => {
   // there. "Terminar" raises a warning, then relocates the whole batch.
   const [destination, setDestination] = useState("");   // step-1 typeahead text
   const [lockedLocation, setLockedLocation] = useState(""); // confirmed destination
+  // "N cajas · M unidades" del destino confirmado, para que el operador
+  // compruebe el movimiento contando cajas.
+  const destNow = useLocationSummary(lockedLocation);
+  const selectedUnits = boxes.filter(b => selected.has(b.box_id)).reduce((s, b) => s + (b.units ?? b.qty ?? 0), 0);
   const [boxScan, setBoxScan] = useState("");           // step-2 box scanner
   const [showWarning, setShowWarning] = useState(false);
   const [moving, setMoving] = useState(false);
@@ -278,7 +282,10 @@ export const TransitModule = () => {
     }
     setBoxScan("");
     // Doble escaneo: aviso uniforme (ver duplicateScan en lib.js), sin reprocesar.
-    if (selected.has(box.box_id)) { duplicateScan(t, box.box_id); return; }
+    if (selected.has(box.box_id)) {
+      duplicateScan(t, box.box_id, () => setSelected(prev => { const n = new Set(prev); n.delete(box.box_id); return n; }));
+      return;
+    }
     setSelected(prev => new Set(prev).add(box.box_id));
     scanFeedback('ok');
   };
@@ -562,6 +569,12 @@ export const TransitModule = () => {
                   <div className="text-xs font-medium text-muted-foreground">{t("wms_dest_loc")}</div>
                   <div className="font-mono font-semibold text-emerald-600 dark:text-emerald-400 text-lg flex items-center gap-2">
                     <MapPin className="w-4 h-4" /> {lockedLocation}
+                  </div>
+                  <div className="text-xs text-muted-foreground" data-testid="putaway2-dest-summary">
+                    {destNow === null ? "…" : t("wms_loc_has_now", { boxes: destNow.boxes, units: destNow.units })}
+                    {destNow !== null && selected.size > 0 && (
+                      <span className="text-emerald-600 dark:text-emerald-400 font-medium"> → {t("wms_loc_after_move", { boxes: destNow.boxes + selected.size, units: destNow.units + selectedUnits })}</span>
+                    )}
                   </div>
                 </div>
               </div>

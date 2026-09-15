@@ -73,7 +73,10 @@ if ("serviceWorker" in navigator) {
     window.addEventListener(ev, touch, { passive: true, capture: true }),
   );
 
+  // window.__mosBusy lo levanta la pantalla que tenga trabajo sin confirmar
+  // (p. ej. el carrito de surtido de la PDA con cajas escaneadas).
   const isBusy = () => {
+    if (window.__mosBusy) return true;
     const el = document.activeElement;
     return !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA") && !!el.value;
   };

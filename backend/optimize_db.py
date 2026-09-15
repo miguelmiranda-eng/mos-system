@@ -42,6 +42,11 @@ WMS_INDEXES = [
     # solo se llena cuando el picker escanea por primera vez la caja física.
     # Unique para que un mismo LPN nunca apunte a dos cajas distintas.
     ("wms_boxes", "physical_lpn", {"unique": True, "sparse": True, "name": "uniq_physical_lpn"}),
+    # PDA surtido: _find_box_by_lpn busca {$or: [box_id, physical_lpn, lpn_aliases]}.
+    # Sin índice en lpn_aliases Mongo no puede usar NINGUNO de los tres para el
+    # $or y examinaba las ~69k cajas en CADA escaneo (explain 2026-09-15: 63,551
+    # docs, 104-154 ms). Multikey + sparse: solo las cajas con alias lo llevan.
+    ("wms_boxes", "lpn_aliases", {"sparse": True}),
     ("wms_pick_tickets", "ticket_id", {"unique": True}),
     ("wms_pick_tickets", [("assigned_to", 1), ("status", 1)], {}),
     ("wms_pick_tickets", "order_id", {}),

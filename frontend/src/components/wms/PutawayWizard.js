@@ -5,7 +5,7 @@ import {
   Package, Eye, EyeOff, CheckCircle2, X, Boxes, ArrowRight,
 } from "lucide-react";
 import { useLang } from "../../contexts/LanguageContext";
-import { fetcher, poster, cleanScan, logLoadError, scanFeedback, duplicateScan } from "./lib";
+import { fetcher, poster, cleanScan, logLoadError, scanFeedback, duplicateScan, useLocationSummary } from "./lib";
 import { ModuleToolbar } from "./ui";
 
 const TRANSIT_LEGACY = "UBICACION TEMPORAL";
@@ -35,6 +35,7 @@ export function PutawayWizard() {
   const [destText, setDestText] = useState("");
   const [showDestDrop, setShowDestDrop] = useState(false);
   const [lockedDest, setLockedDest] = useState("");
+  const destNow = useLocationSummary(lockedDest); // "N cajas · M unidades" del destino
 
   const [scanOpen, setScanOpen] = useState(false);
   const [selected, setSelected] = useState(() => new Set());
@@ -150,7 +151,10 @@ export function PutawayWizard() {
     setBoxScan("");
     // Doble escaneo: se avisa igual que en todos los módulos, nunca se procesa
     // dos veces. Se decide fuera del updater (que en dev corre dos veces).
-    if (selected.has(box.box_id)) { duplicateScan(t, box.box_id); return; }
+    if (selected.has(box.box_id)) {
+      duplicateScan(t, box.box_id, () => setSelected(prev => { const n = new Set(prev); n.delete(box.box_id); return n; }));
+      return;
+    }
     setSelected(prev => new Set(prev).add(box.box_id));
     scanFeedback('ok');
   };
@@ -351,8 +355,11 @@ export function PutawayWizard() {
             <button onClick={() => setScanOpen(false)} className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors">
               <ChevronLeft className="w-5 h-5" /> {t('wms_back')}
             </button>
-            <div className="text-xs font-mono text-muted-foreground">
+            <div className="text-xs font-mono text-muted-foreground text-right">
               {origin} <ArrowRight className="w-3 h-3 inline" /> <span className="font-semibold text-foreground">{lockedDest}</span>
+              <div className="font-sans" data-testid="putaway-dest-summary">
+                {destNow === null ? "…" : t("wms_loc_has_now", { boxes: destNow.boxes, units: destNow.units })}
+              </div>
             </div>
           </div>
 

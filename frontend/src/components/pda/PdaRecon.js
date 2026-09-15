@@ -66,7 +66,10 @@ export default function PdaRecon() {
   const addScanned = useCallback((item) => {
     // Doble escaneo: mismo aviso que en todo el WMS (toast + doble beep +
     // vibración), y la caja NO se agrega dos veces.
-    if (scannedRef.current.some(b => b.id === item.id)) { duplicateScan(tRef.current, item.id); return; }
+    if (scannedRef.current.some(b => b.id === item.id)) {
+      duplicateScan(tRef.current, item.id, () => setScanned(prev => prev.filter(b => b.id !== item.id)));
+      return;
+    }
     setScanned(prev => prev.some(b => b.id === item.id) ? prev : [item, ...prev]);
     scanFeedback('ok');
   }, []);
@@ -86,7 +89,10 @@ export default function PdaRecon() {
       if (!res.ok) { toast.error(data.detail || t('pda_resolve_err')); buzz([120, 60, 120]); return; }
       if (data.matched) {
         const box = data.box || {};
-        if (scanned.some(b => b.id === data.box_id)) { duplicateScan(t, data.box_id); return; }
+        if (scanned.some(b => b.id === data.box_id)) {
+          duplicateScan(t, data.box_id, () => setScanned(prev => prev.filter(b => b.id !== data.box_id)));
+          return;
+        }
         const label = `${box.style || box.sku || ""} ${box.color || ""} ${box.size || ""}`.trim() || data.box_id;
         addScanned({ id: data.box_id, known: data.here, lpn: code });
         if (data.here === false) { toast.warning(t('pda_moved_here', { label })); }

@@ -22,6 +22,10 @@ self.addEventListener("fetch", (event) => {
   const url = new URL(request.url);
   // Don't cache API traffic — picking must always hit the live backend.
   if (url.pathname.includes("/api/")) return;
+  // El chequeo de version pide /asset-manifest.json?t=<timestamp>: cada URL es
+  // distinta y se guardaba como entrada nueva (~480/dia por PDA), sin purga
+  // hasta cambiar CACHE. Va directo a la red, nunca a la cache.
+  if (url.pathname.endsWith("/asset-manifest.json") || request.cache === "no-store") return;
 
   event.respondWith(
     fetch(request)

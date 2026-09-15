@@ -74,9 +74,41 @@ export const scanFeedback = (kind = 'ok') => {
 // dos veces ni se deselecciona en silencio — se avisa igual en todos los
 // módulos (mismo texto, mismo color, mismo sonido). `t` es el traductor del
 // módulo que llama; el mensaje vive en i18n (`wms_scan_duplicate`).
-export const duplicateScan = (t, box) => {
-  toast.warning(t('wms_scan_duplicate', { box }));
+// Con `onRemove`, el aviso pregunta "¿seguro que quieres removerla?" y ofrece
+// el botón Quitar: re-escanear NUNCA quita por sí solo (los muchachos le dan
+// vuelta a la tarima y vuelven a escanear), pero quitar queda a un toque.
+export const duplicateScan = (t, box, onRemove) => {
+  toast.warning(t('wms_scan_duplicate', { box }), onRemove ? {
+    description: t('wms_scan_duplicate_ask'),
+    action: { label: t('wms_remove'), onClick: onRemove },
+    duration: 6000,
+  } : undefined);
   scanFeedback('dup');
+};
+
+// Resumen vivo de una ubicación: cajas con piezas y unidades. Para que al
+// escanear un destino se vea "N cajas · M unidades" y el operador confirme que
+// movió lo correcto. Solo cuenta cajas con units > 0 (las depleted son
+// residuo del FIFO viejo) y exige coincidencia EXACTA del nombre (el endpoint
+// hace substring: "CARRO 1" trae "CARRO 10").
+export const summarizeBoxes = (boxes, name) => {
+  const up = (name || '').toUpperCase();
+  const live = (boxes || []).filter(b => (b.units ?? b.qty ?? 0) > 0 && (b.location || '').toUpperCase() === up);
+  return { boxes: live.length, units: live.reduce((s, b) => s + (b.units ?? b.qty ?? 0), 0) };
+};
+export const useLocationSummary = (name) => {
+  const [summary, setSummary] = useState(null); // null = sin ubicación / cargando
+  useEffect(() => {
+    const clean = (name || '').trim();
+    if (!clean) { setSummary(null); return undefined; }
+    let alive = true;
+    setSummary(null);
+    fetcher(`/boxes?location=${encodeURIComponent(clean)}`)
+      .then(boxes => { if (alive) setSummary(summarizeBoxes(boxes, clean)); })
+      .catch(() => { if (alive) setSummary({ boxes: 0, units: 0, error: true }); });
+    return () => { alive = false; };
+  }, [name]);
+  return summary;
 };
 
 // ─── Error helpers — replace silent `catch {}` patterns ─────────────────────
