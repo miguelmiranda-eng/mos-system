@@ -100,6 +100,32 @@ DEFAULT_CONFIG: dict = {
     },
     # tipos de operación (hoja INSTRUCTIONS del packing list)
     "import_types": ["Temporal", "Definitivo", "Retorno de MP", "Almacenaje", "Retrabajo", "Inspeccion"],
+    # Composiciones capturables en la hoja de Entradas (desplegable, no texto
+    # libre). Forma canónica = composition_text(): las fibras de arriba, de
+    # mayor a menor porcentaje, suma 100. Lista inicial = las 34 composiciones
+    # reales del inventario/catálogo curado (2026-09-15) + 4 de los códigos
+    # históricos (90N10S, 94M06S, 58C38M04S, 75N25S). Editable desde la
+    # configuración del módulo; el servidor valida con normalize_composition.
+    "compositions": [
+        "100% ALGODON", "100% POLIESTER", "100% NYLON",
+        "99% ALGODON 1% POLIESTER", "98% ALGODON 2% POLIESTER",
+        "95% ALGODON 5% POLIESTER", "95% ALGODON 5% SPANDEX",
+        "94% MODAL 6% SPANDEX",
+        "90% ALGODON 10% POLIESTER", "90% POLIESTER 10% ALGODON", "90% NYLON 10% SPANDEX",
+        "83% ALGODON 17% POLIESTER",
+        "80% ALGODON 20% POLIESTER", "80% POLIESTER 20% ALGODON",
+        "75% ALGODON 25% POLIESTER", "75% NYLON 25% SPANDEX",
+        "72% ALGODON 18% RAYON 10% POLIESTER",
+        "70% ALGODON 30% POLIESTER", "70% ALGODON 15% POLIESTER 15% RAYON",
+        "65% ALGODON 35% POLIESTER", "65% POLIESTER 35% ALGODON",
+        "60% ALGODON 40% POLIESTER", "60% POLIESTER 40% ALGODON", "60% ALGODON 40% MODAL", "60% POLIESTER 40% RAYON",
+        "58% ALGODON 42% POLIESTER", "58% POLIESTER 42% ALGODON", "58% ALGODON 38% MODAL 4% SPANDEX",
+        "57% ALGODON 38% POLIESTER 5% SPANDEX",
+        "55% ALGODON 45% POLIESTER", "55% POLIESTER 45% ALGODON",
+        "54% ALGODON 46% POLIESTER",
+        "52% ALGODON 48% POLIESTER", "52% ALGODON 48% MODAL", "52% ALGODON 43% POLIESTER 5% RAYON",
+        "50% ALGODON 50% POLIESTER", "50% ALGODON 37% POLIESTER 13% RAYON", "50% POLIESTER 25% ALGODON 25% RAYON",
+    ],
 }
 
 
@@ -134,7 +160,11 @@ def _by_code(items: Iterable[dict]) -> dict:
 
 
 # ── composición de fibras ────────────────────────────────────────────────────
-_PCT_RE = re.compile(r"(\d{1,3})\s*%\s*(?:DE\s+)?([A-Z]+)")
+# Porcentaje + el segmento de texto hasta el siguiente porcentaje: la fibra
+# puede venir con calificativos antes ("20% RECYCLED POLYESTER", "100% COMBED
+# COTTON", "100% RING-SPUN PRE-SHRUNK COTTON"), así que se busca DENTRO del
+# segmento, no solo en la palabra pegada al %.
+_PCT_RE = re.compile(r"(\d{1,3})\s*%\s*([^%\d]*)")
 
 
 def parse_fibers(text, cfg: dict) -> tuple[list[tuple[int, str]], list[str]]:
@@ -143,16 +173,26 @@ def parse_fibers(text, cfg: dict) -> tuple[list[tuple[int, str]], list[str]]:
     t = norm(text)
     fibers = cfg.get("fibers") or []
     pairs, unknown = [], []
-    for pct, word in _PCT_RE.findall(t):
+    for pct, segment in _PCT_RE.findall(t):
+        words = [w for w in re.findall(r"[A-Z]+", segment) if w != "DE"]
         code = None
-        for f in fibers:
-            if any(word.startswith(norm(k)) or norm(k).startswith(word) for k in f.get("keywords", [])):
-                code = str(f["code"]).upper()
+        for word in words:
+            for f in fibers:
+                if any(word.startswith(norm(k)) or norm(k).startswith(word) for k in f.get("keywords", [])):
+                    code = str(f["code"]).upper()
+                    break
+            if code:
                 break
         if code:
             pairs.append((int(pct), code))
-        else:
-            unknown.append(word)
+        elif words:
+            unknown.append(" ".join(words))
+    # La misma fibra dos veces ("10% POLYESTER 10% RECYCLED POLYESTER") se
+    # suma: para aduana es una sola fibra (80C20P, no 80C10P10P).
+    merged: dict[str, int] = {}
+    for pct, code in pairs:
+        merged[code] = merged.get(code, 0) + pct
+    pairs = [(pct, code) for code, pct in merged.items()]
     # mayor a menor; a igual porcentaje respeta el orden de captura
     pairs.sort(key=lambda p: -p[0])
     return pairs, unknown
@@ -167,6 +207,26 @@ def composition_text(pairs: list[tuple[int, str]], cfg: dict) -> str:
     """Forma canónica para guardar como fabric_content: '58% ALGODON 42% POLIESTER'."""
     labels = {str(f["code"]).upper(): norm(f.get("label", f["code"])) for f in cfg.get("fibers") or []}
     return " ".join(f"{p}% {labels.get(c, c)}" for p, c in pairs)
+
+
+def normalize_composition(text, cfg: dict) -> dict:
+    """Valida una composición del CATÁLOGO (pestaña Composiciones) y la deja
+    canónica. A diferencia de parse_fibers (que tolera lo que traiga el
+    packing list), aquí se exige: al menos una fibra, todas reconocidas y
+    suma exacta de 100 (la misma fibra repetida ya viene sumada). Devuelve
+    {'ok', 'text', 'code', 'errors'}."""
+    pairs, unknown = parse_fibers(text, cfg)
+    errors = []
+    if unknown:
+        errors.append(f"fibra no reconocida: {', '.join(unknown)}")
+    if not pairs and not unknown:
+        errors.append("sin porcentajes (ej. 60% ALGODON 40% POLIESTER)")
+    total = sum(p for p, _ in pairs)
+    if pairs and total != 100:
+        errors.append(f"suma {total}%, debe ser 100%")
+    if errors:
+        return {"ok": False, "text": norm(text), "code": "", "errors": errors}
+    return {"ok": True, "text": composition_text(pairs, cfg), "code": composition_code(pairs), "errors": []}
 
 
 # ── lectura de la descripción ────────────────────────────────────────────────

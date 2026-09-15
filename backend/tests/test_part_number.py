@@ -10,7 +10,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 from services.part_number import (  # noqa: E402
     DEFAULT_CONFIG, compose, parse_description, parse_fibers, composition_code,
-    parse_part_number, merge_config, country_code,
+    parse_part_number, merge_config, country_code, normalize_composition, composition_text,
 )
 
 ok = fail = 0
@@ -118,6 +118,34 @@ def run():
     check("lista vacía no reemplaza", len(m["garments"]) == len(C["garments"]))
     m = merge_config({"customers": {"GTS BUCEES": ""}})
     check("valor vacío retira un cliente de fábrica", "GTS BUCEES" not in m["customers"] and "GOODIE TWO SLEEVES" in m["customers"])
+
+    print("\n== 6. Catálogo de composiciones (normalize_composition)")
+    r = normalize_composition("60% COTTON / 40% POLY", C)
+    check("inglés y separadores -> canónica", r["ok"] and r["text"] == "60% ALGODON 40% POLIESTER" and r["code"] == "60C40P", r)
+    r = normalize_composition("42% poliéster 58% algodón", C)
+    check("reordena mayor→menor", r["ok"] and r["text"] == "58% ALGODON 42% POLIESTER", r)
+    r = normalize_composition("67% COTTON 38% POLYESTER 5% SPANDEX", C)
+    check("no suma 100 -> error", not r["ok"] and any("110%" in e for e in r["errors"]), r)
+    r = normalize_composition("60% COTTON 40% BAMBOO", C)
+    check("fibra desconocida -> error con nombre", not r["ok"] and "BAMBOO" in r["errors"][0], r)
+    r = normalize_composition("80% COTTON 10% POLYESTER 10% RECYCLED POLYESTER", C)
+    check("fibra repetida se suma (reciclado = poliéster)", r["ok"] and r["code"] == "80C20P" and r["text"] == "80% ALGODON 20% POLIESTER", r)
+    r = normalize_composition("100% RING-SPUN PRE-SHRUNK COMBED COTTON", C)
+    check("calificativos antes de la fibra no estorban", r["ok"] and r["code"] == "100C", r)
+    p, u = parse_fibers("CAMISETA 100% ALGODÓN PEINADO", C)
+    check("compositor: calificativo después tampoco", composition_code(p) == "100C" and not u, (p, u))
+    r = normalize_composition("ALGODON", C)
+    check("sin porcentajes -> error", not r["ok"], r)
+    bad = [c for c in C["compositions"] if not normalize_composition(c, C)["ok"]]
+    check("todas las composiciones de fábrica son válidas", not bad, bad)
+    noncanon = [c for c in C["compositions"] if normalize_composition(c, C)["text"] != c]
+    check("todas las de fábrica ya están en forma canónica", not noncanon, noncanon)
+    codes = [normalize_composition(c, C)["code"] for c in C["compositions"]]
+    check("sin duplicados por código", len(codes) == len(set(codes)))
+    check("la canónica compone el mismo código que el texto crudo",
+          composition_code(parse_fibers("58% ALGODÓN 38% MODAL 4% SPANDEX", C)[0]) == normalize_composition("58% ALGODON 38% MODAL 4% SPANDEX", C)["code"] == "58C38M04S")
+    m = merge_config({"compositions": ["100% ALGODON"]})
+    check("merge_config reemplaza la lista completa", m["compositions"] == ["100% ALGODON"] and composition_text(parse_fibers("100% ALGODON", m)[0], m) == "100% ALGODON")
 
     print(f"\n===== {ok} PASS / {fail} FAIL =====")
     return fail

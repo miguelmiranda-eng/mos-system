@@ -225,6 +225,15 @@ export const AsnModule = ({ currentUser, initialDetail }) => {
     return { ...it, [f]: v, _touched: touched };
   }) }));
   const addCLine = () => setCreateDraft(d => ({ ...d, items: [...d.items, NEW_LINE()] }));
+  // Opciones del desplegable de composición: el catálogo + el valor actual si
+  // no está en él (entradas viejas, texto pegado que el servidor no pudo
+  // canonizar), marcado, para que nunca se pierda lo capturado.
+  const compositionInCatalog = (v) => !v || (pnCfg?.compositions || []).includes(v);
+  const compositionOptions = (current) => {
+    const opts = [{ value: '', label: '—' }, ...(pnCfg?.compositions || []).map(c => ({ value: c, label: c }))];
+    if (current && !compositionInCatalog(current)) opts.push({ value: current, label: `${current} ⚠ ${t('wms_asn_fabric_not_in_catalog')}` });
+    return opts;
+  };
   const rmCLine = (i) => setCreateDraft(d => ({ ...d, items: d.items.filter((_, j) => j !== i) }));
   const setCLineExtra = (i, key, v) => setCreateDraft(d => ({ ...d, items: d.items.map((it, j) => j === i ? { ...it, extra: { ...(it.extra || {}), [key]: v } } : it) }));
 
@@ -240,7 +249,9 @@ export const AsnModule = ({ currentUser, initialDetail }) => {
     { key: 'description', label: t('description'), upper: true, required: true },
     { key: 'garment', label: t('wms_asn_garment'), select: 'garments' },
     { key: 'gender', label: t('wms_asn_gender'), select: 'genders' },
-    { key: 'fabric', label: t('wms_asn_composition'), upper: true, required: true },
+    // Composición: desplegable del catálogo (pnCfg.compositions, canónico), no
+    // texto libre. Lo pegado del Excel se canoniza vía la propuesta del servidor.
+    { key: 'fabric', label: t('wms_asn_composition'), select: 'compositions', required: true },
     { key: 'country', label: t('wms_country'), upper: true, required: true, datalist: 'asn-countries' },
     { key: 'qty_expected', label: t('quantity'), num: true, required: true },
     { key: 'unit', label: t('wms_asn_unit'), upper: true },
@@ -350,6 +361,10 @@ export const AsnModule = ({ currentUser, initialDetail }) => {
           const it = items[i]; if (!it || !r) return;
           const next = { ...it, _pn: { ok: r.ok, errors: r.errors || [] }, part_number: r.part_number || '' };
           PROPOSED_FIELDS.forEach(f => { if (!it._touched?.[f] && r[f] !== undefined) next[f] = r[f]; });
+          // Composición pegada del Excel ("100% COTTON"): se sustituye por la
+          // canónica del servidor ("100% ALGODON") para que case con el
+          // desplegable; si hubo fibra desconocida se deja tal cual (marcada).
+          if (it._touched?.fabric && r.fabric && !(r.errors || []).some(e => String(e).startsWith('fibra no reconocida'))) next.fabric = r.fabric;
           items[i] = next;
         });
         return { ...d, items };
@@ -863,6 +878,13 @@ export const AsnModule = ({ currentUser, initialDetail }) => {
                           </div>
                         ) : col.checkbox ? (
                           <input type="checkbox" checked={!!it[col.key]} onChange={e => setCLine(i, col.key, e.target.checked)} className="w-4 h-4 accent-primary block mx-auto my-2.5" />
+                        ) : col.select === 'compositions' ? (
+                          <select value={it.fabric ?? ''} onChange={e => setCLine(i, 'fabric', e.target.value)}
+                            className={`${GRID_CLS} ${it.fabric && !compositionInCatalog(it.fabric) ? '!text-amber-600 dark:!text-amber-400' : ''}`}
+                            title={it.fabric && !compositionInCatalog(it.fabric) ? t('wms_asn_fabric_not_in_catalog') : undefined}
+                            data-testid={`asn-cell-fabric-${i}`}>
+                            {compositionOptions(it.fabric).map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                          </select>
                         ) : col.select ? (
                           <select value={it[col.key] ?? ''} onChange={e => setCLine(i, col.key, e.target.value)} className={GRID_CLS} data-testid={`asn-cell-${col.key}-${i}`}>
                             {col.select === 'import_types'
@@ -1460,7 +1482,13 @@ export const AsnModule = ({ currentUser, initialDetail }) => {
                                     </select>
                                   </div>
                                 </td>
-                                <td className="p-2"><input value={it.fabric || ''} onChange={e => setItem(i, 'fabric', e.target.value.toUpperCase())} className="w-full min-w-[130px] h-8 px-2 bg-card border border-input rounded-md text-xs focus:outline-none focus:border-primary" /></td>
+                                <td className="p-2">
+                                  <select value={it.fabric || ''} onChange={e => setItem(i, 'fabric', e.target.value)}
+                                    className={`w-full min-w-[150px] h-8 px-1 bg-card border border-input rounded-md text-xs ${it.fabric && !compositionInCatalog(it.fabric) ? '!text-amber-600 dark:!text-amber-400' : ''}`}
+                                    title={it.fabric && !compositionInCatalog(it.fabric) ? t('wms_asn_fabric_not_in_catalog') : undefined}>
+                                    {compositionOptions(it.fabric).map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                                  </select>
+                                </td>
                                 <td className="p-2 text-center"><input type="checkbox" checked={!!it.sample} onChange={e => setItem(i, 'sample', e.target.checked)} className="w-4 h-4 accent-primary" /></td>
                                 <td className="p-2"><input value={it.country} onChange={e => setItem(i, 'country', e.target.value.toUpperCase())} className="w-20 h-8 px-2 bg-card border border-input rounded-md text-xs font-mono focus:outline-none focus:border-primary" /></td>
                                 <td className="p-2"><input value={it.brand} onChange={e => setItem(i, 'brand', e.target.value.toUpperCase())} className="w-24 h-8 px-2 bg-card border border-input rounded-md text-xs focus:outline-none focus:border-primary" /></td>

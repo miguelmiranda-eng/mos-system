@@ -11,11 +11,43 @@ import { fetcher, putter, logLoadError, useWmsCatalogs } from "./lib";
 //   Prendas   → código, etiqueta y palabras que la delatan en la descripción.
 //   Fibras    → letra y palabras (ALGODON/COTTON → C).
 //   Países    → nombre o ISO3 capturado → ISO2 del código (CHINA/CHN → CN).
+//   Composiciones → catálogo del desplegable "Composición" de la hoja
+//               (60% ALGODON 40% POLIESTER…). El servidor las canoniza y
+//               rechaza las que no suman 100 o traen fibra desconocida.
 //   Tipos     → tipos de operación aduanal (Temporal, Definitivo…).
 // Guardar manda SOLO la pestaña activa; el backend fusiona diccionarios por
 // llave y reemplaza listas completas. Un cliente/país de fábrica se "quita"
 // guardándolo con valor vacío (el backend lo descarta al fusionar).
-const TABS = ["customers", "garments", "fibers", "countries", "import_types"];
+const TABS = ["customers", "garments", "fibers", "compositions", "countries", "import_types"];
+// Listas de texto plano (una fila = un string): comparten editor.
+const LIST_TABS = new Set(["import_types", "compositions"]);
+
+// Vista previa del código de composición (58% ALGODON 42% POLIESTER → 58C42P)
+// con las fibras de la config. Solo orientativa: el servidor es quien valida.
+const previewComposition = (text, fibers) => {
+  const pairs = [];
+  const unknown = [];
+  const norm = (s) => String(s || "").normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toUpperCase();
+  // Mismo criterio que parse_fibers: la fibra se busca DENTRO del segmento
+  // hasta el siguiente % ("20% RECYCLED POLYESTER") y la repetida se suma.
+  for (const m of norm(text).matchAll(/(\d{1,3})\s*%\s*([^%\d]*)/g)) {
+    const words = (m[2].match(/[A-Z]+/g) || []).filter(w => w !== "DE");
+    let code = null;
+    for (const word of words) {
+      const f = (fibers || []).find(x => (x.keywords || []).some(k => word.startsWith(norm(k)) || norm(k).startsWith(word)));
+      if (f) { code = String(f.code).toUpperCase(); break; }
+    }
+    if (code) pairs.push([parseInt(m[1], 10), code]); else if (words.length) unknown.push(words.join(" "));
+  }
+  const merged = new Map();
+  for (const [p, c] of pairs) merged.set(c, (merged.get(c) || 0) + p);
+  pairs.length = 0;
+  for (const [c, p] of merged) pairs.push([p, c]);
+  pairs.sort((a, b) => b[0] - a[0]);
+  const total = pairs.reduce((s, [p]) => s + p, 0);
+  const code = pairs.map(([p, c]) => (p < 100 ? String(p).padStart(2, "0") : String(p)) + c).join("");
+  return { code, total, unknown, ok: pairs.length > 0 && !unknown.length && total === 100 };
+};
 
 const cls = {
   input: "h-8 px-2 bg-card border border-input rounded-md text-xs focus:outline-none focus:border-primary",
@@ -33,7 +65,7 @@ export function AsnConfigModal({ open, onClose, onSaved }) {
   // [llave, valor] para poder renombrar y ordenar sin perder filas.
   const [pairs, setPairs] = useState([]);        // customers | countries
   const [rows, setRows] = useState([]);          // garments | fibers | genders (con keywords como texto)
-  const [types, setTypes] = useState([]);        // import_types
+  const [types, setTypes] = useState([]);        // import_types | compositions
 
   useEffect(() => {
     if (!open) return undefined;
@@ -47,8 +79,8 @@ export function AsnConfigModal({ open, onClose, onSaved }) {
     if (!cfg) return;
     if (tab === "customers" || tab === "countries") {
       setPairs(Object.entries(cfg[tab] || {}).sort((a, b) => a[0].localeCompare(b[0])));
-    } else if (tab === "import_types") {
-      setTypes([...(cfg.import_types || [])]);
+    } else if (LIST_TABS.has(tab)) {
+      setTypes([...(cfg[tab] || [])]);
     } else {
       setRows((cfg[tab] || []).map(r => ({ code: r.code, label: r.label || "", keywords: (r.keywords || []).join(", ") })));
     }
@@ -71,8 +103,8 @@ export function AsnConfigModal({ open, onClose, onSaved }) {
       const used = Object.values(dict).filter(Boolean);
       if (tab === "customers" && new Set(used).size !== used.length) { toast.error(t("wms_asn_cfg_prefix_dup")); return; }
       body = { [tab]: dict };
-    } else if (tab === "import_types") {
-      body = { import_types: types.map(x => x.trim()).filter(Boolean) };
+    } else if (LIST_TABS.has(tab)) {
+      body = { [tab]: types.map(x => x.trim()).filter(Boolean) };
     } else {
       const list = rows.map(r => ({ code: r.code.trim().toUpperCase(), label: r.label.trim(), keywords: r.keywords.split(",").map(k => k.trim().toUpperCase()).filter(Boolean) }))
         .filter(r => r.code || tab === "genders");
@@ -148,15 +180,26 @@ export function AsnConfigModal({ open, onClose, onSaved }) {
                 </tr>
               </tbody>
             </table>
-          ) : tab === "import_types" ? (
+          ) : LIST_TABS.has(tab) ? (
             <div className="space-y-1">
-              {types.map((v, i) => (
-                <div key={i} className="flex items-center gap-2">
-                  <input value={v} onChange={e => { const v = e.target.value; setTypes(p => p.map((x, j) => j === i ? v : x)); }} className={`${cls.input} flex-1`} />
-                  <button onClick={() => setTypes(p => p.filter((_, j) => j !== i))} className={cls.iconBtn}><Trash2 className="w-3.5 h-3.5" /></button>
-                </div>
-              ))}
-              <button onClick={() => setTypes(p => [...p, ""])} className="inline-flex items-center gap-1 text-xs text-primary hover:underline mt-1"><Plus className="w-3.5 h-3.5" /> {t("wms_asn_cfg_add_row")}</button>
+              {types.map((v, i) => {
+                const pv = tab === "compositions" && v.trim() ? previewComposition(v, cfg.fibers) : null;
+                return (
+                  <div key={i} className="flex items-center gap-2">
+                    <input value={v} onChange={e => { const v = e.target.value; setTypes(p => p.map((x, j) => j === i ? (tab === "compositions" ? v.toUpperCase() : v) : x)); }}
+                      className={`${cls.input} flex-1 ${tab === "compositions" ? "font-mono" : ""}`} placeholder={tab === "compositions" ? "60% ALGODON 40% POLIESTER" : undefined}
+                      data-testid={`asn-cfg-list-${i}`} />
+                    {pv && (
+                      <span className={`w-28 text-[11px] font-mono truncate ${pv.ok ? "text-muted-foreground" : "text-amber-600 dark:text-amber-400"}`}
+                        title={pv.ok ? pv.code : (pv.unknown.length ? `${t("wms_asn_cfg_comp_unknown")}: ${pv.unknown.join(", ")}` : t("wms_asn_cfg_comp_sum", { n: pv.total }))}>
+                        {pv.ok ? pv.code : (pv.unknown.length ? `? ${pv.unknown[0]}` : `Σ ${pv.total}%`)}
+                      </span>
+                    )}
+                    <button onClick={() => setTypes(p => p.filter((_, j) => j !== i))} className={cls.iconBtn}><Trash2 className="w-3.5 h-3.5" /></button>
+                  </div>
+                );
+              })}
+              <button onClick={() => setTypes(p => [...p, ""])} className="inline-flex items-center gap-1 text-xs text-primary hover:underline mt-1" data-testid="asn-cfg-list-add"><Plus className="w-3.5 h-3.5" /> {t("wms_asn_cfg_add_row")}</button>
             </div>
           ) : (
             <table className="w-full text-sm">

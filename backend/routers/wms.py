@@ -10645,6 +10645,24 @@ async def put_part_number_config(request: Request):
     if not allowed:
         raise HTTPException(400, f"Nada que guardar; llaves válidas: {sorted(pn.DEFAULT_CONFIG)}")
     stored = await db.wms_part_number_config.find_one({"config_id": "main"}, {"_id": 0, "config_id": 0}) or {}
+    if "compositions" in allowed:
+        # Cada composición del catálogo debe poder componer un número de parte:
+        # fibras conocidas, sin repetir, suma 100. Se guarda canónica y sin
+        # duplicados (por código), conservando el orden en que la dejó el admin.
+        cfg_now = pn.merge_config({**stored, **{k: v for k, v in allowed.items() if k == "fibers"}})
+        clean, seen, bad = [], set(), []
+        for raw in allowed["compositions"] or []:
+            if not str(raw or "").strip():
+                continue
+            r = pn.normalize_composition(raw, cfg_now)
+            if not r["ok"]:
+                bad.append(f"{pn.norm(raw)}: {'; '.join(r['errors'])}")
+            elif r["code"] not in seen:
+                seen.add(r["code"])
+                clean.append(r["text"])
+        if bad:
+            raise HTTPException(400, "Composiciones inválidas → " + " | ".join(bad))
+        allowed["compositions"] = clean
     for k, v in allowed.items():
         # La pestaña manda su tabla COMPLETA (defaults + guardado): reemplaza lo
         # guardado de esa llave. Un valor vacío retira la entrada (ver

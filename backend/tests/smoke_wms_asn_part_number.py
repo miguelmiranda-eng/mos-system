@@ -79,6 +79,17 @@ async def main():
         r = await c.put("/api/wms/asn/part-number/config", json={"customers": {**cfg["customers"], "GTS BUCEES": ""}})
         cfg = r.json()
         check("valor vacío retira un cliente (hasta uno de fábrica)", r.status_code == 200 and "GTS BUCEES" not in cfg["customers"] and cfg["customers"]["CLIENTE NUEVO"] == "CNV", str(cfg.get("customers")))
+        # Catálogo de composiciones (desplegable de la hoja): canónico y validado.
+        check("defaults traen composiciones canónicas", "100% ALGODON" in cfg["compositions"] and "58% ALGODON 42% POLIESTER" in cfg["compositions"] and len(cfg["compositions"]) >= 30, len(cfg.get("compositions", [])))
+        r = await c.put("/api/wms/asn/part-number/config", json={"compositions": ["100% COTTON", "42% poly 58% cotton", "60% ALGODON 40% POLIESTER", "  ", "100% ALGODON"]})
+        cfg = r.json()
+        check("PUT canoniza, reordena y quita duplicados por código", r.status_code == 200 and cfg["compositions"] == ["100% ALGODON", "58% ALGODON 42% POLIESTER", "60% ALGODON 40% POLIESTER"], cfg.get("compositions"))
+        r = await c.put("/api/wms/asn/part-number/config", json={"compositions": ["100% ALGODON", "67% COTTON 38% POLYESTER 5% SPANDEX", "50% ALGODON 50% BAMBU"]})
+        check("composición inválida → 400 nombrando cada error", r.status_code == 400 and "110%" in r.text and "BAMBU" in r.text, r.text[:200])
+        r = await c.get("/api/wms/asn/part-number/config")
+        check("el 400 no guardó nada", r.json()["compositions"] == ["100% ALGODON", "58% ALGODON 42% POLIESTER", "60% ALGODON 40% POLIESTER"])
+        r = await c.put("/api/wms/asn/part-number/config", json={"compositions": []})
+        check("lista vacía → regresan los defaults", r.status_code == 200 and len(r.json()["compositions"]) >= 30)
 
         print("\n== 2. Propuesta desde la descripción ==")
         r = await c.post("/api/wms/asn/part-number/propose", json={
