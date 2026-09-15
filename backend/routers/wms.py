@@ -3240,16 +3240,20 @@ async def delete_receiving(receiving_id: str, request: Request):
         
     await db.wms_receiving.delete_one({"receiving_id": receiving_id})
     
-    # Revert ASN progress if linked
+    # Revert ASN progress if linked. Los recibos de fase 2 traen asn_line_no:
+    # se revierte ESA línea (el sku del recibo es el estilo, no el número de
+    # parte, así que el casado por part_number nunca la encontraría y la
+    # entrada se quedaba inflada). Recibos viejos siguen por part_number == sku.
     asn_ref = doc.get("asn_reference")
     if asn_ref:
-        pn = (doc.get("sku") or doc.get("style") or "").upper()
-        if pn:
-            await _apply_receiving_to_asn(
-                asn_ref,
-                {pn: -int(doc.get("total_units", 0))},
-                user
-            )
+        _units = sum(int(b.get("units") or 0) for b in (doc.get("boxes") or [])) or int(doc.get("total_units", 0) or 0)
+        _ln = doc.get("asn_line_no")
+        if _ln is not None and _units > 0:
+            await _apply_receiving_to_asn(asn_ref, {}, user, target_line_no=int(_ln), target_qty=-_units)
+        else:
+            pn = (doc.get("sku") or doc.get("style") or "").upper()
+            if pn:
+                await _apply_receiving_to_asn(asn_ref, {pn: -_units}, user)
             
     await log_movement(user, "receiving_deleted", {
         "receiving_id": receiving_id,
@@ -11249,7 +11253,13 @@ async def update_asn(asn_id: str, request: Request):
         pn_cfg = await _pn_config()
         line_customer = update.get("customer", asn.get("customer") or "")
         normalized = []
-        for idx, it in enumerate(incoming, start=1):
+        # line_no es ESTABLE: las cajas y recibos guardan asn_line_no (fase 2) y
+        # el detalle por parte atribuye con él (fase 3). Renumerar 1..n al quitar
+        # una línea movía las cajas a la línea equivocada en silencio. Una línea
+        # existente conserva su número; las nuevas toman max+1.
+        used_line_nos: set = set()
+        next_line_no = max([int(it.get("line_no") or 0) for it in prev] + [0]) + 1
+        for it in incoming:
             part = str(it.get("part_number", it.get("sku", ""))).strip().upper()
             # Preserve received qty: match by the original line_no, then part_number.
             # IMPORTANT: only fall back to by_part when the item already has a line_no
@@ -11257,12 +11267,22 @@ async def update_asn(asn_id: str, request: Request):
             # must always start with qty_received = 0, even if the same part_number
             # already appears on another line.
             line_no_key = it.get("line_no")
+            try:
+                line_no_key = int(line_no_key) if line_no_key not in (None, "") else None
+            except (TypeError, ValueError):
+                line_no_key = None
             if line_no_key is not None:
                 src = by_line.get(line_no_key) or by_part.get(part) or {}
             else:
-                src = by_line.get(line_no_key) or {}   # new item → no inherited qty
+                src = {}   # new item → no inherited qty
+            if line_no_key in by_line and line_no_key not in used_line_nos:
+                line_no = line_no_key
+            else:
+                line_no = next_line_no
+                next_line_no += 1
+            used_line_nos.add(line_no)
             normalized.append({
-                "line_no": idx,
+                "line_no": line_no,
                 "part_number": part,
                 "description": str(it.get("description", "")).strip(),
                 "qty_expected": int(it.get("qty_expected", it.get("quantity", 0)) or 0),
@@ -11404,10 +11424,14 @@ async def _apply_receiving_to_asn(
                 "line_no": target_line_no, "qty": target_qty,
                 "reason": "line_not_in_asn",
             })
-        elif target_qty > 0:
+        elif target_qty != 0:
+            # Negativo = reversa (delete_receiving). Se acota a 0: una reversa
+            # nunca deja la línea en negativo aunque el histórico esté chueco.
+            current = int(line.get("qty_received") or 0)
+            new_qty = max(0, current + int(target_qty))
             await db.wms_asn.update_one(
                 {"asn_id": asn_id, "items.line_no": target_line_no},
-                {"$inc": {"items.$.qty_received": int(target_qty)}},
+                {"$set": {"items.$.qty_received": new_qty}},
             )
             result["matched"].append({
                 "line_no": target_line_no,
