@@ -10638,6 +10638,115 @@ def _parse_packing_list_pdf(contents: bytes) -> dict:
     }
 
 
+# ── Columnas personalizadas de las líneas de entrada (ASN/BPO) ───────────────
+# Igual que el CRM (column_config), pero con su propio config_id: una sola
+# definición GLOBAL para todas las entradas. Los valores viven en
+# items[].extra = {key: valor}, separados de los campos fijos que consume
+# receiving (part_number/color/size/country/fabric/qty_expected). Las columnas
+# de fórmula no se guardan: se calculan en el cliente con lib/formula.js.
+ASN_LINE_FIXED_FIELDS = {
+    "line_no", "part_number", "description", "qty_expected", "qty_received",
+    "country", "brand", "color", "size", "fabric", "extra",
+}
+ASN_COLUMN_TYPES = {"text", "number", "date", "link", "checkbox", "select", "formula"}
+_ASN_COLUMN_KEY_RE = re.compile(r"^[a-z0-9_]{1,40}$")
+
+
+async def _asn_custom_columns() -> list:
+    doc = await db.column_config.find_one({"config_id": "wms_asn"}, {"_id": 0, "columns": 1})
+    return list((doc or {}).get("columns") or [])
+
+
+def _normalize_asn_extra(raw, columns) -> dict:
+    """Solo entran claves de columnas definidas, casteadas por tipo. Lo demás
+    se descarta en silencio (mismo criterio que el whitelist de campos fijos)."""
+    raw = raw if isinstance(raw, dict) else {}
+    out = {}
+    for c in columns:
+        key, typ = c.get("key"), c.get("type")
+        if not key or typ == "formula" or key not in raw:
+            continue
+        v = raw.get(key)
+        if v is None or v == "":
+            continue
+        if typ == "number":
+            try:
+                v = float(v)
+            except (TypeError, ValueError):
+                continue
+            if v.is_integer():
+                v = int(v)
+        elif typ == "checkbox":
+            v = bool(v)
+        else:
+            v = str(v).strip()
+            if not v:
+                continue
+        out[key] = v
+    return out
+
+
+@router.get("/asn-columns")
+async def get_asn_columns(request: Request):
+    await require_auth(request)
+    return {"columns": await _asn_custom_columns()}
+
+
+@router.put("/asn-columns")
+async def put_asn_columns(request: Request):
+    """Reemplaza la definición completa. Admin/supersu: el mismo gate que crear
+    o editar una entrada. Quitar una columna NO borra los valores ya guardados
+    en items[].extra de entradas viejas; solo dejan de mostrarse."""
+    user = await require_admin(request)
+    body = await request.json()
+    cols = body.get("columns")
+    if not isinstance(cols, list):
+        raise HTTPException(400, "columns debe ser una lista")
+    seen, clean = set(), []
+    for c in cols:
+        if not isinstance(c, dict):
+            raise HTTPException(400, "Cada columna debe ser un objeto")
+        key = str(c.get("key", "")).strip().lower()
+        label = str(c.get("label", "")).strip()
+        typ = str(c.get("type", "text")).strip().lower()
+        if not _ASN_COLUMN_KEY_RE.match(key):
+            raise HTTPException(400, f"Clave de columna inválida: '{key}' (solo a-z, 0-9 y _)")
+        if key in ASN_LINE_FIXED_FIELDS:
+            raise HTTPException(400, f"'{key}' es un campo fijo de la línea; usa otro nombre")
+        if key in seen:
+            raise HTTPException(400, f"Columna duplicada: '{key}'")
+        if not label:
+            raise HTTPException(400, f"La columna '{key}' necesita etiqueta")
+        if typ not in ASN_COLUMN_TYPES:
+            raise HTTPException(400, f"Tipo de columna no soportado: '{typ}'")
+        col = {"key": key, "label": label, "type": typ,
+               "width": int(c.get("width") or 150)}
+        if typ == "formula":
+            formula = str(c.get("formula", "")).strip()
+            if not formula:
+                raise HTTPException(400, f"La columna '{label}' es de fórmula y no trae fórmula")
+            col["formula"] = formula
+        if typ == "select":
+            opts = []
+            for o in c.get("statusOptions") or []:
+                if isinstance(o, dict) and str(o.get("value", "")).strip():
+                    opts.append({"value": str(o["value"]).strip(),
+                                 "color": str(o.get("color") or "#3d85c6")})
+            if not opts:
+                raise HTTPException(400, f"La columna '{label}' es de estado y no trae opciones")
+            col["statusOptions"] = opts
+        seen.add(key)
+        clean.append(col)
+    await db.column_config.update_one(
+        {"config_id": "wms_asn"},
+        {"$set": {"config_id": "wms_asn", "columns": clean,
+                  "updated_at": now_iso(), "updated_by": user.get("user_id")}},
+        upsert=True,
+    )
+    await log_activity(user, "wms_asn_columns_updated", {"columns": [c["key"] for c in clean]})
+    return {"columns": clean}
+
+
 @router.post("/asn")
 async def create_asn(request: Request):
     """Manual ASN creation. Caller supplies asn_id; we don't auto-generate so the
@@ -10656,6 +10765,7 @@ async def create_asn(request: Request):
     if await db.wms_asn.find_one({"asn_id": asn_id}, {"_id": 1}):
         raise HTTPException(409, f"ASN {asn_id} ya existe")
 
+    custom_cols = await _asn_custom_columns()
     normalized_items = []
     for idx, it in enumerate(items, start=1):
         qty = int(it.get("qty_expected", it.get("quantity", 0)) or 0)
@@ -10672,6 +10782,7 @@ async def create_asn(request: Request):
             "color": str(it.get("color", "")).strip().upper(),
             "size": str(it.get("size", "")).strip().upper(),
             "fabric": str(it.get("fabric", it.get("fabric_content", ""))).strip().upper(),
+            "extra": _normalize_asn_extra(it.get("extra"), custom_cols),
         })
 
     doc = {
@@ -10889,6 +11000,7 @@ async def update_asn(asn_id: str, request: Request):
         by_part = {}
         for it in prev:
             by_part.setdefault(str(it.get("part_number", "")).upper(), it)
+        custom_cols = await _asn_custom_columns()
         normalized = []
         for idx, it in enumerate(incoming, start=1):
             part = str(it.get("part_number", it.get("sku", ""))).strip().upper()
@@ -10913,6 +11025,7 @@ async def update_asn(asn_id: str, request: Request):
                 "color": str(it.get("color", "")).strip().upper(),
                 "size": str(it.get("size", "")).strip().upper(),
                 "fabric": str(it.get("fabric", it.get("fabric_content", ""))).strip().upper(),
+                "extra": _normalize_asn_extra(it.get("extra"), custom_cols),
             })
         update["items"] = normalized
 

@@ -1,12 +1,14 @@
 import { useState, useEffect, useCallback } from "react";
 import { toast } from "sonner";
-import { FileDown, FileUp, Loader2, X, Package, Search, AlertTriangle, Trash2, Pencil, Plus, Check, CheckCircle2, RotateCcw, Lock } from "lucide-react";
+import { FileDown, FileUp, Loader2, X, Package, Search, AlertTriangle, Trash2, Pencil, Plus, Check, CheckCircle2, RotateCcw, Lock, Columns3 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { saveAs } from "file-saver";
 import { useLang } from "../../contexts/LanguageContext";
 import { API, fetcher, deleter, putter, poster, logLoadError } from "./lib";
 import { AsnStatus } from "./constants";
 import { StatCard, Btn, EmptyState, ModuleToolbar } from "./ui";
+import { AddColumnModal } from "../dashboard/AddColumnModal";
+import { evalFormula, formatResult } from "../../lib/formula";
 
 const STATUS_STYLES = {
   [AsnStatus.PENDING]:  { labelKey: "wms_asn_st_pending",  cls: "bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-500/10 dark:text-blue-300 dark:border-blue-500/25",             tabCls: "bg-card text-foreground shadow-sm",    dot: "bg-blue-500" },
@@ -23,6 +25,65 @@ const TABS = [
 
 // Tipo de discrepancia: el valor se guarda/compara tal cual; sólo se traduce al mostrar.
 const DISC_TYPE_KEY = { SOBRANTE: 'wms_asn_disc_surplus', FALTANTE: 'wms_asn_disc_shortage' };
+
+// ── Columnas personalizadas de las líneas (igual que el CRM) ─────────────────
+// Los campos fijos se declaran como columnas para que una fórmula pueda
+// referenciarlos: `[Cantidad] * 2`, `IF([Recibido] >= [Cantidad], "OK", "")`.
+const ASN_FIXED_LINE_COLS = [
+  { key: 'part_number', label: 'Style / Part #', type: 'text' },
+  { key: 'description', label: 'Descripción', type: 'text' },
+  { key: 'color', label: 'Color', type: 'text' },
+  { key: 'size', label: 'Talla', type: 'text' },
+  { key: 'country', label: 'País', type: 'text' },
+  { key: 'brand', label: 'Marca', type: 'text' },
+  { key: 'fabric', label: 'Fabric', type: 'text' },
+  { key: 'qty_expected', label: 'Cantidad', type: 'number' },
+  { key: 'qty_received', label: 'Recibido', type: 'number' },
+];
+const CELL_CLS = "w-full h-8 px-2 bg-card border border-input rounded-md text-xs focus:outline-none focus:border-primary";
+
+// Clave estable para la definición: sin acentos ni símbolos, para que el backend
+// la acepte (^[a-z0-9_]+$) y una fórmula la pueda escribir sin corchetes.
+const slugKey = (name) => String(name || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
+  .toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 40) || 'col';
+
+// Fila plana {campo fijo + extra} — es lo que ve el motor de fórmulas.
+const lineRow = (it) => ({ ...(it || {}), ...((it && it.extra) || {}) });
+
+// Una celda de columna personalizada, por tipo. readOnly = tabla de detalle.
+function ExtraCell({ col, line, cols, onChange, readOnly = false }) {
+  const value = (line.extra || {})[col.key];
+  if (col.type === 'formula') {
+    const v = formatResult(evalFormula(col.formula, lineRow(line), cols));
+    return <span className="text-xs tabular-nums text-muted-foreground">{v}</span>;
+  }
+  if (col.type === 'select') {
+    const opt = (col.statusOptions || []).find(o => o.value === value);
+    const badge = value
+      ? <span className="inline-block px-2 py-0.5 rounded text-xs font-medium text-white" style={{ backgroundColor: opt?.color || '#64748b' }}>{value}</span>
+      : <span className="text-xs text-muted-foreground">—</span>;
+    if (readOnly) return badge;
+    return (
+      <select value={value || ''} onChange={e => onChange(e.target.value)} className={CELL_CLS}
+        style={{ minWidth: 110, ...(opt ? { backgroundColor: opt.color, color: '#fff' } : {}) }}>
+        <option value="">—</option>
+        {(col.statusOptions || []).map(o => <option key={o.value} value={o.value}>{o.value}</option>)}
+      </select>
+    );
+  }
+  if (col.type === 'checkbox') {
+    return <input type="checkbox" checked={!!value} disabled={readOnly} onChange={e => onChange(e.target.checked)} className="w-4 h-4 accent-primary" />;
+  }
+  if (readOnly) {
+    if (value === undefined || value === null || value === '') return <span className="text-xs text-muted-foreground">—</span>;
+    if (col.type === 'link') return <a href={String(value)} target="_blank" rel="noreferrer" className="text-xs text-primary underline truncate block max-w-[200px]">{String(value)}</a>;
+    if (col.type === 'number') return <span className="text-xs tabular-nums">{Number(value).toLocaleString()}</span>;
+    return <span className="text-xs">{String(value)}</span>;
+  }
+  const inputType = col.type === 'number' ? 'number' : col.type === 'date' ? 'date' : col.type === 'link' ? 'url' : 'text';
+  return <input type={inputType} value={value ?? ''} onChange={e => onChange(e.target.value)}
+    className={`${CELL_CLS} ${col.type === 'number' ? 'text-right tabular-nums' : ''}`} style={{ minWidth: col.type === 'date' ? 130 : 110 }} />;
+}
 
 export const AsnModule = ({ currentUser }) => {
   const { t } = useLang();
@@ -52,7 +113,50 @@ export const AsnModule = ({ currentUser }) => {
   // Captura MANUAL de una entrada (ASN o BPO) — tabla tipo Excel. Las columnas
   // están alineadas al formato de receiving (style/color/talla/país/fabric/cant.)
   // para que receiving reciba directo contra el número de entrada.
-  const NEW_LINE = () => ({ part_number: '', color: '', size: '', country: '', fabric: '', qty_expected: '' });
+  const NEW_LINE = () => ({ part_number: '', color: '', size: '', country: '', fabric: '', qty_expected: '', extra: {} });
+
+  // Columnas personalizadas (globales para todas las entradas). Se editan con el
+  // mismo modal del CRM; los valores por línea viajan en items[].extra.
+  const [asnCols, setAsnCols] = useState([]);
+  const [showAddCol, setShowAddCol] = useState(false);
+  const allLineCols = [...ASN_FIXED_LINE_COLS, ...asnCols];
+  useEffect(() => {
+    fetcher('/asn-columns').then(r => setAsnCols(r?.columns || [])).catch(logLoadError('asn columns'));
+  }, []);
+  const saveAsnCols = async (cols) => {
+    const res = await putter('/asn-columns', { columns: cols });
+    const r = await res.json().catch(() => ({}));
+    if (!res.ok) { toast.error(r.detail || t('wms_asn_columns_err')); return false; }
+    setAsnCols(r.columns || []);
+    return true;
+  };
+  // colDef viene del AddColumnModal del CRM: {key,label,type,width,custom,formula?,statusOptions?,optionKey?}
+  const addAsnColumn = (colDef) => {
+    const key = slugKey(colDef.label || colDef.key);
+    if (allLineCols.some(c => c.key === key)) { toast.error(t('col_exists')); return; }
+    const col = { key, label: colDef.label, type: colDef.type, width: colDef.width || 150 };
+    if (colDef.type === 'formula') col.formula = colDef.formula;
+    if (colDef.type === 'select') col.statusOptions = colDef.statusOptions || [];
+    saveAsnCols([...asnCols, col]);
+  };
+  const removeAsnColumn = (key) => {
+    const col = asnCols.find(c => c.key === key);
+    if (!col || !window.confirm(t('wms_remove_column_confirm', { name: col.label }))) return;
+    saveAsnCols(asnCols.filter(c => c.key !== key));
+  };
+  // Cabecera de columna personalizada: etiqueta + quitar (admin/supersu).
+  const ExtraTh = ({ col, cls }) => (
+    <th className={cls} style={{ minWidth: col.width || 120 }}>
+      <span className="inline-flex items-center gap-1">
+        {col.label}
+        {isSupersu && (
+          <button onClick={() => removeAsnColumn(col.key)} className="p-0.5 rounded text-muted-foreground/60 hover:text-destructive hover:bg-destructive/10" title={t('wms_remove_column')}>
+            <X className="w-3 h-3" />
+          </button>
+        )}
+      </span>
+    </th>
+  );
   const [showCreate, setShowCreate] = useState(false);
   const [savingCreate, setSavingCreate] = useState(false);
   const [createDraft, setCreateDraft] = useState(null);
@@ -60,12 +164,14 @@ export const AsnModule = ({ currentUser }) => {
   const setCLine = (i, f, v) => setCreateDraft(d => ({ ...d, items: d.items.map((it, j) => j === i ? { ...it, [f]: v } : it) }));
   const addCLine = () => setCreateDraft(d => ({ ...d, items: [...d.items, NEW_LINE()] }));
   const rmCLine = (i) => setCreateDraft(d => ({ ...d, items: d.items.filter((_, j) => j !== i) }));
+  const setCLineExtra = (i, key, v) => setCreateDraft(d => ({ ...d, items: d.items.map((it, j) => j === i ? { ...it, extra: { ...(it.extra || {}), [key]: v } } : it) }));
   const submitCreate = async () => {
     const d = createDraft;
     if (!d.asn_id.trim()) { toast.error(t('wms_asn_entry_num_req')); return; }
     const items = d.items.filter(it => (it.part_number || '').trim()).map(it => ({
       part_number: it.part_number, color: it.color, size: it.size,
       country: it.country, fabric: it.fabric, qty_expected: parseInt(it.qty_expected, 10) || 0,
+      extra: it.extra || {},
     }));
     if (!items.length) { toast.error(t('wms_asn_min_line_style')); return; }
     setSavingCreate(true);
@@ -109,8 +215,14 @@ export const AsnModule = ({ currentUser }) => {
         description: it.description || '',
         country: it.country || '',
         brand: it.brand || '',
+        // color/size/fabric no tienen columna en esta tabla pero SÍ se mandan al
+        // guardar: si no se cargan aquí, editar una entrada los borraba.
+        color: it.color || '',
+        size: it.size || '',
+        fabric: it.fabric || '',
         qty_expected: it.qty_expected || 0,
         qty_received: it.qty_received || 0,
+        extra: it.extra || {},
       })),
     });
     setEditing(true);
@@ -149,8 +261,10 @@ export const AsnModule = ({ currentUser }) => {
   };
   const setItem = (i, field, value) =>
     setEditDraft(d => ({ ...d, items: d.items.map((it, j) => j === i ? { ...it, [field]: value } : it) }));
+  const setItemExtra = (i, key, v) =>
+    setEditDraft(d => ({ ...d, items: d.items.map((it, j) => j === i ? { ...it, extra: { ...(it.extra || {}), [key]: v } } : it) }));
   const addItem = () =>
-    setEditDraft(d => ({ ...d, items: [...d.items, { part_number: '', description: '', country: '', brand: '', color: '', size: '', fabric: '', qty_expected: 0, qty_received: 0 }] }));
+    setEditDraft(d => ({ ...d, items: [...d.items, { part_number: '', description: '', country: '', brand: '', color: '', size: '', fabric: '', qty_expected: 0, qty_received: 0, extra: {} }] }));
   const removeItem = (i) =>
     setEditDraft(d => ({ ...d, items: d.items.filter((_, j) => j !== i) }));
 
@@ -168,6 +282,7 @@ export const AsnModule = ({ currentUser }) => {
         size: it.size || '',
         fabric: it.fabric || '',
         qty_expected: parseInt(it.qty_expected, 10) || 0,
+        extra: it.extra || {},
       }));
     if (items.length === 0) { toast.error(t('wms_asn_min_line_pn')); return; }
     setSavingEdit(true);
@@ -439,6 +554,12 @@ export const AsnModule = ({ currentUser }) => {
         }
       />
 
+      {/* Nueva columna para las líneas: el mismo modal del CRM (Radix Dialog,
+          overlay z-[900]) — queda por encima de los overlays z-[100] de este módulo. */}
+      <AddColumnModal isOpen={showAddCol} onClose={() => setShowAddCol(false)} onAdd={addAsnColumn}
+        existingColumns={allLineCols}
+        sampleRow={lineRow((createDraft?.items || editDraft?.items || detailData?.asn?.items || [])[0])} />
+
       {/* Nueva entrada — captura tipo Excel (ASN o BPO). El módulo NO es un
           Radix Dialog, así que un overlay simple funciona sin bloquear clics. */}
       {showCreate && createDraft && (
@@ -473,7 +594,10 @@ export const AsnModule = ({ currentUser }) => {
               <div>
                 <div className="flex items-center justify-between mb-2">
                   <h4 className="text-xs font-semibold text-muted-foreground">{t('wms_asn_lines_fmt')}</h4>
-                  <Btn onClick={addCLine}><Plus className="w-3.5 h-3.5" /> {t('wms_add_line')}</Btn>
+                  <div className="flex items-center gap-2">
+                    {isSupersu && <Btn onClick={() => setShowAddCol(true)}><Columns3 className="w-3.5 h-3.5" /> {t('wms_add_column')}</Btn>}
+                    <Btn onClick={addCLine}><Plus className="w-3.5 h-3.5" /> {t('wms_add_line')}</Btn>
+                  </div>
                 </div>
                 <div className="border border-border rounded-lg overflow-x-auto">
                   <table className="w-full text-sm">
@@ -485,18 +609,20 @@ export const AsnModule = ({ currentUser }) => {
                         <th className="px-2 py-2 text-left text-xs font-semibold text-muted-foreground">{t('wms_country')}</th>
                         <th className="px-2 py-2 text-left text-xs font-semibold text-muted-foreground">Fabric</th>
                         <th className="px-2 py-2 text-right text-xs font-semibold text-muted-foreground">{t('quantity')}</th>
+                        {asnCols.map(c => <ExtraTh key={c.key} col={c} cls="px-2 py-2 text-left text-xs font-semibold text-muted-foreground whitespace-nowrap" />)}
                         <th className="px-2 py-2" />
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-border/60">
                       {createDraft.items.map((it, i) => (
                         <tr key={i}>
-                          <td className="p-1.5"><input value={it.part_number} onChange={e => setCLine(i, 'part_number', e.target.value.toUpperCase())} className="w-full h-8 px-2 bg-card border border-input rounded-md text-xs font-mono" /></td>
-                          <td className="p-1.5"><input value={it.color} onChange={e => setCLine(i, 'color', e.target.value.toUpperCase())} className="w-full h-8 px-2 bg-card border border-input rounded-md text-xs" /></td>
+                          <td className="p-1.5"><input value={it.part_number} onChange={e => setCLine(i, 'part_number', e.target.value.toUpperCase())} className="w-full min-w-[150px] h-8 px-2 bg-card border border-input rounded-md text-xs font-mono" /></td>
+                          <td className="p-1.5"><input value={it.color} onChange={e => setCLine(i, 'color', e.target.value.toUpperCase())} className="w-full min-w-[110px] h-8 px-2 bg-card border border-input rounded-md text-xs" /></td>
                           <td className="p-1.5"><input value={it.size} onChange={e => setCLine(i, 'size', e.target.value.toUpperCase())} className="w-20 h-8 px-2 bg-card border border-input rounded-md text-xs" /></td>
                           <td className="p-1.5"><input value={it.country} onChange={e => setCLine(i, 'country', e.target.value.toUpperCase())} className="w-24 h-8 px-2 bg-card border border-input rounded-md text-xs" /></td>
                           <td className="p-1.5"><input value={it.fabric} onChange={e => setCLine(i, 'fabric', e.target.value.toUpperCase())} className="w-28 h-8 px-2 bg-card border border-input rounded-md text-xs" /></td>
                           <td className="p-1.5"><input type="number" min="0" value={it.qty_expected} onChange={e => setCLine(i, 'qty_expected', e.target.value)} className="w-24 h-8 px-2 bg-card border border-input rounded-md text-xs text-right tabular-nums" /></td>
+                          {asnCols.map(c => <td key={c.key} className="p-1.5"><ExtraCell col={c} line={it} cols={allLineCols} onChange={v => setCLineExtra(i, c.key, v)} /></td>)}
                           <td className="p-1.5 text-center"><button onClick={() => rmCLine(i)} className="p-1.5 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded"><Trash2 className="w-3.5 h-3.5" /></button></td>
                         </tr>
                       ))}
@@ -1003,12 +1129,15 @@ export const AsnModule = ({ currentUser }) => {
                     <div className="flex items-center justify-between mb-2">
                       <h4 className="text-xs font-semibold text-muted-foreground">{t('wms_asn_pl_lines')}</h4>
                       {editing && (
-                        <Btn onClick={addItem}>
-                          <Plus className="w-3.5 h-3.5" /> {t('wms_add_line')}
-                        </Btn>
+                        <div className="flex items-center gap-2">
+                          {isSupersu && <Btn onClick={() => setShowAddCol(true)}><Columns3 className="w-3.5 h-3.5" /> {t('wms_add_column')}</Btn>}
+                          <Btn onClick={addItem}>
+                            <Plus className="w-3.5 h-3.5" /> {t('wms_add_line')}
+                          </Btn>
+                        </div>
                       )}
                     </div>
-                    <div className="border border-border rounded-lg overflow-hidden">
+                    <div className="border border-border rounded-lg overflow-x-auto">
                       <table className="w-full text-sm">
                         <thead className="bg-muted/50 border-b border-border">
                           <tr>
@@ -1017,6 +1146,7 @@ export const AsnModule = ({ currentUser }) => {
                             <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">{t('description')}</th>
                             <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">{t('wms_country')}</th>
                             <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">{t('wms_brand')}</th>
+                            {asnCols.map(c => <ExtraTh key={c.key} col={c} cls="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground whitespace-nowrap" />)}
                             <th className="px-3 py-2.5 text-right text-xs font-semibold text-muted-foreground">{t('wms_expected')}</th>
                             <th className="px-3 py-2.5 text-right text-xs font-semibold text-muted-foreground">{t('wms_received')}</th>
                             {!editing && <th className="px-3 py-2.5 text-right text-xs font-semibold text-muted-foreground">{t('wms_in_inventory')}</th>}
@@ -1028,10 +1158,11 @@ export const AsnModule = ({ currentUser }) => {
                             editDraft.items.map((it, i) => (
                               <tr key={i} className="hover:bg-muted/40">
                                 <td className="p-2 text-xs font-mono text-muted-foreground">{i + 1}</td>
-                                <td className="p-2"><input value={it.part_number} onChange={e => setItem(i, 'part_number', e.target.value.toUpperCase())} className="w-full h-8 px-2 bg-card border border-input rounded-md text-xs font-mono focus:outline-none focus:border-primary" /></td>
-                                <td className="p-2"><input value={it.description} onChange={e => setItem(i, 'description', e.target.value)} className="w-full h-8 px-2 bg-card border border-input rounded-md text-xs focus:outline-none focus:border-primary" /></td>
+                                <td className="p-2"><input value={it.part_number} onChange={e => setItem(i, 'part_number', e.target.value.toUpperCase())} className="w-full min-w-[150px] h-8 px-2 bg-card border border-input rounded-md text-xs font-mono focus:outline-none focus:border-primary" /></td>
+                                <td className="p-2"><input value={it.description} onChange={e => setItem(i, 'description', e.target.value)} className="w-full min-w-[160px] h-8 px-2 bg-card border border-input rounded-md text-xs focus:outline-none focus:border-primary" /></td>
                                 <td className="p-2"><input value={it.country} onChange={e => setItem(i, 'country', e.target.value.toUpperCase())} className="w-20 h-8 px-2 bg-card border border-input rounded-md text-xs font-mono focus:outline-none focus:border-primary" /></td>
                                 <td className="p-2"><input value={it.brand} onChange={e => setItem(i, 'brand', e.target.value.toUpperCase())} className="w-24 h-8 px-2 bg-card border border-input rounded-md text-xs focus:outline-none focus:border-primary" /></td>
+                                {asnCols.map(c => <td key={c.key} className="p-2"><ExtraCell col={c} line={it} cols={allLineCols} onChange={v => setItemExtra(i, c.key, v)} /></td>)}
                                 <td className="p-2"><input type="number" min="0" value={it.qty_expected} onChange={e => setItem(i, 'qty_expected', e.target.value)} className="w-24 h-8 px-2 bg-card border border-input rounded-md text-xs text-right tabular-nums focus:outline-none focus:border-primary" /></td>
                                 <td className="p-2 text-xs text-right tabular-nums text-muted-foreground">{(it.qty_received || 0).toLocaleString()}</td>
                                 <td className="p-2 text-center">
@@ -1052,6 +1183,7 @@ export const AsnModule = ({ currentUser }) => {
                                   <td className="px-3 py-2.5 text-xs text-foreground max-w-[260px] truncate" title={it.description}>{it.description}</td>
                                   <td className="px-3 py-2.5 text-xs font-mono">{it.country || '—'}</td>
                                   <td className="px-3 py-2.5 text-xs">{it.brand || '—'}</td>
+                                  {asnCols.map(c => <td key={c.key} className="px-3 py-2.5"><ExtraCell col={c} line={it} cols={allLineCols} readOnly /></td>)}
                                   <td className="px-3 py-2.5 text-xs text-right tabular-nums font-bold">{exp.toLocaleString()}</td>
                                   <td className={`px-3 py-2.5 text-xs text-right tabular-nums font-medium ${done ? 'text-emerald-600 dark:text-emerald-400' : rcv > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground'}`}>{rcv.toLocaleString()}</td>
                                   <td className="px-3 py-2.5 text-xs text-right tabular-nums font-medium">{((detailData.summary?.by_line || []).find(l => l.line_no === it.line_no)?.qty_in_stock ?? 0).toLocaleString()}</td>
