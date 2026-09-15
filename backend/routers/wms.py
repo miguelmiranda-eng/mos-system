@@ -3747,7 +3747,7 @@ def _ci_eq(v):
 async def _deduct_pick_boxes(style, color, size, location, qty, inv_operation,
                              customer="", order_number=None, order_id=None,
                              user=None, ticket_id=None, only_box_id=None,
-                             enforce_scan=False):
+                             enforce_scan=False, defer_reproject=None):
     """Deduct `qty` units for a pick from the physical boxes AND the
     inventory row, keeping wms_boxes / units_on_hand / total_boxes in lockstep.
 
@@ -3887,7 +3887,14 @@ async def _deduct_pick_boxes(style, color, size, location, qty, inv_operation,
         remaining -= take
 
     # El resumen de cada material tocado se reconstruye desde sus cajas.
-    for (t_style, t_sku, t_color, t_size, t_loc), sigs in tocados.items():
+    # `defer_reproject` (dict) lo usa el descuento en LOTE: acumula las celdas
+    # tocadas por N cajas y reproyecta UNA vez por celda al final
+    # (_flush_deferred_reprojections), en vez de N veces la misma celda.
+    for key, sigs in tocados.items():
+        if defer_reproject is not None:
+            defer_reproject.setdefault(key, set()).update(sigs)
+            continue
+        t_style, t_sku, t_color, t_size, t_loc = key
         await _reproject_material_rows(t_style, t_sku, t_color, t_size, t_loc,
                                        user=user, moved_sigs=sigs,
                                        contexto={"ticket_id": ticket_id,
@@ -6046,9 +6053,41 @@ async def assign_pick_ticket(ticket_id: str, request: Request):
     })
     return {"message": f"Ticket {ticket_id} asignado a {operator_name}", "ticket_id": ticket_id}
 
+# Campos que la PDA de surtido necesita para la LISTA de tickets. Todo lo
+# demás (size_locations snapshot, deducted_map, notas, historial) sobraba y
+# el operador más cargado bajaba ~190 KB por recarga.
+_PDA_TICKET_FIELDS = {
+    "_id": 0, "ticket_id": 1, "order_number": 1, "order_id": 1, "style": 1, "color": 1,
+    "customer": 1, "sizes": 1, "picked_sizes": 1, "picking_status": 1, "status": 1,
+    "destination": 1, "assigned_to": 1, "assigned_at": 1, "last_picked_at": 1, "strategy": 1,
+}
+
+
+@router.get("/pick-tickets/{ticket_id}/size-locations")
+async def get_ticket_size_locations(ticket_id: str, request: Request):
+    """Ubicaciones por talla (stock VIVO) de UN ticket. La PDA lo pide al abrir
+    el ticket y tras descontar, en vez de que my-tickets lo calcule para todos
+    los tickets del operador (25 tickets × 131 tallas = ~262 consultas por
+    carga fría en el caso real medido)."""
+    user = await require_auth(request)
+    tk = await db.wms_pick_tickets.find_one({"ticket_id": ticket_id}, _PDA_TICKET_FIELDS)
+    if not tk:
+        raise HTTPException(404, "Pick ticket no encontrado")
+    assignee = (tk.get("assigned_to") or "").strip()
+    if assignee and assignee not in {user.get("user_id", ""), user.get("email", "")}             and user.get("role") not in {"admin", "supersu", "ceo"}:
+        raise HTTPException(403, "Este pick ticket está asignado a otro operador")
+    size_locations = await _compute_size_locations(
+        tk.get("style", ""), tk.get("color", ""), tk.get("sizes", {}), tk.get("strategy", "default"))
+    return {"ticket_id": ticket_id, "size_locations": size_locations}
+
+
 @router.get("/operator/my-tickets")
-async def get_operator_tickets(request: Request):
-    """Get pick tickets assigned to the current operator."""
+async def get_operator_tickets(request: Request, light: int = 0):
+    """Get pick tickets assigned to the current operator.
+
+    `light=1` (PDA): solo los campos de la lista y SIN recalcular
+    size_locations; el detalle vivo se pide por ticket en
+    /pick-tickets/{id}/size-locations al abrirlo."""
     user = await require_auth(request)
     user_id = user.get("user_id", "")
     email = user.get("email", "")
@@ -6057,6 +6096,8 @@ async def get_operator_tickets(request: Request):
         "$or": [{"assigned_to": user_id}, {"assigned_to": email}],
         "status": {"$ne": "confirmed"}
     }
+    if light:
+        return await db.wms_pick_tickets.find(query, _PDA_TICKET_FIELDS).sort("assigned_at", -1).to_list(200)
     tickets = await db.wms_pick_tickets.find(query, {"_id": 0}).sort("assigned_at", -1).to_list(200)
     # Refresh available pick locations from CURRENT inventory so the operator
     # always sees where the stock actually is now (the stored size_locations is
@@ -6660,6 +6701,157 @@ async def bind_box(ticket_id: str, request: Request):
     box["physical_lpn"] = lpn
     return {"status": "bound", "box": box, "reconciled": reconciled,
             "delta": delta}
+
+
+async def _flush_deferred_reprojections(tocados, *, user=None, contexto=None):
+    """Reproyecta cada celda (material, ubicación) tocada por un lote, una vez."""
+    for (t_style, t_sku, t_color, t_size, t_loc), sigs in (tocados or {}).items():
+        await _reproject_material_rows(t_style, t_sku, t_color, t_size, t_loc,
+                                       user=user, moved_sigs=sigs, contexto=contexto)
+
+
+@router.put("/pick-tickets/{ticket_id}/pick-boxes")
+async def pick_boxes(ticket_id: str, request: Request):
+    """Descuenta en UN viaje todas las cajas del carrito de una ubicación.
+
+    Antes la PDA mandaba un PUT /pick-size POR CAJA, en serie: cada uno con
+    auth, guardia de hold, verificación de stock, descuento, reproyección del
+    renglón y dos movimientos (~15 consultas). Un carrito de 6 cajas eran ~90
+    round-trips secuenciales — la espera del botón "Guardar y descontar".
+    Aquí: una autorización, un hold-check, UN _assert_pick_stock con los deltas
+    agregados, descuento caja por caja (mismo _deduct_pick_boxes, misma
+    verdad: la caja escaneada) y UNA reproyección por celda al final.
+
+    Body: { location: str, boxes: [{box_id, size, qty}] }
+    Semántica idéntica a pick-size: cada qty es un DELTA nuevo que sale de ESA
+    caja; picked_sizes/deducted_map se acumulan por (talla, ubicación).
+    """
+    user = await require_auth(request)
+    body = await request.json()
+    location = (body.get("location") or "").strip().upper()
+    if not location:
+        raise HTTPException(400, "location requerida")
+    items, seen = [], set()
+    for b in (body.get("boxes") or []):
+        if not isinstance(b, dict):
+            raise HTTPException(400, "boxes debe ser una lista de {box_id, size, qty}")
+        box_id = str(b.get("box_id") or "").strip()
+        size = str(b.get("size") or "").strip()
+        qty = int(b.get("qty") or 0)
+        if not box_id or not size or qty <= 0:
+            raise HTTPException(400, f"Caja inválida en el lote: {b}")
+        if box_id in seen:
+            raise HTTPException(400, f"La caja {box_id} viene dos veces en el lote")
+        seen.add(box_id)
+        items.append((box_id, size, qty))
+    if not items:
+        raise HTTPException(400, "El lote no trae cajas")
+
+    ticket = await db.wms_pick_tickets.find_one({"ticket_id": ticket_id}, {"_id": 0})
+    if not ticket:
+        raise HTTPException(404, "Pick ticket no encontrado")
+    assignee = (ticket.get("assigned_to") or "").strip()
+    caller_ids = {user.get("user_id", ""), user.get("email", "")}
+    elevated = user.get("role") in {"admin", "supersu", "ceo"}
+    if assignee and assignee not in caller_ids and not elevated:
+        raise HTTPException(403, "Este pick ticket está asignado a otro operador")
+    if ticket.get("status") in ("confirmed", "in_neck_cutting"):
+        raise HTTPException(409, "El pick ya fue finalizado; no se aceptan más descuentos")
+    await _assert_not_on_hold(user, location)
+
+    is_neck = ticket.get("destination") == "neck_cutting"
+    inv_op = "pick_to_neck" if is_neck else "deduct"
+    style = ticket.get("style", "").strip()
+    color = ticket.get("color", "").strip()
+    customer = ticket.get("customer", "")
+    _ord_no = ticket.get("order_number")
+    _ord_id = ticket.get("order_id")
+
+    old_map = ticket.get("deducted_map") or {}
+    sizes_req = ticket.get("sizes") or {}
+    add_by_size: dict = {}
+    for _, sz, q in items:
+        add_by_size[sz] = add_by_size.get(sz, 0) + q
+    for sz, add in add_by_size.items():
+        required = int(sizes_req.get(sz, 0) or 0)
+        already = sum(int(v or 0) for v in (old_map.get(sz) or {}).values())
+        if required and already + add > required:
+            raise HTTPException(400, f"Talla {sz}: {already + add} excede lo requerido ({required})")
+
+    # WMS-002: un solo chequeo de stock con los deltas AGREGADOS por celda.
+    delta_ps = {sz: {"total": add, "details": {location: add}} for sz, add in add_by_size.items()}
+    await _assert_pick_stock(style, color, delta_ps, user)
+
+    def _merge(map_base, applied_rows):
+        """picked_sizes/deducted_map nuevos = base + lo aplicado, por talla."""
+        merged = {k: dict(v) for k, v in map_base.items()}
+        for sz, q, _ in applied_rows:
+            cell = merged.setdefault(sz, {})
+            cell[location] = int(cell.get(location, 0) or 0) + q
+        ps = dict(ticket.get("picked_sizes") or {})
+        for sz in {r[0] for r in applied_rows}:
+            details = {k: v for k, v in merged[sz].items() if v}
+            ps[sz] = {"total": sum(details.values()), "details": details}
+        return merged, ps
+
+    # WMS-003/004: si una caja revienta a medias, lo YA aplicado se persiste
+    # antes de propagar el error (Mongo standalone: sin transacción), y las
+    # celdas tocadas se reproyectan igual — el material ya salió.
+    applied = []      # [(size, qty, box_id)]
+    tocados: dict = {}
+    contexto = {"ticket_id": ticket_id, "order_number": _ord_no}
+    try:
+        for box_id, sz, q in items:
+            await _deduct_pick_boxes(style, color, sz, location, q, inv_op, customer, _ord_no, _ord_id,
+                                     user=user, ticket_id=ticket_id, only_box_id=box_id,
+                                     defer_reproject=tocados)
+            applied.append((sz, q, box_id))
+    except Exception as exc:
+        is_http = isinstance(exc, HTTPException)
+        if not is_http:
+            logger.exception("Error descontando lote en pick-boxes")
+        await _flush_deferred_reprojections(tocados, user=user, contexto=contexto)
+        if applied:
+            merged, ps = _merge(old_map, applied)
+            salvaged_total = sum(q for _, q, _ in applied)
+            await db.wms_pick_tickets.update_one({"ticket_id": ticket_id}, {"$set": {
+                "picked_sizes": ps, "deducted_map": merged, "picking_status": "in_progress",
+                "last_picked_by": user.get("user_id"),
+                "last_picked_by_name": user.get("name", user.get("email", "")),
+                "last_picked_at": now_iso(),
+            }})
+            await log_movement(user, "pick_boxes_partial", {
+                "ticket_id": ticket_id, "location": location,
+                "applied": [{"size": s_, "qty": q_, "box_id": b_} for s_, q_, b_ in applied],
+                "failed_box": next((b for b, _, _ in items if b not in {a[2] for a in applied}), None),
+                "error": str(getattr(exc, "detail", None) or exc)[:300],
+            })
+            _invalidate_size_locs(style, color)
+            raise HTTPException(409, (
+                f"Se descontaron {salvaged_total} pz de {len(applied)} caja(s) PERO el lote "
+                f"falló a medias ({getattr(exc, 'detail', None) or exc}). El material YA salió "
+                f"y quedó registrado — NO vuelvas a escanear esas cajas. Avisa a tu supervisor."
+            ))
+        if is_http:
+            raise
+        raise HTTPException(500, "No se pudo descontar el lote; el ticket no cambió")
+
+    await _flush_deferred_reprojections(tocados, user=user, contexto=contexto)
+    merged, ps = _merge(old_map, applied)
+    await db.wms_pick_tickets.update_one({"ticket_id": ticket_id}, {"$set": {
+        "picked_sizes": ps, "deducted_map": merged, "picking_status": "in_progress",
+        "last_picked_by": user.get("user_id"),
+        "last_picked_by_name": user.get("name", user.get("email", "")),
+        "last_picked_at": now_iso(),
+    }})
+    total = sum(q for _, q, _ in applied)
+    await log_movement(user, "pick_boxes", {
+        "ticket_id": ticket_id, "location": location, "qty": total,
+        "boxes": [{"size": s_, "qty": q_, "box_id": b_} for s_, q_, b_ in applied],
+    })
+    _invalidate_size_locs(style, color)
+    return {"message": f"{len(applied)} caja(s) · {total} pz descontadas", "ticket_id": ticket_id,
+            "deducted": total, "per_size": add_by_size, "boxes": len(applied)}
 
 
 @router.put("/pick-tickets/{ticket_id}/pick-size")

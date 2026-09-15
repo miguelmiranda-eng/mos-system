@@ -51,7 +51,7 @@ export default function PdaPicker() {
   const loadTickets = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await fetcher("/operator/my-tickets");
+      const data = await fetcher("/operator/my-tickets?light=1");
       setTickets(Array.isArray(data) ? data : []);
       setSelected(prev => prev ? (data.find(tk => tk.ticket_id === prev.ticket_id) || null) : null);
     } catch {
@@ -83,7 +83,7 @@ export default function PdaPicker() {
   // NO por cada caja — para que el operador no "salga" a tallas en cada escaneo.
   const refreshTickets = useCallback(async () => {
     try {
-      const fresh = await fetcher("/operator/my-tickets");
+      const fresh = await fetcher("/operator/my-tickets?light=1");
       if (Array.isArray(fresh)) {
         setTickets(fresh);
         setSelected(prev => prev ? (fresh.find(x => x.ticket_id === prev.ticket_id) || prev) : null);
@@ -91,31 +91,20 @@ export default function PdaPicker() {
     } catch { /* best-effort: el descuento ya se aplicó, el refresh es secundario */ }
   }, []);
 
-  const handlePickSize = async (ticketId, size, details, opts = {}) => {
+  // Descuento en LOTE: un solo viaje con todas las cajas del carrito. Devuelve
+  // la respuesta del servidor o null (el modal bloqueante ya se mostró).
+  const handlePickBoxes = async (ticketId, location, boxes) => {
     try {
-      const res = await putter(`/pick-tickets/${ticketId}/pick-size`, { size, details });
-      if (res.ok) {
-        const data = await res.json().catch(() => ({}));
-        if (!opts.silent) toast.success(data.message || t('pda_size_deducted', { size }));
-        if (navigator.vibrate && !opts.silent) navigator.vibrate(60);
-        // skipRefresh: en un lote refrescamos una sola vez al final (el caller).
-        if (!opts.skipRefresh) await refreshTickets();
-        return true;
-      }
+      const res = await putter(`/pick-tickets/${ticketId}/pick-boxes`, { location, boxes });
+      if (res.ok) return await res.json().catch(() => ({}));
       const err = await res.json().catch(() => ({}));
-      setErrorModal({
-        title: t('pda_size_not_deducted_title', { size }),
-        message: err.detail || t('pda_size_not_deducted_server'),
-      });
+      setErrorModal({ title: t('pda_commit_not_deducted_title'), message: err.detail || t('pda_size_not_deducted_server') });
       if (navigator.vibrate) navigator.vibrate([120, 60, 120]);
-      return false;
+      return null;
     } catch {
-      setErrorModal({
-        title: t('pda_size_not_deducted_title', { size }),
-        message: t('pda_size_not_deducted_offline'),
-      });
+      setErrorModal({ title: t('pda_commit_not_deducted_title'), message: t('pda_size_not_deducted_offline') });
       if (navigator.vibrate) navigator.vibrate([120, 60, 120]);
-      return false;
+      return null;
     }
   };
 
@@ -226,7 +215,7 @@ export default function PdaPicker() {
           <span className="text-xs font-bold uppercase tracking-widest">{t('comment_loading')}</span>
         </div>
       ) : selected ? (
-        <PickScreen ticket={selected} onSave={handleSave} onPickSize={handlePickSize} onRefresh={refreshTickets} saving={saving} />
+        <PickScreen ticket={selected} onSave={handleSave} onPickBoxes={handlePickBoxes} onRefresh={refreshTickets} saving={saving} />
       ) : (
         <TicketList tickets={pending} onSelect={setSelected} onComments={openComments} />
       )}
@@ -402,7 +391,7 @@ function TicketList({ tickets, onSelect, onComments }) {
 //   boxes     → escanea la caja física en la ubicación confirmada
 //   binding   → cuestionario (solo si LPN externo desconocido)
 //   quantity  → captura cuántas piezas de la caja identificada
-function PickScreen({ ticket, onSave, onPickSize, onRefresh, saving }) {
+function PickScreen({ ticket, onSave, onPickBoxes, onRefresh, saving }) {
   const { t } = useLang();
   const [pickedSizes, setPickedSizes] = useState({});
   const [committed, setCommitted] = useState(() => new Set());
@@ -508,7 +497,20 @@ function PickScreen({ ticket, onSave, onPickSize, onRefresh, saving }) {
   };
 
   const sizes = ticket.sizes || {};
-  const sizeLocs = ticket.size_locations || {};
+  // Ubicaciones por talla (stock vivo) de ESTE ticket: se piden al abrirlo y
+  // cada vez que el servidor registra un descuento (last_picked_at cambia).
+  // Antes venían en my-tickets calculadas para TODOS los tickets del operador.
+  const [sizeLocs, setSizeLocs] = useState(ticket.size_locations || {});
+  const [locsLoading, setLocsLoading] = useState(true);
+  useEffect(() => {
+    let alive = true;
+    setLocsLoading(true);
+    fetcher(`/pick-tickets/${ticket.ticket_id}/size-locations`)
+      .then(d => { if (alive) setSizeLocs(d?.size_locations || {}); })
+      .catch(() => { if (alive) toast.error(t('pda_locations_err')); })
+      .finally(() => { if (alive) setLocsLoading(false); });
+    return () => { alive = false; };
+  }, [ticket.ticket_id, ticket.last_picked_at]); // eslint-disable-line react-hooks/exhaustive-deps
   // Derivados del ticket memorizados: PickScreen se re-renderiza en CADA
   // caracter que teclea el lector (inputs controlados) y estos recorridos
   // tallas x ubicaciones se repetían en cada tecla.
@@ -757,37 +759,23 @@ function PickScreen({ ticket, onSave, onPickSize, onRefresh, saving }) {
   const removeFromCart = (idx) => setCart(prev => prev.filter((_, i) => i !== idx));
 
   // ── Descuento en LOTE (multi-talla) ────────────────────────────────────────
-  // Descuenta todas las cajas acumuladas de la ubicación de una. Como el backend
-  // es 1 caja/ubic por llamada Y por talla, iteramos caja por caja usando la
-  // talla de CADA caja, con acumulados por talla. Totales ACUMULATIVOS: el
-  // servidor descuenta solo el delta vs. su deducted_map (robusto). Un solo
-  // refresh al final. Snapshot para no depender de estados que cambian a mitad.
+  // Todas las cajas del carrito salen en UN viaje (PUT /pick-boxes): el
+  // servidor descuenta cada una de su caja escaneada y reproyecta una vez por
+  // celda. Antes era un PUT por caja en serie (~15 consultas cada uno). Un
+  // solo refresh al final. Snapshot para no depender de estados que cambian.
   const commitCart = async () => {
     if (!cart.length) { toast.error(t('pda_no_scanned_boxes')); return; }
     const items = [...cart];
     const loc = activeLocation.location;
     setCommitting(true);
-    const running = {};   // { size: acumulado en ESTA ubic } sembrado del server
+    const result = await onPickBoxes(ticket.ticket_id, loc,
+      items.map(it => ({ box_id: it.box_id, size: it.size, qty: parseInt(it.qty) || 0 })));
+    // El lote es todo-o-nada desde la PDA: si falló, el modal ya lo dijo y el
+    // refresh de abajo trae lo que el servidor sí alcanzó a aplicar (409 parcial).
+    const done = result ? items : [];
+    const failed = result ? null : true;
     const doneBySize = {}; // { size: piezas descontadas ahora }
-    const done = [];
-    let failed = null;
-    for (const it of items) {
-      const sz = it.size;
-      if (running[sz] == null) running[sz] = parseInt(pickedSizes[sz]?.details?.[loc] || 0) || 0;
-      running[sz] += parseInt(it.qty) || 0;
-      const base = { ...(pickedSizes[sz]?.details || {}) };
-      const nextDetails = { ...base, [loc]: running[sz] };
-      const detailsWithBoxes = Object.fromEntries(
-        Object.entries(nextDetails).map(([l, q]) => [l, {
-          qty: q,
-          box_id: l === loc ? it.box_id : null,   // solo la ubic activa lleva caja
-        }])
-      );
-      const ok = await onPickSize(ticket.ticket_id, sz, detailsWithBoxes, { skipRefresh: true, silent: true });
-      if (!ok) { failed = it; break; }            // onPickSize ya mostró el modal bloqueante
-      done.push(it);
-      doneBySize[sz] = (doneBySize[sz] || 0) + (parseInt(it.qty) || 0);
-    }
+    done.forEach(it => { doneBySize[it.size] = (doneBySize[it.size] || 0) + (parseInt(it.qty) || 0); });
     const pickedNow = done.reduce((s, it) => s + (parseInt(it.qty) || 0), 0);
     // Update OPTIMISTA por talla (protege reintentos si el refresh de red falla).
     if (pickedNow > 0) {
@@ -807,7 +795,7 @@ function PickScreen({ ticket, onSave, onPickSize, onRefresh, saving }) {
     setCart([]);
     setCommitting(false);
     if (failed) {
-      toast.error(t('pda_commit_partial', { count: done.length, pcs: pickedNow, box: failed.box_id, size: failed.size }));
+      /* el modal bloqueante ya explicó el fallo; nada que sumar */
     } else if (pickedNow > 0) {
       const resumen = Object.entries(doneBySize).map(([sz, q]) => `${sz}:${q}`).join(" · ");
       toast.success(t('pda_commit_ok', { count: done.length, pcs: pickedNow, summary: resumen }));
@@ -964,7 +952,12 @@ function PickScreen({ ticket, onSave, onPickSize, onRefresh, saving }) {
               {t('pda_locs_with_material')}
             </div>
             <div className="space-y-1.5">
-              {allLocs().length === 0 ? (
+              {locsLoading && allLocs().length === 0 ? (
+                <div className="flex items-center gap-2 text-white/60 py-4 justify-center">
+                  <Loader2 className="w-5 h-5 animate-spin shrink-0" />
+                  <span className="text-xs font-bold">{t('pda_locations_loading')}</span>
+                </div>
+              ) : allLocs().length === 0 ? (
                 <div className="flex items-center gap-2 text-amber-400 py-4 justify-center">
                   <AlertTriangle className="w-5 h-5 shrink-0" />
                   <span className="text-xs font-bold">{t('pda_no_stock_ticket')}</span>
