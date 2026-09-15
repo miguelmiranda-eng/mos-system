@@ -52,11 +52,9 @@ ALLOWLIST = {
     "_adjust_inventory_boxes": 2,
     "_update_inventory_enhanced": 9,
     "delete_receiving": 2,
-    "reconcile_lpn": 4,
     "recon_commit": 2,
     # Ola 4 — correcciones y puertas semi-retiradas.
     "add_inventory_manual": 3,
-    "bulk_adjust_inventory": 2,
     "correct_upc": 5,
     "delete_inventory_row": 1,
     "delete_location": 1,

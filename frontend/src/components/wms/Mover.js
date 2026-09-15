@@ -7,7 +7,6 @@ import {
 import { useLang } from "../../contexts/LanguageContext";
 import { fetcher, poster, cleanScan, logLoadError, API, useWmsSizes, useWmsCatalogs, mergeUnique } from "./lib";
 import SearchableSelect from "../SearchableSelect";
-import BulkInventoryAdjust from "./BulkInventoryAdjust";
 import { adminLevelOf } from "./modules";
 import { ModuleToolbar, SoftAlert, Btn, Chip, EmptyState } from "./ui";
 
@@ -97,17 +96,15 @@ export function MoverModule({ currentUser }) {
   // supersu=5, admin=admin_level(1-5), inventory_level>=3 confiere 3.
   const admin5 = adminLevelOf(currentUser) >= 5;
   const canGreen = currentUser?.role === 'inventory' || admin5;  // Ajustar / Generar caja
-  const canRed = admin5;                                          // Ajuste masivo + modos peligrosos
-  // Tabs visibles: Mover (siempre) + Ajustar + Generar (verdes) + Ajuste masivo (rojo).
-  const _visibleTopTabs = 1 + (canGreen ? 2 : 0) + (canRed ? 1 : 0);
-  const topTabsGridClass = _visibleTopTabs >= 4 ? 'grid-cols-4'
-    : (_visibleTopTabs === 3 ? 'grid-cols-3'
-      : (_visibleTopTabs === 2 ? 'grid-cols-2' : 'grid-cols-1'));
+  // "Ajuste masivo", "Toda la ubicación" y "Reconciliar LPN" se eliminaron de
+  // raíz (2026-09-14/15); ya no hay herramientas "rojas".
+  // Tabs visibles: Mover (siempre) + Ajustar + Generar (verdes).
+  const topTabsGridClass = canGreen ? 'grid-cols-3' : 'grid-cols-1';
 
   // Flow: origin → mode → (per-mode selection) → destination → submit.
   const [origin, setOrigin] = useState("");
   const [originInput, setOriginInput] = useState("");
-  const [mode, setMode] = useState(null); // 'all' | 'box' | 'units' | 'reconcile'
+  const [mode, setMode] = useState(null); // 'box' | 'units'
   // Generar caja (material de producción sin LPN)
   // country_of_origin y fabric_content son el LOTE: junto con style/color/talla
   // forman la identidad del material (services/inventory_ledger.py). Sin ellos
@@ -147,10 +144,9 @@ export function MoverModule({ currentUser }) {
   const [foreignBoxes, setForeignBoxes] = useState([]);     // box mode: boxes scanned from OTHER locations
   const [pendingForeign, setPendingForeign] = useState(null); // a foreign box awaiting "move it anyway?" confirm
   const [scanLookup, setScanLookup] = useState(false);      // looking up a scanned code
-  const [selectedLine, setSelectedLine] = useState(null);   // units/reconcile mode: an inventory line
+  const [selectedLine, setSelectedLine] = useState(null);   // units mode: an inventory line
   const [selectedUnitBox, setSelectedUnitBox] = useState(null); // units mode: la caja ESPECÍFICA a partir/mover (sin FIFO)
   const [qty, setQty] = useState("");
-  const [physicalLpn, setPhysicalLpn] = useState("");       // reconcile mode: scanned real LPN
 
   // ── Adjust-by-box mode (Case# 002) ──────────────────────────────────────────
   const [adjScan, setAdjScan] = useState("");        // code typed/scanned
@@ -251,7 +247,6 @@ export function MoverModule({ currentUser }) {
     setSelectedLine(null);
     setSelectedUnitBox(null);
     setQty("");
-    setPhysicalLpn("");
     setDest("");
     loadContents(clean);
   };
@@ -259,7 +254,7 @@ export function MoverModule({ currentUser }) {
   const resetAll = () => {
     setOrigin(""); setOriginInput(""); setMode(null);
     setContents({ boxes: [], lines: [] });
-    setSelectedBoxes([]); setForeignBoxes([]); setPendingForeign(null); setSelectedLine(null); setSelectedUnitBox(null); setQty(""); setPhysicalLpn(""); setDest("");
+    setSelectedBoxes([]); setForeignBoxes([]); setPendingForeign(null); setSelectedLine(null); setSelectedUnitBox(null); setQty(""); setDest("");
   };
 
   const totalUnits = useMemo(
@@ -308,7 +303,7 @@ export function MoverModule({ currentUser }) {
         toast.success(data.message || t("wms_move_done", { label }));
         // Stay on the same origin and refresh so the operator can keep working
         // in the same bin; clear the per-move selection.
-        setMode(null); setSelectedBoxes([]); setForeignBoxes([]); setPendingForeign(null); setSelectedLine(null); setSelectedUnitBox(null); setQty(""); setPhysicalLpn(""); setDest("");
+        setMode(null); setSelectedBoxes([]); setForeignBoxes([]); setPendingForeign(null); setSelectedLine(null); setSelectedUnitBox(null); setQty(""); setDest("");
         await loadContents(origin);
       } else {
         const err = await res.json().catch(() => ({}));
@@ -333,15 +328,6 @@ export function MoverModule({ currentUser }) {
     size: selectedLine.size || "", units: parseInt(qty) || 0,
     // SIN FIFO: la caja ESPECÍFICA seleccionada/escaneada de la que se parte/mueve.
     box_id: selectedUnitBox?.box_id,
-  }));
-
-  // Reconcile a migrated generic LPN with the box's real physical license plate,
-  // correcting its quantity and moving it to the destination in one shot.
-  const moveReconcile = () => doMove(t("wms_reconcile_lpn"), poster("/boxes/reconcile-lpn", {
-    location: origin, destination: cleanScan(dest),
-    sku: selectedLine.style || selectedLine.sku, color: selectedLine.color || "",
-    size: selectedLine.size || "",
-    physical_lpn: cleanScan(physicalLpn), units: parseInt(qty) || 0,
   }));
 
   const toggleBox = (id) =>
@@ -391,17 +377,15 @@ export function MoverModule({ currentUser }) {
         {/* El shell ya dice "MOVER"; esto dice en cuál de sus cuatro modos
             estás parado, que es lo único que el encabezado no puede saber. */}
         <ModuleToolbar
-          context={topMode === "bulk" ? t("wms_bulk_adjust") : topMode === "adjust" ? t("wms_adjust_box") : topMode === "generate" ? t("wms_generate_box") : t("wms_move_material")}
-          hint={topMode === "bulk"
-            ? t("wms_bulk_adjust_hint")
-            : topMode === "adjust"
-              ? t("wms_adjust_box_hint")
-              : topMode === "generate"
-                ? t("wms_generate_box_hint")
-                : t("wms_move_material_hint")}
+          context={topMode === "adjust" ? t("wms_adjust_box") : topMode === "generate" ? t("wms_generate_box") : t("wms_move_material")}
+          hint={topMode === "adjust"
+            ? t("wms_adjust_box_hint")
+            : topMode === "generate"
+              ? t("wms_generate_box_hint")
+              : t("wms_move_material_hint")}
         />
 
-        {/* Top-level toggle: move vs adjust-by-box (Case# 002) vs bulk (admin L3+) */}
+        {/* Top-level toggle: move vs adjust-by-box (Case# 002) vs generate */}
         <div className={`grid ${topTabsGridClass} gap-2 p-1 rounded-lg bg-muted/50 border border-border`}>
           <button
             onClick={() => { if (topMode !== "move") { resetAdjust(); setTopMode("move"); } }}
@@ -425,20 +409,9 @@ export function MoverModule({ currentUser }) {
             <Tag className="w-4 h-4" /> {t("wms_generate_box")}
           </button>
           )}
-          {canRed && (
-            <button
-              onClick={() => { if (topMode !== "bulk") { resetAll(); resetAdjust(); setTopMode("bulk"); } }}
-              data-testid="mover-top-bulk"
-              className={`flex items-center justify-center gap-2 py-2 rounded-md text-sm font-medium transition-colors ${topMode === "bulk" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}>
-              <Boxes className="w-4 h-4" /> {t("wms_bulk_adjust")}
-            </button>
-          )}
         </div>
 
-        {/* ── BULK INVENTORY ADJUST (Excel · admin L3+) ─────────────────────── */}
-        {topMode === "bulk" ? (
-          <BulkInventoryAdjust />
-        ) : topMode === "generate" ? (
+        {topMode === "generate" ? (
           <div className="bg-card border border-border rounded-lg p-5 space-y-4">
             <div className="text-sm font-semibold text-foreground flex items-center gap-2">
               <Tag className="w-5 h-5 text-muted-foreground" /> {t("wms_gen_title")}
@@ -640,17 +613,11 @@ export function MoverModule({ currentUser }) {
                   title={t("wms_mode_units")}
                   subtitle={t("wms_mode_units_sub")}
                   onClick={() => setMode("units")} />
-                {canRed && (
-                <ModeButton icon={Tag} color="text-fuchsia-400" testid="mover-mode-reconcile"
-                  title={t("wms_mode_reconcile")}
-                  subtitle={t("wms_mode_reconcile_sub")}
-                  onClick={() => setMode("reconcile")} />
-                )}
               </div>
             ) : (
               /* STEP 3 — per-mode selection + destination */
               <div className="space-y-4">
-                <button onClick={() => { setMode(null); setSelectedBoxes([]); setSelectedLine(null); setSelectedUnitBox(null); setQty(""); setPhysicalLpn(""); setDest(""); }}
+                <button onClick={() => { setMode(null); setSelectedBoxes([]); setSelectedLine(null); setSelectedUnitBox(null); setQty(""); setDest(""); }}
                   className="text-xs font-medium text-primary flex items-center gap-1">
                   <X className="w-3.5 h-3.5" /> {t("wms_change_move_type")}
                 </button>
@@ -851,82 +818,6 @@ export function MoverModule({ currentUser }) {
                   </div>
                 )}
 
-                {/* MODE: RECONCILE LPN — match a migrated generic LPN to the box's real label */}
-                {mode === "reconcile" && (
-                  <div className="space-y-3">
-                    {!selectedLine ? (
-                      <div className="space-y-2">
-                        <div className="text-xs font-medium text-muted-foreground flex items-center gap-2">
-                          <Search className="w-4 h-4" /> {t("wms_pick_product_reconcile")}
-                        </div>
-                        {contents.lines.map((r, i) => (
-                          <button key={i} onClick={() => { setSelectedLine(r); setQty("72"); setPhysicalLpn(""); }}
-                            data-testid={`mover-reconcile-line-${i}`}
-                            className="w-full flex items-center justify-between p-3 rounded-lg border border-border bg-card hover:bg-muted/40 transition-colors text-left">
-                            <div className="min-w-0">
-                              <div className="font-mono font-medium text-sm truncate">{r.style || r.sku}</div>
-                              <div className="text-xs text-muted-foreground truncate">
-                                {r.color} · {r.size}{r.description ? ` · ${r.description}` : ""}
-                              </div>
-                            </div>
-                            <div className="text-right flex-shrink-0">
-                              <div className="font-semibold tabular-nums">{r.units_on_hand}</div>
-                              <div className="text-[10px] text-muted-foreground">{t("wms_avail_short")}</div>
-                            </div>
-                          </button>
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="bg-card border border-border rounded-lg p-5 space-y-4">
-                        {/* Product validation header */}
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="min-w-0">
-                            <div className="font-mono font-semibold">{selectedLine.style || selectedLine.sku}</div>
-                            <div className="text-xs text-muted-foreground">{selectedLine.color} · {selectedLine.size}</div>
-                            {selectedLine.description && (
-                              <div className="text-xs text-muted-foreground mt-0.5">{selectedLine.description}</div>
-                            )}
-                            {(selectedLine.customer || selectedLine.manufacturer) && (
-                              <div className="text-xs text-muted-foreground">
-                                {selectedLine.customer}{selectedLine.manufacturer ? ` · ${selectedLine.manufacturer}` : ""}
-                              </div>
-                            )}
-                          </div>
-                          <button onClick={() => { setSelectedLine(null); setQty(""); setPhysicalLpn(""); }}
-                            className="text-xs font-medium text-primary flex-shrink-0">{t("wms_change")}</button>
-                        </div>
-
-                        {/* Physical LPN scan */}
-                        <div>
-                          <label className="text-xs font-medium text-muted-foreground flex items-center gap-2">
-                            <ScanLine className="w-4 h-4 text-muted-foreground" /> {t("wms_scan_physical_lpn")}
-                          </label>
-                          <input autoFocus value={physicalLpn}
-                            onChange={(e) => setPhysicalLpn(e.target.value.toUpperCase())}
-                            placeholder={t("wms_lpn_example")}
-                            data-testid="mover-reconcile-lpn"
-                            className="mt-1 w-full h-14 px-4 bg-card border border-input rounded-lg text-lg font-mono placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-ring/25 focus:border-ring transition-colors" />
-                        </div>
-
-                        {/* Quantity (default 72, editable) */}
-                        <div>
-                          <label className="text-xs font-medium text-muted-foreground">
-                            {t("wms_qty_in_box_default")}
-                          </label>
-                          <input type="number" min="1" value={qty} onChange={(e) => setQty(e.target.value)}
-                            data-testid="mover-reconcile-qty"
-                            className="mt-1 w-full h-14 px-4 bg-card border border-input rounded-lg text-xl font-semibold tabular-nums text-center focus:outline-none focus:ring-2 focus:ring-ring/25 focus:border-ring transition-colors" />
-                        </div>
-
-                        <DestAndGo
-                          dest={dest} setDest={setDest} locations={locNames}
-                          disabled={submitting || !physicalLpn.trim() || !(parseInt(qty) > 0)}
-                          onGo={moveReconcile}
-                          label={t("wms_match_lpn_move_to")} />
-                      </div>
-                    )}
-                  </div>
-                )}
               </div>
             )}
           </>
