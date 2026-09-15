@@ -2695,8 +2695,38 @@ async def create_receiving(request: Request):
                 raise HTTPException(400, detalle)
     # Block receiving against an ASN whose receiving process was finished.
     asn_ref = str(body.get("asn_reference", "")).strip()
+    # Fase 2: con una entrada del formato único, la línea se resuelve AQUÍ (la
+    # que mandó el cliente, o la que casa con estilo/color/país/composición) y
+    # de ella hereda cada caja su número de parte. Sin línea no hay recibo.
+    asn_line_doc = None
     if asn_ref:
-        ref_asn = await db.wms_asn.find_one({"asn_id": asn_ref}, {"_id": 0, "closed": 1})
+        ref_asn = await db.wms_asn.find_one({"asn_id": asn_ref}, {"_id": 0, "closed": 1, "items": 1})
+        if ref_asn and _asn_is_formatted(ref_asn):
+            _raw = body.get("asn_line_no")
+            try:
+                _ln = int(_raw) if _raw not in (None, "", 0) else None
+            except (TypeError, ValueError):
+                _ln = None
+            if _ln is not None:
+                asn_line_doc = next((it for it in ref_asn.get("items", []) if it.get("line_no") == _ln), None)
+                if not asn_line_doc:
+                    raise HTTPException(422, f"La línea {_ln} no existe en la entrada {asn_ref}")
+            else:
+                _m = _match_asn_line(ref_asn, await _pn_config(), style=style, color=color,
+                                     country=country_of_origin, fabric=fabric_content)
+                if _m["status"] == "matched":
+                    asn_line_doc = _m["line"]
+                    body["asn_line_no"] = asn_line_doc.get("line_no")
+                elif _m["status"] == "ambiguous":
+                    raise HTTPException(422, (
+                        f"La entrada {asn_ref} tiene varias líneas que podrían ser este cartón "
+                        f"({', '.join(sorted({c.get('part_number') or '' for c in _m['candidates']}))}). "
+                        f"Elige la línea en el recibo."))
+                else:
+                    raise HTTPException(422, (
+                        f"Este cartón ({style} {color} · {country_of_origin or 'sin país'} · "
+                        f"{fabric_content or 'sin composición'}) no viene en la entrada {asn_ref}. "
+                        f"Un líder debe agregar la línea en Entradas antes de recibirlo."))
         if ref_asn and ref_asn.get("closed"):
             detalle = f"El ASN {asn_ref} ya cerró su recibo. Reábrelo para recibir más."
             await _record_incident("recepcion_asn_cerrado", user, detalle,
@@ -2856,6 +2886,8 @@ async def create_receiving(request: Request):
                     "description": description,
                     "lot_number": lot_number,
                     "asn_reference": body.get("asn_reference", "").strip(),
+                    "asn_line_no": asn_line_doc.get("line_no") if asn_line_doc else None,
+                    "part_number": asn_line_doc.get("part_number") if asn_line_doc else "",
                     "upc": str(body.get("upc", "")).strip().upper(),
                     "created_at": now_iso(),
                     # Fecha REAL de entrada al almacén, para medir días almacenados
@@ -2878,6 +2910,8 @@ async def create_receiving(request: Request):
             "description": description,
             "lot_number": lot_number,
             "asn_reference": body.get("asn_reference", "").strip(),
+            "asn_line_no": asn_line_doc.get("line_no") if asn_line_doc else None,
+            "part_number": asn_line_doc.get("part_number") if asn_line_doc else "",
             "created_at": now_iso(),
             "received_at": now_iso(),  # fecha real de entrada (sobrevive splits)
         })
@@ -2940,6 +2974,8 @@ async def create_receiving(request: Request):
         "total_units": total_units, "is_bpo": is_bpo,
         # Traceability — linked back to the ASN + UPC the operator captured.
         "asn_reference": body.get("asn_reference", "").strip(),
+        "asn_line_no": asn_line_doc.get("line_no") if asn_line_doc else None,
+        "part_number": asn_line_doc.get("part_number") if asn_line_doc else "",
         "upc": str(body.get("upc", "")).strip().upper(),
         "received_by": user.get("user_id"), "received_by_name": user.get("name", ""),
         "created_at": now_iso(),
@@ -10722,6 +10758,76 @@ async def put_asn_columns(request: Request):
     )
     await log_activity(user, "wms_asn_columns_updated", {"columns": [c["key"] for c in clean]})
     return {"columns": clean}
+
+
+# ── Casar un cartón con la línea de la entrada (fase 2) ─────────────────────
+def _asn_is_formatted(asn: dict) -> bool:
+    """True si la entrada se capturó con el formato único (alguna línea con
+    número de parte compuesto). Las entradas viejas siguen con el casado por
+    part_number == style, warning-permisivo."""
+    return any(bool(it.get("part_number_auto")) for it in (asn or {}).get("items", []))
+
+
+def _match_asn_line(asn: dict, cfg: dict, *, style="", color="", country="", fabric="") -> dict:
+    """Decide a qué línea de la entrada pertenece un cartón con lo que se sabe
+    de él (UPC → estilo/color; captura → país/composición).
+
+    Regla: la entrada MANDA. Se filtra por cada dato que la línea traiga y el
+    cartón también traiga (estilo, color, país, composición); los datos que la
+    línea no tiene (estilo/color opcionales) no descartan. Si quedan líneas de
+    UN solo número de parte → matched (la primera con saldo; si todas están
+    completas, la última: el tope de sobrerrecepción decide). Si quedan de
+    varios números de parte → ambiguous (el operador elige). Si no queda
+    ninguna → none (no se recibe contra esta entrada hasta que un líder agregue
+    la línea)."""
+    items = [it for it in (asn or {}).get("items", []) if not it.get("sample")]
+    st, co = pn.norm(style), pn.norm(color)
+    cc = pn.country_code(country, cfg)
+    comp = pn.composition_code(pn.parse_fibers(fabric, cfg)[0]) if fabric else ""
+
+    def ok(it):
+        if st and pn.norm(it.get("style")) and pn.norm(it.get("style")) != st:
+            return False
+        if co and pn.norm(it.get("color")) and pn.norm(it.get("color")) != co:
+            return False
+        if cc and it.get("country_code") and it.get("country_code") != cc:
+            return False
+        if comp and it.get("composition_code") and it.get("composition_code") != comp:
+            return False
+        return True
+
+    cands = [it for it in items if ok(it)]
+    # Preferir las líneas que casan por estilo explícito sobre las "abiertas".
+    if st:
+        exact = [it for it in cands if pn.norm(it.get("style")) == st]
+        if exact:
+            cands = exact
+    pns = {it.get("part_number") for it in cands}
+    if not cands:
+        return {"status": "none", "line": None, "candidates": []}
+    if len(pns) > 1:
+        return {"status": "ambiguous", "line": None, "candidates": cands}
+    with_room = [it for it in cands if int(it.get("qty_received") or 0) < int(it.get("qty_expected") or 0)]
+    return {"status": "matched", "line": (with_room or cands[-1:])[0], "candidates": cands}
+
+
+@router.post("/asn/{asn_id}/match-line")
+async def match_asn_line(asn_id: str, request: Request):
+    """La PDA/Receiving lo llama al resolver el UPC (y al cambiar país/tela)
+    para saber a qué línea va el cartón. Solo lectura."""
+    await require_auth(request)
+    body = await request.json()
+    asn = await db.wms_asn.find_one({"asn_id": asn_id}, {"_id": 0, "items": 1, "closed": 1})
+    if not asn:
+        raise HTTPException(404, f"Entrada {asn_id} no encontrada")
+    if not _asn_is_formatted(asn):
+        st = pn.norm(body.get("style"))
+        line = next((it for it in asn.get("items", []) if pn.norm(it.get("part_number")) == st), None)
+        return {"formatted": False, "status": "matched" if line else "legacy", "line": line, "candidates": []}
+    cfg = await _pn_config()
+    r = _match_asn_line(asn, cfg, style=body.get("style", ""), color=body.get("color", ""),
+                        country=body.get("country_of_origin", ""), fabric=body.get("fabric_content", ""))
+    return {"formatted": True, **r}
 
 
 @router.post("/asn")

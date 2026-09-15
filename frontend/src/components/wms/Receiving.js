@@ -165,6 +165,13 @@ export const ReceivingModule = () => {
   const [intake, setIntake] = useState('externo');
   const [openAsns, setOpenAsns] = useState([]);
   const [selectedAsnLine, setSelectedAsnLine] = useState(null); // line_no within the chosen ASN
+  // Fase 2: qué línea de la entrada le toca a ESTE cartón. El servidor decide
+  // con estilo/color (si la línea los trae), país y composición:
+  //   matched   → se selecciona sola y hereda su número de parte a la caja
+  //   ambiguous → varias partes posibles: el operador elige entre candidates
+  //   none      → no viene en la entrada: no se recibe hasta que agreguen la línea
+  //   legacy    → entrada vieja (sin formato): todo sigue como antes
+  const [lineMatch, setLineMatch] = useState(null); // { formatted, status, line, candidates }
   // UPC catalog state. `upcDoc` is the resolved entry from wms_upc_catalog;
   // when set, the product fields (style/color/size/desc/country/fabric/brand)
   // become read-only because the catalog is the source of truth.
@@ -302,9 +309,9 @@ export const ReceivingModule = () => {
     if (description) { updates.description = description; matched.push(t('description')); }
     else if (line.description) skipped.push(t('description'));
 
-    const fabric = findInOptions(line.fabric_content, fieldOptions.fabrics);
+    const fabric = findInOptions(line.fabric || line.fabric_content, fieldOptions.fabrics);
     if (fabric) { updates.fabric_content = fabric; matched.push(t('wms_rcv_fabric_short')); }
-    else if (line.fabric_content) skipped.push(t('wms_rcv_fabric_short'));
+    else if (line.fabric || line.fabric_content) skipped.push(t('wms_rcv_fabric_short'));
 
     setForm(p => ({ ...p, ...updates }));
 
@@ -316,6 +323,39 @@ export const ReceivingModule = () => {
       else toast.success(parts.join(' · '), { duration: 3000 });
     }
   };
+
+  // Casado automático: cada vez que cambia lo que identifica al cartón
+  // (entrada, estilo/color del UPC, país, composición) se le pregunta al
+  // servidor a qué línea va. 300 ms de debounce para no disparar por tecla.
+  const matchTimer = useRef(null);
+  const asnIdForMatch = selectedAsnDoc?.asn_id || '';
+  useEffect(() => {
+    if (editingId || !asnIdForMatch) { setLineMatch(null); return undefined; }
+    clearTimeout(matchTimer.current);
+    let alive = true;
+    matchTimer.current = setTimeout(async () => {
+      try {
+        const res = await poster(`/asn/${encodeURIComponent(asnIdForMatch)}/match-line`, {
+          style: form.style, color: form.color,
+          country_of_origin: form.country_of_origin, fabric_content: form.fabric_content,
+        });
+        if (!res.ok || !alive) return;
+        const m = await res.json();
+        setLineMatch(m);
+        if (!m.formatted) return;                       // entrada vieja: no se toca la selección
+        const cands = new Set((m.candidates || []).map(c => c.line_no));
+        if (m.status === 'matched') {
+          // Respeta una elección manual que siga siendo candidata; si no, manda el casado.
+          if (selectedAsnLine == null || !cands.has(selectedAsnLine)) {
+            if (selectedAsnLine !== m.line.line_no) pickAsnLine(m.line);
+          }
+        } else if (selectedAsnLine != null && !cands.has(selectedAsnLine)) {
+          setSelectedAsnLine(null);
+        }
+      } catch (e) { logLoadError('match asn line')(e); }
+    }, 300);
+    return () => { alive = false; clearTimeout(matchTimer.current); };
+  }, [asnIdForMatch, form.style, form.color, form.country_of_origin, form.fabric_content, editingId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const clearAsnLine = () => {
     setSelectedAsnLine(null);
@@ -610,6 +650,10 @@ export const ReceivingModule = () => {
     if (totalUnits <= 0) { toast.error(t('wms_rcv_qty_gt_zero')); return; }
     if (!form.asn_reference?.trim()) { toast.error(t('wms_rcv_asn_required')); return; }
     if (!selectedAsnDoc) { toast.error(t('wms_rcv_asn_not_exists', { asn: form.asn_reference })); return; }
+    if (lineMatch?.formatted && selectedAsnLine == null) {
+      toast.error(lineMatch.status === 'none' ? t('wms_rcv_line_none', { asn: form.asn_reference }) : t('wms_rcv_line_pick'));
+      return;
+    }
 
     const warnings = [];
     if (!upc.trim()) warnings.push(t('wms_rcv_warn_no_upc'));
@@ -979,8 +1023,14 @@ export const ReceivingModule = () => {
                     <div className="flex items-center gap-2">
                       <FileText className="w-3.5 h-3.5 text-muted-foreground" />
                       <span className="text-xs font-medium text-muted-foreground">
-                        {t('wms_rcv_asn_lines_hint', { n: pendingAsnLines.length })}
+                        {lineMatch?.formatted ? t('wms_rcv_asn_lines_pn', { n: pendingAsnLines.length }) : t('wms_rcv_asn_lines_hint', { n: pendingAsnLines.length })}
                       </span>
+                      {lineMatch?.formatted && lineMatch.status === 'matched' && selectedAsnLine != null && (
+                        <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-600 dark:text-emerald-400">{t('wms_rcv_line_auto')}</span>
+                      )}
+                      {lineMatch?.formatted && lineMatch.status === 'ambiguous' && selectedAsnLine == null && (
+                        <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-600 dark:text-amber-400">{t('wms_rcv_line_pick')}</span>
+                      )}
                     </div>
                     {selectedAsnLine != null && (
                       <button
@@ -992,6 +1042,11 @@ export const ReceivingModule = () => {
                       </button>
                     )}
                   </div>
+                  {lineMatch?.formatted && lineMatch.status === 'none' && (
+                    <div className="px-3 py-2 text-xs font-medium text-red-600 dark:text-red-400 bg-red-500/10 border-b border-red-500/20 flex items-center gap-1.5" data-testid="rcv-line-none">
+                      <AlertTriangle className="w-3.5 h-3.5 shrink-0" /> {t('wms_rcv_line_none', { asn: form.asn_reference })}
+                    </div>
+                  )}
                   {pendingAsnLines.length === 0 ? (
                     <div className="px-3 py-3 text-xs text-muted-foreground">
                       {t('wms_rcv_asn_closed_or_empty')}
@@ -1003,6 +1058,8 @@ export const ReceivingModule = () => {
                         const received = line.qty_received || 0;
                         const remaining = expected - received;
                         const isSel = selectedAsnLine === line.line_no;
+                        const isCand = !lineMatch?.formatted || lineMatch.status === 'none'
+                          || (lineMatch.candidates || []).some(c => c.line_no === line.line_no);
                         // remaining > 0 → faltante (pendiente); < 0 → sobrante; 0 → completo
                         const badge = remaining > 0
                           ? { value: remaining.toLocaleString(), label: t('wms_rcv_badge_pending'), cls: 'text-foreground' }
@@ -1013,8 +1070,11 @@ export const ReceivingModule = () => {
                           <button
                             key={line.line_no}
                             type="button"
+                            disabled={!!line.sample}
                             onClick={() => pickAsnLine(line)}
-                            className={`w-full text-left px-3 py-2 flex items-start gap-2 transition-colors ${isSel ? 'bg-primary/5' : 'hover:bg-muted/40'}`}
+                            title={line.sample ? t('wms_rcv_line_sample') : undefined}
+                            className={`w-full text-left px-3 py-2 flex items-start gap-2 transition-colors ${isSel ? 'bg-primary/5' : 'hover:bg-muted/40'} ${(!isCand || line.sample) ? 'opacity-40' : ''}`}
+                            data-testid={`rcv-asn-line-${line.line_no}`}
                           >
                             <div className={`mt-0.5 w-4 h-4 rounded-full border flex items-center justify-center flex-shrink-0 ${isSel ? 'border-primary bg-primary text-primary-foreground' : 'border-border'}`}>
                               {isSel && <CheckCircle2 className="w-3 h-3" />}
@@ -1022,7 +1082,11 @@ export const ReceivingModule = () => {
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center gap-2 text-xs">
                                 <span className="font-mono font-medium text-foreground">{line.part_number}</span>
+                                {line.sample && <span className="text-[10px] font-semibold px-1 rounded bg-muted text-muted-foreground">MS</span>}
+                                {line.garment && <span className="text-xs font-mono text-muted-foreground bg-muted px-1.5 py-0.5 rounded-md">{`${line.gender || ''}${line.garment}`}</span>}
+                                {(line.fabric || line.fabric_content) && <span className="text-xs text-muted-foreground">{line.fabric || line.fabric_content}</span>}
                                 {line.country && <span className="text-xs font-medium text-muted-foreground bg-muted px-1.5 py-0.5 rounded-md">{line.country}</span>}
+                                {(line.style || line.color) && <span className="text-xs font-mono text-muted-foreground">{[line.style, line.color].filter(Boolean).join(' · ')}</span>}
                                 {line.brand && <span className="text-xs font-medium text-muted-foreground">{line.brand}</span>}
                               </div>
                               {line.description && (
