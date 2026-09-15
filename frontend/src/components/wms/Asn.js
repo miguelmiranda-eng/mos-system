@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { toast } from "sonner";
-import { FileDown, FileUp, Loader2, X, Package, Search, AlertTriangle, Trash2, Pencil, Plus, Check, CheckCircle2, RotateCcw, Lock, Columns3 } from "lucide-react";
+import { FileUp, Loader2, X, Package, Search, AlertTriangle, Trash2, Pencil, Plus, Check, CheckCircle2, RotateCcw, Lock, Columns3, Sparkles, Settings2 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { saveAs } from "file-saver";
 import { useLang } from "../../contexts/LanguageContext";
@@ -8,6 +8,7 @@ import { API, fetcher, deleter, putter, poster, logLoadError } from "./lib";
 import { AsnStatus } from "./constants";
 import { StatCard, Btn, EmptyState, ModuleToolbar } from "./ui";
 import { AddColumnModal } from "../dashboard/AddColumnModal";
+import { AsnConfigModal } from "./AsnConfigModal";
 import { evalFormula, formatResult } from "../../lib/formula";
 
 const STATUS_STYLES = {
@@ -30,7 +31,13 @@ const DISC_TYPE_KEY = { SOBRANTE: 'wms_asn_disc_surplus', FALTANTE: 'wms_asn_dis
 // Los campos fijos se declaran como columnas para que una fórmula pueda
 // referenciarlos: `[Cantidad] * 2`, `IF([Recibido] >= [Cantidad], "OK", "")`.
 const ASN_FIXED_LINE_COLS = [
-  { key: 'part_number', label: 'Style / Part #', type: 'text' },
+  { key: 'part_number', label: 'N.º parte', type: 'text' },
+  { key: 'style', label: 'Estilo', type: 'text' },
+  { key: 'garment', label: 'Prenda', type: 'text' },
+  { key: 'gender', label: 'Género', type: 'text' },
+  { key: 'unit', label: 'Unidad', type: 'text' },
+  { key: 'import_type', label: 'Tipo', type: 'text' },
+  { key: 'po', label: 'PO', type: 'text' },
   { key: 'description', label: 'Descripción', type: 'text' },
   { key: 'color', label: 'Color', type: 'text' },
   { key: 'size', label: 'Talla', type: 'text' },
@@ -60,6 +67,17 @@ const GRID_TRASH_W = 40;
 const GRID_W_KEY = 'mos_asn_grid_widths_v1';
 const loadGridWidths = () => { try { return JSON.parse(localStorage.getItem(GRID_W_KEY) || '{}') || {}; } catch { return {}; } };
 const saveGridWidths = (w) => { try { localStorage.setItem(GRID_W_KEY, JSON.stringify(w)); } catch { /* sin storage: solo esta sesión */ } };
+
+// Orden de columnas de la hoja "PL RAW MATERIAL (Materia prima)" del packing
+// list de aduana. Si se pega una fila COMPLETA de ese Excel (15+ celdas) se
+// mapea por esta posición, sin importar el orden visible de la cuadrícula.
+// null = columna que no se captura (NO*, part number manual, descripción EN).
+const PL_RAW_LAYOUT = ['color', 'style', 'po', null, null, 'description', null, 'qty_expected', 'unit',
+  'unit_cost', 'total_cost', 'net_weight', 'gross_weight', 'bundles', 'package_type', 'country', null, 'import_type'];
+// Campos que el sistema PROPONE leyendo la descripción; si la persona los
+// tocó a mano, la propuesta ya no los pisa.
+const PROPOSED_FIELDS = ['garment', 'gender', 'fabric'];
+const ADUANA_KEY = 'mos_asn_sheet_aduana_v1';
 
 // Fila plana {campo fijo + extra} — es lo que ve el motor de fórmulas.
 const lineRow = (it) => ({ ...(it || {}), ...((it && it.extra) || {}) });
@@ -105,14 +123,11 @@ export const AsnModule = ({ currentUser }) => {
   // Admin y Super Usuario pueden crear/editar/reabrir ASN.
   const isSupersu = ['admin', 'supersu'].includes(currentUser?.role);
   const [asns, setAsns] = useState([]);
-  const [loading, setLoading] = useState(false);
   const [query, setQuery] = useState("");
   const [activeTab, setActiveTab] = useState('all'); // 'all' | pending | partial | received
 
-  // Two-step upload state
-  const [pendingFile, setPendingFile] = useState(null);
-  const [sheetChoices, setSheetChoices] = useState(null); // {sheets: [...], filename}
-  const [chosenSheet, setChosenSheet] = useState("");
+  // Configuración del módulo (prefijos, prendas, fibras, países).
+  const [showConfig, setShowConfig] = useState(false);
 
   // Detail modal
   const [detailFor, setDetailFor] = useState(null);   // asn_id
@@ -128,7 +143,25 @@ export const AsnModule = ({ currentUser }) => {
   // Captura MANUAL de una entrada (ASN o BPO) — tabla tipo Excel. Las columnas
   // están alineadas al formato de receiving (style/color/talla/país/fabric/cant.)
   // para que receiving reciba directo contra el número de entrada.
-  const NEW_LINE = () => ({ part_number: '', color: '', size: '', country: '', fabric: '', qty_expected: '', extra: {} });
+  // Formato ÚNICO de línea (packing list de aduana). Lo que se sabe antes de
+  // que llegue el material: descripción, prenda, composición, país, cantidad.
+  // Estilo/color/talla/PO son opcionales (a veces vienen, a veces no).
+  // part_number NO se teclea: lo compone el servidor (services/part_number.py).
+  const NEW_LINE = () => ({
+    description: '', garment: '', gender: '', fabric: '', country: '', qty_expected: '', unit: 'PZA',
+    import_type: 'Temporal', sample: false, part_number: '', style: '', color: '', size: '', po: '',
+    unit_cost: '', total_cost: '', net_weight: '', gross_weight: '', bundles: '', package_type: '',
+    extra: {}, _pn: null, _touched: {},
+  });
+  // Catálogos del número de parte (prefijos, prendas, géneros, fibras, países).
+  const [pnCfg, setPnCfg] = useState(null);
+  useEffect(() => {
+    fetcher('/asn/part-number/config').then(setPnCfg).catch(logLoadError('part-number config'));
+  }, []);
+  const pnCustomers = Object.keys(pnCfg?.customers || {}).sort();
+  const pnCountries = Array.from(new Set(Object.keys(pnCfg?.countries || {}).filter(k => k.length > 3))).sort();
+  const [showAduana, setShowAduana] = useState(() => { try { return localStorage.getItem(ADUANA_KEY) === '1'; } catch { return false; } });
+  const toggleAduana = () => setShowAduana(v => { try { localStorage.setItem(ADUANA_KEY, v ? '0' : '1'); } catch { /* sin storage */ } return !v; });
 
   // Columnas personalizadas (globales para todas las entradas). Se editan con el
   // mismo modal del CRM; los valores por línea viajan en items[].extra.
@@ -175,8 +208,14 @@ export const AsnModule = ({ currentUser }) => {
   const [showCreate, setShowCreate] = useState(false);
   const [savingCreate, setSavingCreate] = useState(false);
   const [createDraft, setCreateDraft] = useState(null);
-  const openCreate = () => { setCreateDraft({ asn_id: '', tipo: 'ASN', vendor: '', po_number: '', expected_date: '', items: [NEW_LINE()] }); setShowCreate(true); };
-  const setCLine = (i, f, v) => setCreateDraft(d => ({ ...d, items: d.items.map((it, j) => j === i ? { ...it, [f]: v } : it) }));
+  const openCreate = () => { setCreateDraft({ asn_id: '', tipo: 'ASN', customer: '', vendor: '', po_number: '', expected_date: '', items: [NEW_LINE()] }); setShowCreate(true); };
+  // Prenda/género/composición tecleados a mano quedan "tocados": la propuesta
+  // del servidor ya no los pisa. Si la persona los vacía, vuelven a proponerse.
+  const setCLine = (i, f, v) => setCreateDraft(d => ({ ...d, items: d.items.map((it, j) => {
+    if (j !== i) return it;
+    const touched = PROPOSED_FIELDS.includes(f) ? { ...(it._touched || {}), [f]: v !== '' && v !== null } : it._touched;
+    return { ...it, [f]: v, _touched: touched };
+  }) }));
   const addCLine = () => setCreateDraft(d => ({ ...d, items: [...d.items, NEW_LINE()] }));
   const rmCLine = (i) => setCreateDraft(d => ({ ...d, items: d.items.filter((_, j) => j !== i) }));
   const setCLineExtra = (i, key, v) => setCreateDraft(d => ({ ...d, items: d.items.map((it, j) => j === i ? { ...it, extra: { ...(it.extra || {}), [key]: v } } : it) }));
@@ -184,16 +223,30 @@ export const AsnModule = ({ currentUser }) => {
   // ── Hoja de captura: se comporta como una hoja de cálculo ──────────────────
   // Orden de columnas de la cuadrícula (después de la columna "#"). Es el mismo
   // orden en que se pegan las celdas que vienen de Excel.
+  const ADUANA_COLS = [
+    { key: 'unit_cost', label: t('wms_asn_unit_cost'), num: true }, { key: 'total_cost', label: t('wms_asn_total_cost'), num: true },
+    { key: 'net_weight', label: t('wms_asn_net_weight'), num: true }, { key: 'gross_weight', label: t('wms_asn_gross_weight'), num: true },
+    { key: 'bundles', label: t('wms_asn_bundles'), num: true }, { key: 'package_type', label: t('wms_asn_package_type'), upper: true },
+  ];
   const GRID_FIXED = [
-    { key: 'part_number', upper: true }, { key: 'color', upper: true }, { key: 'size', upper: true },
-    { key: 'country', upper: true }, { key: 'fabric', upper: true }, { key: 'qty_expected' },
+    { key: 'description', label: t('description'), upper: true, required: true },
+    { key: 'garment', label: t('wms_asn_garment'), select: 'garments' },
+    { key: 'gender', label: t('wms_asn_gender'), select: 'genders' },
+    { key: 'fabric', label: t('wms_asn_composition'), upper: true, required: true },
+    { key: 'country', label: t('wms_country'), upper: true, required: true, datalist: 'asn-countries' },
+    { key: 'qty_expected', label: t('quantity'), num: true, required: true },
+    { key: 'unit', label: t('wms_asn_unit'), upper: true },
+    { key: 'import_type', label: t('wms_asn_import_type'), select: 'import_types' },
+    { key: 'sample', label: t('wms_asn_sample'), checkbox: true },
+    { key: 'part_number', label: t('wms_asn_part_number'), readonly: true },
+    { key: 'style', label: t('wms_style'), upper: true }, { key: 'color', label: t('wms_label_color'), upper: true },
+    { key: 'size', label: t('wms_label_size'), upper: true }, { key: 'po', label: 'PO' },
+    ...(showAduana ? ADUANA_COLS : []),
   ];
   const gridCols = [...GRID_FIXED, ...asnCols.map(c => ({ key: c.key, extra: true, type: c.type }))];
   // Etiquetas de encabezado de la hoja, en el mismo orden que gridCols.
   const gridHeaders = [
-    { key: 'part_number', label: 'Style / Part #' }, { key: 'color', label: t('wms_label_color') },
-    { key: 'size', label: t('wms_label_size') }, { key: 'country', label: t('wms_country') },
-    { key: 'fabric', label: 'Fabric' }, { key: 'qty_expected', label: t('quantity') },
+    ...GRID_FIXED.map(c => ({ key: c.key, label: c.label + (c.required ? ' *' : ''), auto: c.readonly })),
     ...asnCols.map(c => ({ key: c.key, label: c.label, custom: true })),
   ];
   const [gridW, setGridW] = useState(loadGridWidths);
@@ -256,8 +309,50 @@ export const AsnModule = ({ currentUser }) => {
       if (!hasEditableAfter) { e.preventDefault(); pendingFocus.current = { r: pos.r + 1, c: 1 }; addCLine(); }
     }
   };
+  // ── Número de parte automático ─────────────────────────────────────────────
+  // Cada vez que cambia algo que lo determina (cliente, descripción, prenda,
+  // género, composición, país, muestra) se pide al servidor la propuesta de
+  // ESA fila (350 ms de debounce). El servidor es la verdad: al guardar vuelve
+  // a componer con los mismos catálogos.
+  const proposeTimer = useRef(null);
+  const lastSig = useRef({});
+  useEffect(() => {
+    if (!createDraft || !pnCfg) return undefined;
+    clearTimeout(proposeTimer.current);
+    proposeTimer.current = setTimeout(async () => {
+      const cust = createDraft.customer || '';
+      const jobs = createDraft.items.map((it, i) => {
+        const sig = JSON.stringify([cust, it.description, it.garment, it.gender, it.fabric, it.country, !!it.sample]);
+        if (lastSig.current[i] === sig) return null;
+        lastSig.current[i] = sig;
+        if (!it.description && !it.fabric && !it.garment) return null;
+        return { i, sig, body: { customer: cust, description: it.description, country: it.country, sample: !!it.sample,
+          garment: it._touched?.garment ? it.garment : undefined, gender: it._touched?.gender ? it.gender : undefined,
+          fabric: it._touched?.fabric ? it.fabric : undefined } };
+      }).filter(Boolean);
+      if (!jobs.length) return;
+      const results = await Promise.all(jobs.map(async j => {
+        try { const res = await poster('/asn/part-number/propose', j.body); return { ...j, r: res.ok ? await res.json() : null }; }
+        catch { return { ...j, r: null }; }
+      }));
+      setCreateDraft(d => {
+        if (!d) return d;
+        const items = d.items.slice();
+        results.forEach(({ i, r }) => {
+          const it = items[i]; if (!it || !r) return;
+          const next = { ...it, _pn: { ok: r.ok, errors: r.errors || [] }, part_number: r.part_number || '' };
+          PROPOSED_FIELDS.forEach(f => { if (!it._touched?.[f] && r[f] !== undefined) next[f] = r[f]; });
+          items[i] = next;
+        });
+        return { ...d, items };
+      });
+    }, 350);
+    return () => clearTimeout(proposeTimer.current);
+  }, [createDraft, pnCfg]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Pegar un bloque de Excel (celdas separadas por tab, filas por salto de
   // línea) a partir de la celda con foco; agrega las filas que hagan falta.
+  // Una fila COMPLETA del packing list (15+ celdas) se mapea por PL_RAW_LAYOUT.
   const onGridPaste = (e) => {
     const text = e.clipboardData?.getData('text/plain') || '';
     if (!/[\t\r\n]/.test(text.trim())) return; // un solo valor: pegado normal
@@ -272,33 +367,56 @@ export const AsnModule = ({ currentUser }) => {
         const r = pos.r + ri;
         while (items.length <= r) items.push(NEW_LINE());
         const it = { ...items[r], extra: { ...(items[r].extra || {}) } };
-        cells.forEach((raw, ci) => {
-          const col = gridCols[c0 + ci]; if (!col) return;
-          const v = String(raw).trim();
-          if (col.extra) {
-            if (col.type === 'formula') return;
-            it.extra[col.key] = col.type === 'checkbox' ? truthy(v) : v;
-          } else {
-            it[col.key] = col.upper ? v.toUpperCase() : v;
-          }
-        });
+        if (cells.length >= 15) {
+          // Fila completa del Excel de aduana: posición fija, no la celda con foco.
+          cells.forEach((raw, ci) => {
+            const key = PL_RAW_LAYOUT[ci]; if (!key) return;
+            const v = String(raw).trim();
+            it[key] = ['description', 'country', 'unit', 'package_type', 'style', 'color'].includes(key) ? v.toUpperCase() : v;
+          });
+        } else {
+          cells.forEach((raw, ci) => {
+            const col = gridCols[c0 + ci]; if (!col) return;
+            const v = String(raw).trim();
+            if (col.extra) {
+              if (col.type === 'formula') return;
+              it.extra[col.key] = col.type === 'checkbox' ? truthy(v) : v;
+            } else if (col.readonly) {
+              return; // el número de parte no se pega: se compone
+            } else if (col.checkbox) {
+              it[col.key] = truthy(v);
+            } else {
+              it[col.key] = col.upper ? v.toUpperCase() : v;
+              if (PROPOSED_FIELDS.includes(col.key)) it._touched = { ...(it._touched || {}), [col.key]: !!v };
+            }
+          });
+        }
         items[r] = it;
       });
       return { ...d, items };
     });
   };
+  const lineToPayload = (it) => ({
+    description: it.description, garment: it.garment, gender: it.gender, fabric: it.fabric, country: it.country,
+    qty_expected: parseInt(it.qty_expected, 10) || 0, unit: it.unit, import_type: it.import_type, sample: !!it.sample,
+    part_number: it.part_number, style: it.style, color: it.color, size: it.size, po: it.po,
+    unit_cost: it.unit_cost, total_cost: it.total_cost, net_weight: it.net_weight, gross_weight: it.gross_weight,
+    bundles: it.bundles, package_type: it.package_type, extra: it.extra || {},
+  });
   const submitCreate = async () => {
     const d = createDraft;
     if (!d.asn_id.trim()) { toast.error(t('wms_asn_entry_num_req')); return; }
-    const items = d.items.filter(it => (it.part_number || '').trim()).map(it => ({
-      part_number: it.part_number, color: it.color, size: it.size,
-      country: it.country, fabric: it.fabric, qty_expected: parseInt(it.qty_expected, 10) || 0,
-      extra: it.extra || {},
-    }));
-    if (!items.length) { toast.error(t('wms_asn_min_line_style')); return; }
+    if (!d.customer) { toast.error(t('wms_asn_customer_req')); return; }
+    const live = d.items.filter(it => (it.description || '').trim() || (it.part_number || '').trim() || (it.style || '').trim());
+    if (!live.length) { toast.error(t('wms_asn_line_needs_desc')); return; }
+    const bad = live.findIndex(it => !(parseInt(it.qty_expected, 10) > 0) || !(it.country || '').trim() || !(it.fabric || '').trim());
+    if (bad >= 0) { toast.error(t('wms_asn_line_incomplete', { n: d.items.indexOf(live[bad]) + 1 })); return; }
+    const noPn = live.findIndex(it => !it.part_number);
+    if (noPn >= 0) { toast.error(t('wms_asn_line_no_pn', { n: d.items.indexOf(live[noPn]) + 1, why: (live[noPn]._pn?.errors || [])[0] || '' })); return; }
+    const items = live.map(it => ({ ...lineToPayload(it), brand: d.vendor }));
     setSavingCreate(true);
     try {
-      const res = await poster('/asn', { asn_id: d.asn_id.trim(), tipo: d.tipo, vendor: d.vendor, po_number: d.po_number, expected_date: d.expected_date, items });
+      const res = await poster('/asn', { asn_id: d.asn_id.trim(), tipo: d.tipo, customer: d.customer, vendor: d.vendor, po_number: d.po_number, expected_date: d.expected_date, items });
       const r = await res.json().catch(() => ({}));
       if (res.ok) { toast.success(t('wms_asn_entry_created', { id: d.asn_id })); setShowCreate(false); setCreateDraft(null); loadAsns(); }
       else toast.error(r.detail || t('wms_asn_entry_create_err'));
@@ -345,7 +463,13 @@ export const AsnModule = ({ currentUser }) => {
         qty_expected: it.qty_expected || 0,
         qty_received: it.qty_received || 0,
         extra: it.extra || {},
+        // formato único (fase 1): el servidor recompone el número de parte al guardar
+        garment: it.garment || '', gender: it.gender || '', sample: !!it.sample, unit: it.unit || 'PZA',
+        import_type: it.import_type || '', po: it.po || '', style: it.style || '',
+        unit_cost: it.unit_cost ?? '', total_cost: it.total_cost ?? '', net_weight: it.net_weight ?? '',
+        gross_weight: it.gross_weight ?? '', bundles: it.bundles ?? '', package_type: it.package_type || '',
       })),
+      customer: a.customer || '',
     });
     setEditing(true);
   };
@@ -386,14 +510,14 @@ export const AsnModule = ({ currentUser }) => {
   const setItemExtra = (i, key, v) =>
     setEditDraft(d => ({ ...d, items: d.items.map((it, j) => j === i ? { ...it, extra: { ...(it.extra || {}), [key]: v } } : it) }));
   const addItem = () =>
-    setEditDraft(d => ({ ...d, items: [...d.items, { part_number: '', description: '', country: '', brand: '', color: '', size: '', fabric: '', qty_expected: 0, qty_received: 0, extra: {} }] }));
+    setEditDraft(d => ({ ...d, items: [...d.items, { part_number: '', description: '', country: '', brand: '', color: '', size: '', fabric: '', qty_expected: 0, qty_received: 0, extra: {}, garment: '', gender: '', sample: false, unit: 'PZA', import_type: 'Temporal', po: '', style: '' }] }));
   const removeItem = (i) =>
     setEditDraft(d => ({ ...d, items: d.items.filter((_, j) => j !== i) }));
 
   const saveEdit = async () => {
     if (!editDraft) return;
     const items = editDraft.items
-      .filter(it => (it.part_number || '').trim())
+      .filter(it => (it.part_number || '').trim() || (it.description || '').trim())
       .map(it => ({
         line_no: it.line_no,
         part_number: it.part_number,
@@ -405,13 +529,17 @@ export const AsnModule = ({ currentUser }) => {
         fabric: it.fabric || '',
         qty_expected: parseInt(it.qty_expected, 10) || 0,
         extra: it.extra || {},
+        garment: it.garment || '', gender: it.gender || '', sample: !!it.sample, unit: it.unit || 'PZA',
+        import_type: it.import_type || '', po: it.po || '', style: it.style || '',
+        unit_cost: it.unit_cost, total_cost: it.total_cost, net_weight: it.net_weight,
+        gross_weight: it.gross_weight, bundles: it.bundles, package_type: it.package_type || '',
       }));
     if (items.length === 0) { toast.error(t('wms_asn_min_line_pn')); return; }
     setSavingEdit(true);
     try {
       const res = await putter(`/asn/${encodeURIComponent(detailFor)}`, {
         vendor: editDraft.vendor, po_number: editDraft.po_number, expected_date: editDraft.expected_date,
-        tipo: editDraft.tipo, items,
+        tipo: editDraft.tipo, customer: editDraft.customer, items,
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
@@ -450,71 +578,6 @@ export const AsnModule = ({ currentUser }) => {
     }
     if (detail && typeof detail === "object" && detail.msg) return detail.msg;
     try { return JSON.stringify(detail); } catch { return fallback; }
-  };
-
-  // Phase 1: inspect file → get available sheets
-  const handleFilePick = async (e) => {
-    const file = e.target.files[0];
-    e.target.value = ""; // allow re-picking same file
-    if (!file) return;
-    setLoading(true);
-    setPendingFile(file);
-    try {
-      const fd = new FormData();
-      fd.append("file", file);
-      const res = await fetch(`${API}/asn/import`, { method: "POST", body: fd, credentials: "include" });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        console.error("[ASN inspect] failed", res.status, err);
-        toast.error(t('wms_asn_http_err', { status: res.status, msg: errMsg(err.detail, t('wms_asn_read_file_err')) }));
-        setPendingFile(null);
-        return;
-      }
-      const data = await res.json();
-      if (data.action === "select_sheet") {
-        // Prefer a sheet that has all required columns + ASN# + rows
-        const usable = data.sheets.filter(s => (s.missing_required || []).length === 0);
-        const best = usable.find(s => s.detected_asn_id && s.row_count > 0)
-                  || usable[0]
-                  || data.sheets[0];
-        setChosenSheet(best?.name || "");
-        setSheetChoices(data);
-      } else {
-        toast.success(t('wms_asn_imported'));
-        setPendingFile(null);
-        loadAsns();
-      }
-    } catch (err) {
-      console.error("[ASN inspect] connection error", err);
-      toast.error(t('wms_conn_error'));
-      setPendingFile(null);
-    } finally { setLoading(false); }
-  };
-
-  // Phase 2: confirm sheet → import
-  const handleConfirmImport = async () => {
-    if (!pendingFile || !chosenSheet) return;
-    setLoading(true);
-    try {
-      const fd = new FormData();
-      fd.append("file", pendingFile);
-      const url = `${API}/asn/import?sheet_name=${encodeURIComponent(chosenSheet)}`;
-      const res = await fetch(url, { method: "POST", body: fd, credentials: "include" });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        console.error("[ASN import] failed", res.status, data);
-        toast.error(t('wms_asn_http_err', { status: res.status, msg: errMsg(data.detail, t('wms_asn_import_fail')) }));
-        return;
-      }
-      toast.success(t('wms_asn_imported_detail', { id: data.asn_id, lines: data.items_count, qty: data.total_qty_expected }));
-      setPendingFile(null);
-      setSheetChoices(null);
-      setChosenSheet("");
-      loadAsns();
-    } catch (err) {
-      console.error("[ASN import] connection error", err);
-      toast.error(t('wms_conn_error'));
-    } finally { setLoading(false); }
   };
 
   const handleDelete = async (asnId, opts = {}) => {
@@ -667,17 +730,18 @@ export const AsnModule = ({ currentUser }) => {
                 <Plus className="w-4 h-4" /> {t('wms_asn_new_btn')}
               </Btn>
             )}
-            <input type="file" id="asn-import" accept=".xlsx,.xlsm,.xls,.pdf" className="hidden" onChange={handleFilePick} />
-            <label htmlFor="asn-import" className={`inline-flex items-center justify-center gap-1.5 px-3 py-1.5 bg-primary text-primary-foreground border border-transparent rounded-md cursor-pointer text-sm font-medium hover:opacity-90 transition-colors ${loading ? 'opacity-50 pointer-events-none' : ''}`}>
-            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileDown className="w-4 h-4" />}
-            {t('wms_asn_import_btn')}
-          </label>
+            {isSupersu && (
+              <Btn onClick={() => setShowConfig(true)} title={t('wms_asn_cfg_title')} data-testid="asn-config">
+                <Settings2 className="w-4 h-4" /> {t('wms_asn_cfg_btn')}
+              </Btn>
+            )}
           </>
         }
       />
 
       {/* Nueva columna para las líneas: el mismo modal del CRM (Radix Dialog,
           overlay z-[900]) — queda por encima de los overlays z-[100] de este módulo. */}
+      <AsnConfigModal open={showConfig} onClose={() => setShowConfig(false)} onSaved={(c) => setPnCfg(c)} />
       <AddColumnModal isOpen={showAddCol} onClose={() => setShowAddCol(false)} onAdd={addAsnColumn}
         existingColumns={allLineCols}
         sampleRow={lineRow((createDraft?.items || editDraft?.items || detailData?.asn?.items || [])[0])} />
@@ -691,6 +755,7 @@ export const AsnModule = ({ currentUser }) => {
           <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 border-b border-border bg-muted/30">
             <h3 className="font-bold text-sm flex items-center gap-2"><Plus className="w-4 h-4" /> {t('wms_asn_new_modal_title')}</h3>
             <div className="flex items-center gap-2">
+              <Btn onClick={toggleAduana} className={showAduana ? 'border-primary text-primary' : ''}>{t('wms_asn_customs_data')}</Btn>
               {isSupersu && <Btn onClick={() => setShowAddCol(true)}><Columns3 className="w-3.5 h-3.5" /> {t('wms_add_column')}</Btn>}
               <Btn onClick={addCLine}><Plus className="w-3.5 h-3.5" /> {t('wms_add_line')}</Btn>
               <button onClick={() => !savingCreate && setShowCreate(false)} className="px-3 py-1.5 text-sm rounded-md text-muted-foreground hover:text-foreground">{t('cancel')}</button>
@@ -701,9 +766,14 @@ export const AsnModule = ({ currentUser }) => {
           </div>
 
           {/* Cabecera de la entrada: una sola franja, campos sin caja. */}
-          <div className="grid grid-cols-2 md:grid-cols-5 divide-x divide-border border-b border-border">
+          <div className="grid grid-cols-2 md:grid-cols-6 divide-x divide-border border-b border-border">
             {[
               { label: `${t('wms_asn_entry_number')} *`, el: <input value={createDraft.asn_id} onChange={e => setCreateDraft(d => ({ ...d, asn_id: e.target.value }))} className={`${GRID_CLS} font-mono`} placeholder={t('wms_asn_entry_ph')} autoFocus data-testid="asn-create-id" /> },
+              { label: `${t('wms_asn_customer')} *`, el: (
+                <select value={createDraft.customer} onChange={e => setCreateDraft(d => ({ ...d, customer: e.target.value }))} className={GRID_CLS} data-testid="asn-create-customer">
+                  <option value="">—</option>
+                  {pnCustomers.map(c => <option key={c} value={c}>{c} · {pnCfg.customers[c]}</option>)}
+                </select>) },
               { label: t('wms_type'), el: (
                 <select value={createDraft.tipo} onChange={e => setCreateDraft(d => ({ ...d, tipo: e.target.value }))} className={GRID_CLS}>
                   <option value="ASN">ASN</option>
@@ -739,6 +809,7 @@ export const AsnModule = ({ currentUser }) => {
                   {gridHeaders.map(h => (
                     <th key={h.key} className="relative px-2 py-2 text-xs font-semibold text-muted-foreground whitespace-nowrap overflow-hidden text-ellipsis text-center" title={h.label}>
                       <span className="inline-flex items-center justify-center gap-1 max-w-full">
+                        {h.auto && <Sparkles className="w-3 h-3 text-primary flex-shrink-0" title={t('wms_asn_pn_auto_hint')} />}
                         <span className="truncate">{h.label}</span>
                         {h.custom && isSupersu && (
                           <button onClick={() => removeAsnColumn(h.key)} className="p-0.5 rounded text-muted-foreground/60 hover:text-destructive hover:bg-destructive/10 flex-shrink-0" title={t('wms_remove_column')}>
@@ -759,12 +830,30 @@ export const AsnModule = ({ currentUser }) => {
                 {createDraft.items.map((it, i) => (
                   <tr key={i} className="hover:bg-muted/20">
                     <td className="text-center text-xs font-mono text-muted-foreground select-none">{i + 1}</td>
-                    <td><input value={it.part_number} onChange={e => setCLine(i, 'part_number', e.target.value.toUpperCase())} className={`${GRID_CLS} font-mono`} data-testid={`asn-cell-pn-${i}`} /></td>
-                    <td><input value={it.color} onChange={e => setCLine(i, 'color', e.target.value.toUpperCase())} className={GRID_CLS} /></td>
-                    <td><input value={it.size} onChange={e => setCLine(i, 'size', e.target.value.toUpperCase())} className={GRID_CLS} /></td>
-                    <td><input value={it.country} onChange={e => setCLine(i, 'country', e.target.value.toUpperCase())} className={GRID_CLS} /></td>
-                    <td><input value={it.fabric} onChange={e => setCLine(i, 'fabric', e.target.value.toUpperCase())} className={GRID_CLS} /></td>
-                    <td><input type="number" min="0" value={it.qty_expected} onChange={e => setCLine(i, 'qty_expected', e.target.value)} className={`${GRID_CLS} text-right tabular-nums`} /></td>
+                    {GRID_FIXED.map(col => (
+                      <td key={col.key}>
+                        {col.readonly ? (
+                          <div className={`h-9 px-2 flex items-center gap-1 text-xs font-mono ${it.part_number ? 'text-foreground' : 'text-muted-foreground'}`}
+                            title={it.part_number ? t('wms_asn_pn_auto_hint') : (it._pn?.errors || []).join(' · ') || t('wms_asn_pn_pending')} data-testid={`asn-cell-pn-${i}`}>
+                            {it.part_number || (it._pn?.errors?.length ? <AlertTriangle className="w-3.5 h-3.5 text-amber-500" /> : '…')}
+                            {it.part_number ? '' : <span className="truncate">{(it._pn?.errors || [])[0] || ''}</span>}
+                          </div>
+                        ) : col.checkbox ? (
+                          <input type="checkbox" checked={!!it[col.key]} onChange={e => setCLine(i, col.key, e.target.checked)} className="w-4 h-4 accent-primary block mx-auto my-2.5" />
+                        ) : col.select ? (
+                          <select value={it[col.key] ?? ''} onChange={e => setCLine(i, col.key, e.target.value)} className={GRID_CLS} data-testid={`asn-cell-${col.key}-${i}`}>
+                            {col.select === 'import_types'
+                              ? (pnCfg?.import_types || ['Temporal']).map(v => <option key={v} value={v}>{v}</option>)
+                              : [<option key="" value="">{col.select === 'genders' ? (pnCfg?.genders?.[0]?.label || '—') : '—'}</option>,
+                                 ...(pnCfg?.[col.select] || []).filter(g => g.code !== '').map(g => <option key={g.code} value={g.code}>{g.code} · {g.label}</option>)]}
+                          </select>
+                        ) : (
+                          <input type={col.num ? 'number' : 'text'} min={col.num ? '0' : undefined} list={col.datalist} value={it[col.key] ?? ''}
+                            onChange={e => setCLine(i, col.key, col.upper ? e.target.value.toUpperCase() : e.target.value)}
+                            className={`${GRID_CLS} ${col.num ? 'text-right tabular-nums' : ''} ${col.key === 'description' ? '' : ''}`} data-testid={`asn-cell-${col.key}-${i}`} />
+                        )}
+                      </td>
+                    ))}
                     {asnCols.map(c => <td key={c.key}><ExtraCell col={c} line={it} cols={allLineCols} grid onChange={v => setCLineExtra(i, c.key, v)} /></td>)}
                     <td className="text-center"><button tabIndex={-1} onClick={() => rmCLine(i)} className="p-1.5 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded" title={t('wms_remove_line')}><Trash2 className="w-3.5 h-3.5" /></button></td>
                   </tr>
@@ -772,6 +861,7 @@ export const AsnModule = ({ currentUser }) => {
               </tbody>
             </table>
           </div>
+          <datalist id="asn-countries">{pnCountries.map(c => <option key={c} value={c} />)}</datalist>
           <div className="flex items-center justify-between px-4 py-2 border-t border-border text-xs text-muted-foreground">
             <span>{createDraft.items.length} {t('wms_lines_lc')}</span>
             <span>{t('wms_asn_sheet_hint')}</span>
@@ -888,84 +978,6 @@ export const AsnModule = ({ currentUser }) => {
       </div>
 
         </>
-      )}
-
-      {/* Sheet picker dialog (Phase 1 → Phase 2) */}
-      {sheetChoices && (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-150">
-          <div className="bg-card border border-border rounded-lg w-full max-w-lg shadow-xl animate-in zoom-in-95 duration-150">
-            <div className="flex items-center justify-between p-5 border-b border-border/20">
-              <div className="min-w-0">
-                <h3 className="font-semibold text-sm">{t('wms_asn_pick_sheet')}</h3>
-                <p className="text-xs text-muted-foreground truncate">{sheetChoices.filename}</p>
-              </div>
-              <button onClick={() => { setSheetChoices(null); setPendingFile(null); }} className="p-2 hover:bg-secondary rounded-lg transition-all">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-            <div className="p-5 space-y-3">
-              {sheetChoices.sheets.map(s => (
-                <label key={s.name} className={`block p-4 rounded-lg border cursor-pointer transition-colors ${chosenSheet === s.name ? 'border-primary bg-primary/5' : 'border-border/60 hover:border-border'}`}>
-                  <div className="flex items-start gap-3">
-                    <input
-                      type="radio"
-                      name="sheet"
-                      value={s.name}
-                      checked={chosenSheet === s.name}
-                      onChange={() => setChosenSheet(s.name)}
-                      className="mt-1"
-                    />
-                    <div className="flex-1 min-w-0">
-                      <div className="font-mono text-sm font-medium truncate">{s.name}</div>
-                      <div className="text-xs text-muted-foreground mt-1 flex flex-wrap gap-x-3">
-                        <span>{t('wms_asn_sheet_kind', { kind: s.kind })}</span>
-                        <span>ASN: <b className="text-foreground">{s.detected_asn_id || '—'}</b></span>
-                        <span>{t('wms_asn_sheet_customer')} <b className="text-foreground">{s.detected_customer || '—'}</b></span>
-                        <span>{t('wms_asn_sheet_lines')} <b className="text-foreground">{s.row_count}</b></span>
-                      </div>
-                      {s.detected_columns && Object.keys(s.detected_columns).length > 0 && (
-                        <div className="text-xs text-muted-foreground/80 mt-1 flex flex-wrap gap-x-2 gap-y-0.5 font-mono">
-                          {Object.entries(s.detected_columns).map(([f, col]) => (
-                            <span key={f}>
-                              <span>{f}</span>=<b className="text-foreground">{col}</b>
-                            </span>
-                          ))}
-                        </div>
-                      )}
-                      {(s.missing_required || []).length > 0 && (
-                        <div className="flex items-center gap-1 text-xs text-red-600 dark:text-red-400 mt-1">
-                          <AlertTriangle className="w-3 h-3" /> {t('wms_asn_missing_cols', { cols: (s.missing_required || []).join(', ') })}
-                        </div>
-                      )}
-                      {!s.detected_asn_id && (
-                        <div className="flex items-center gap-1 text-xs text-amber-600 dark:text-amber-400 mt-1">
-                          <AlertTriangle className="w-3 h-3" /> {t('wms_asn_no_id_detected')}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </label>
-              ))}
-              <div className="flex gap-2 pt-2">
-                <Btn
-                  variant="primary"
-                  onClick={handleConfirmImport}
-                  disabled={!chosenSheet || loading}
-                  className="flex-1 py-2.5"
-                >
-                  {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileDown className="w-4 h-4" />}
-                  {t('wms_import')}
-                </Btn>
-                <Btn
-                  onClick={() => { setSheetChoices(null); setPendingFile(null); }}
-                  className="py-2.5"
-                >
-                  {t('cancel')}
-                </Btn>
-              </div>
-            </div>
-          </div>
-        </div>
       )}
 
       {/* Detail modal */}
@@ -1284,6 +1296,9 @@ export const AsnModule = ({ currentUser }) => {
                             <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">#</th>
                             <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">Part Number</th>
                             <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">{t('description')}</th>
+                            <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">{t('wms_asn_garment')}</th>
+                            <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">{t('wms_asn_composition')}</th>
+                            <th className="px-3 py-2.5 text-center text-xs font-semibold text-muted-foreground">{t('wms_asn_sample')}</th>
                             <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">{t('wms_country')}</th>
                             <th className="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground">{t('wms_brand')}</th>
                             {asnCols.map(c => <ExtraTh key={c.key} col={c} cls="px-3 py-2.5 text-left text-xs font-semibold text-muted-foreground whitespace-nowrap" />)}
@@ -1300,6 +1315,20 @@ export const AsnModule = ({ currentUser }) => {
                                 <td className="p-2 text-xs font-mono text-muted-foreground">{i + 1}</td>
                                 <td className="p-2"><input value={it.part_number} onChange={e => setItem(i, 'part_number', e.target.value.toUpperCase())} className="w-full min-w-[150px] h-8 px-2 bg-card border border-input rounded-md text-xs font-mono focus:outline-none focus:border-primary" /></td>
                                 <td className="p-2"><input value={it.description} onChange={e => setItem(i, 'description', e.target.value)} className="w-full min-w-[160px] h-8 px-2 bg-card border border-input rounded-md text-xs focus:outline-none focus:border-primary" /></td>
+                                <td className="p-2">
+                                  <div className="flex gap-1">
+                                    <select value={it.gender || ''} onChange={e => setItem(i, 'gender', e.target.value)} className="h-8 px-1 bg-card border border-input rounded-md text-xs" title={t('wms_asn_gender')}>
+                                      <option value="">—</option>
+                                      {(pnCfg?.genders || []).filter(g => g.code).map(g => <option key={g.code} value={g.code}>{g.code}</option>)}
+                                    </select>
+                                    <select value={it.garment || ''} onChange={e => setItem(i, 'garment', e.target.value)} className="h-8 px-1 bg-card border border-input rounded-md text-xs min-w-[90px]">
+                                      <option value="">—</option>
+                                      {(pnCfg?.garments || []).map(g => <option key={g.code} value={g.code}>{g.code} · {g.label}</option>)}
+                                    </select>
+                                  </div>
+                                </td>
+                                <td className="p-2"><input value={it.fabric || ''} onChange={e => setItem(i, 'fabric', e.target.value.toUpperCase())} className="w-full min-w-[130px] h-8 px-2 bg-card border border-input rounded-md text-xs focus:outline-none focus:border-primary" /></td>
+                                <td className="p-2 text-center"><input type="checkbox" checked={!!it.sample} onChange={e => setItem(i, 'sample', e.target.checked)} className="w-4 h-4 accent-primary" /></td>
                                 <td className="p-2"><input value={it.country} onChange={e => setItem(i, 'country', e.target.value.toUpperCase())} className="w-20 h-8 px-2 bg-card border border-input rounded-md text-xs font-mono focus:outline-none focus:border-primary" /></td>
                                 <td className="p-2"><input value={it.brand} onChange={e => setItem(i, 'brand', e.target.value.toUpperCase())} className="w-24 h-8 px-2 bg-card border border-input rounded-md text-xs focus:outline-none focus:border-primary" /></td>
                                 {asnCols.map(c => <td key={c.key} className="p-2"><ExtraCell col={c} line={it} cols={allLineCols} onChange={v => setItemExtra(i, c.key, v)} /></td>)}
@@ -1321,6 +1350,9 @@ export const AsnModule = ({ currentUser }) => {
                                   <td className="px-3 py-2.5 text-xs font-mono text-muted-foreground">{it.line_no}</td>
                                   <td className="px-3 py-2.5 text-xs font-mono font-medium">{it.part_number}</td>
                                   <td className="px-3 py-2.5 text-xs text-foreground max-w-[260px] truncate" title={it.description}>{it.description}</td>
+                                  <td className="px-3 py-2.5 text-xs font-mono">{it.garment ? `${it.gender || ''}${it.garment}` : '—'}</td>
+                                  <td className="px-3 py-2.5 text-xs">{it.fabric || '—'}</td>
+                                  <td className="px-3 py-2.5 text-xs text-center">{it.sample ? <Check className="w-3.5 h-3.5 inline text-primary" /> : '—'}</td>
                                   <td className="px-3 py-2.5 text-xs font-mono">{it.country || '—'}</td>
                                   <td className="px-3 py-2.5 text-xs">{it.brand || '—'}</td>
                                   {asnCols.map(c => <td key={c.key} className="px-3 py-2.5"><ExtraCell col={c} line={it} cols={allLineCols} readOnly /></td>)}

@@ -11,6 +11,7 @@ from wms_constants import (
     TICKET_OPEN_QUERY,
 )
 from services import inventory_ledger as ledger
+from services import part_number as pn
 from datetime import datetime, timezone, timedelta
 from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError
@@ -10488,24 +10489,6 @@ async def export_receiving(request: Request, customer: str = ""):
 
 # ==================== ASN (Advanced Shipping Notice) ====================
 
-# Field -> list of header keywords (lowercase, accent-free). A column matches
-# a field if any of the field's keywords appears in the normalized header text.
-# Both R5 (English) and R6 (Spanish) headers are merged per column before
-# matching, so a column with just the Spanish label still resolves correctly.
-_ASN_HEADER_KEYWORDS = {
-    "part_number":  ["part number", "no. de parte", "numero de parte", "no de parte", "n de parte", "style", "sku", "pn"],
-    "description":  ["description", "descripcion espanol", "descripcion ingles", "english description", "descripcion"],
-    "qty":          ["qty", "quantity", "cantidad"],
-    "country":      ["country", "pais origen", "pais de origen", "country of origin", "coo"],
-    "brand":        ["brand", "marca"],
-    "po":           ["po number", "entry number", "numero de entrada", "numeor de entrada", "po"],
-}
-# Required fields — if any is missing after detection the import refuses.
-_ASN_REQUIRED_FIELDS = ("part_number", "qty")
-
-# Box statuses that mean the units already LEFT inventory (consumed/in process/
-# shipped). Anything else with units>0 is considered still on hand. Whitelisting
-# the "out" set keeps legacy/empty statuses counted as in-stock.
 _BOX_OUT_STATUSES = {"shipped", "in_production", "finished", "in_neck_cutting", "confirmed", "depleted", "recon_pending"}
 
 def _box_in_stock(b) -> bool:
@@ -10516,350 +10499,132 @@ def _box_keys(b) -> set:
     """Identifiers a box can be matched to an ASN line by."""
     return {str(b.get(k) or "").strip().upper() for k in ("upc", "sku", "style") if b.get(k)}
 
-def _normalize_header(s) -> str:
-    """Lowercase, strip accents, collapse whitespace, drop punctuation."""
-    if s is None:
-        return ""
-    import unicodedata
-    t = unicodedata.normalize("NFKD", str(s))
-    t = "".join(ch for ch in t if not unicodedata.combining(ch))
-    t = t.lower()
-    # Replace common separators with spaces; drop other punctuation
-    out = []
-    for ch in t:
-        if ch.isalnum() or ch == " ":
-            out.append(ch)
-        elif ch in "-_/.,:;":
-            out.append(" ")
-    return " ".join("".join(out).split())
+# El importador de packing lists (POST /asn/import, Excel/PDF) se ELIMINÓ
+# (2026-09-15): la captura es manual en la hoja de Entradas y el número de
+# parte se compone solo (services/part_number.py). Los helpers de lectura de
+# hojas/PDF se fueron con él.
 
-def _detect_sheet_kind(name: str) -> str | None:
-    """Return a label for the sheet kind, or None if it's not a packing-list sheet.
-    The kind is informational only — column detection is name-based per sheet."""
-    n = (name or "").upper()
-    if "RAW MATERIAL" in n or "MATERIA PRIMA" in n:
-        return "raw"
-    if "EQUIPMENT" in n or "EQUIPO" in n:
-        return "equipment"
-    if "FINISHED GOODS" in n or "PRODUCTO TERM" in n or "PRODUCTOTERM" in n:
-        return "finished_goods"
-    return None
-
-def _find_asn_number(ws) -> str:
-    """Scan top-left region for a cell labelled 'ASN' and return the neighbour value."""
-    for r in range(1, 12):
-        for c in range(1, 20):
-            v = ws.cell(row=r, column=c).value
-            if v is None:
-                continue
-            if str(v).strip().upper() == "ASN":
-                for dc in range(1, 5):
-                    rv = ws.cell(row=r, column=c + dc).value
-                    if rv not in (None, ""):
-                        return str(rv).strip()
-    return ""
-
-_LABEL_DENYLIST = {
-    "PACKING LIST", "BILL OF MATERIALS", "RAW MATERIAL", "EQUIPMENT",
-    "FINISHED GOODS", "MATERIA PRIMA", "EQUIPO", "PRODUCTO TERMINADO",
-    "RAW MATERIALS",
-}
-
-def _find_label_value(ws, *label_aliases, rows=8, max_cols=20, scan_right=6, max_gap=3) -> str:
-    """Find a header label (e.g. 'Cliente:') anywhere in the top of the sheet
-    and return the value next to it. Stops after `max_gap` consecutive blanks
-    so we don't latch onto an unrelated heading further down the row."""
-    aliases = {a.strip().upper().rstrip(':') for a in label_aliases}
-    for r in range(1, rows + 1):
-        for c in range(1, max_cols + 1):
-            v = ws.cell(row=r, column=c).value
-            if v is None:
-                continue
-            key = str(v).strip().upper().rstrip(':')
-            if key not in aliases:
-                continue
-            blanks = 0
-            for dc in range(1, scan_right + 1):
-                rv = ws.cell(row=r, column=c + dc).value
-                if rv in (None, ""):
-                    blanks += 1
-                    if blanks >= max_gap:
-                        break
-                    continue
-                blanks = 0
-                text = str(rv).strip()
-                if not text:
-                    continue
-                upper = text.upper().rstrip(':')
-                if text.endswith(':') or upper in aliases or upper in _LABEL_DENYLIST:
-                    continue  # adjacent cell is another label, not a value
-                return text
-    return ""
-
-# Patterns like "100% DE ALGODÓN", "50% ALGODON", "50% POLIESTER".
-# Captures the percentage word + the material word (with common diacritics).
-_FABRIC_PATTERN = re.compile(
-    r"\d+\s*%\s*(?:DE\s+)?[A-ZÁÉÍÓÚÑ/]+(?:\s+[A-ZÁÉÍÓÚÑ/]+)?",
-    re.IGNORECASE,
-)
-_STOP_FABRIC_WORDS = {"DE", "DEL", "LA", "EL", "PARA", "CON", "Y"}
-
-def _extract_fabric_from_description(desc: str) -> str:
-    """Pull fabric composition out of a free-form description.
-    Examples:
-      'CAMISETA ... 100% DE ALGODON'           -> '100% ALGODON'
-      'CAMISETA ... 50% ALGODON, 50% POLIESTER' -> '50% ALGODON, 50% POLIESTER'
-    Returns '' when no percentage pattern is found.
-    """
-    if not desc:
-        return ""
-    text = str(desc).upper()
-    matches = _FABRIC_PATTERN.findall(text)
-    cleaned = []
-    for m in matches:
-        # Normalise: drop "DE" connector, collapse whitespace, strip trailing slash/comma
-        parts = [p for p in re.split(r"\s+", m) if p and p.upper() != "DE"]
-        result = " ".join(parts).rstrip("/,. ")
-        if result:
-            cleaned.append(result)
-    return ", ".join(cleaned)
-
-def _detect_columns(ws, scan_rows: int = 15) -> tuple[dict[str, int], int]:
-    """Find the header row and map field -> 0-based column index by header name.
-
-    Strategy:
-      1. For each row in 1..scan_rows, score how many fields can be located in
-         that row's cells.
-      2. Take the best row. If the next row also has hits, merge them column-
-         wise (bilingual templates put English + Spanish on consecutive rows).
-      3. Resolve each field to a column index using the field's keyword list.
-
-    Returns (column_map, data_start_row). data_start_row = best + 1 (or +2 if
-    we merged with the row below).
-    """
-    max_col = min(ws.max_column or 50, 50)
-    # Per-row, per-field: which column matched (or -1)
-    per_row: list[dict[str, int]] = []
-    for r in range(1, scan_rows + 1):
-        row_map: dict[str, int] = {}
-        for c in range(1, max_col + 1):
-            text = _normalize_header(ws.cell(row=r, column=c).value)
-            if not text:
-                continue
-            for field, kws in _ASN_HEADER_KEYWORDS.items():
-                if field in row_map:
-                    continue  # first match wins per row
-                if any(kw in text for kw in kws):
-                    row_map[field] = c - 1  # 0-based for openpyxl iter_rows tuples
-                    break
-        per_row.append(row_map)
-
-    # Pick the row with the most field hits
-    best_row, best_score = 0, 0
-    for i, rm in enumerate(per_row):
-        score = sum(1 for f in _ASN_HEADER_KEYWORDS if f in rm)
-        if score > best_score:
-            best_row, best_score = i, score
-
-    if best_score == 0:
-        return {}, 0
-
-    merged = dict(per_row[best_row])
-    data_start = best_row + 1 + 1  # 1-based row right after header
-
-    # If the next row also hits any field not in best_row, merge it (bilingual)
-    if best_row + 1 < len(per_row):
-        for f, c in per_row[best_row + 1].items():
-            merged.setdefault(f, c)
-        if per_row[best_row + 1]:
-            data_start = best_row + 2 + 1
-
-    return merged, data_start
-
-def _parse_packing_list(ws) -> tuple[list[dict], str, dict[str, int]]:
-    """Return (items, po_number, detected_column_map) from a worksheet.
-
-    Column detection is by header name (see _detect_columns) so layout shifts
-    across vendor revisions don't break the parse — as long as the header text
-    is recognizable.
-    """
-    col_map, data_start = _detect_columns(ws)
-    missing = [f for f in _ASN_REQUIRED_FIELDS if f not in col_map]
-    if missing:
-        raise HTTPException(
-            400,
-            f"No se detectaron columnas obligatorias: {', '.join(missing)}. "
-            "Revisa que los encabezados del archivo incluyan al menos "
-            "'Part Number' y 'Qty'/'Cantidad'."
-        )
-
-    pn_col = col_map["part_number"]
-    qty_col = col_map["qty"]
-
-    def cell_at(row, field):
-        c = col_map.get(field)
-        if c is None or c >= len(row) or row[c] is None:
-            return ""
-        return str(row[c]).strip()
-
-    items: list[dict] = []
-    po_number = ""
-    line_no = 0
-    for row in ws.iter_rows(min_row=data_start, values_only=True):
-        if not row:
-            continue
-        if pn_col >= len(row):
-            continue
-        pn_raw = row[pn_col]
-        if pn_raw is None:
-            continue
-        pn = str(pn_raw).strip()
-        if not pn or pn.upper() == "TOTAL":
-            continue
-        try:
-            qty = int(float(row[qty_col] if qty_col < len(row) and row[qty_col] is not None else 0))
-        except (TypeError, ValueError):
-            qty = 0
-        if qty <= 0:
-            continue
-        if not po_number:
-            po_number = cell_at(row, "po")
-        line_no += 1
-        desc = cell_at(row, "description")
-        items.append({
-            "line_no": line_no,
-            "part_number": pn.upper(),
-            "description": desc,
-            "fabric_content": _extract_fabric_from_description(desc),
-            "qty_expected": qty,
-            "qty_received": 0,
-            "country": cell_at(row, "country").upper(),
-            "brand": cell_at(row, "brand").upper(),
-        })
-    return items, po_number, col_map
-
-
-def _parse_packing_list_pdf(contents: bytes) -> dict:
-    """Parse an aduanal-style 'Lista de Empaque / Packing List' PDF.
-
-    Layout: a key/value header (NO. FACTURA / INVOICE = the ASN number,
-    REMITENTE / SHIPPER = vendor, VENDEDOR / SELLER = brand) followed by a
-    merchandise table where each item begins with '(N) <part_number>'. On that
-    same line the quantity is the positive WHOLE number (net weight is
-    fractional; bulk/package qty are zero), and 'Pais Origen:' gives the COO.
-    Header values are read via word coordinates because the page has 3 columns.
-
-    Returns { asn_id, vendor, brand, customer, po_number, items }.
-    """
-    import pdfplumber
-
-    lines: list[str] = []
-    header_words: list[dict] = []
-    with pdfplumber.open(io.BytesIO(contents)) as pdf:
-        for pi, page in enumerate(pdf.pages):
-            lines.extend((page.extract_text(x_tolerance=1.5) or "").split("\n"))
-            if pi == 0:
-                header_words = page.extract_words(x_tolerance=1.5)
-    full = "\n".join(lines)
-
-    # Header value sitting directly below a label word, kept within the label's
-    # column so 3-column layouts don't bleed into the neighbour.
-    def value_below(*labels):
-        lab = None
-        for w in header_words:
-            up = w["text"].upper()
-            if any(l in up for l in labels):
-                lab = w
-                break
-        if not lab:
-            return ""
-        lx, ltop = lab["x0"], lab["top"]
-        below = [w for w in header_words if w["top"] > ltop + 2 and (lx - 20) <= w["x0"] <= (lx + 200)]
-        if not below:
-            return ""
-        below.sort(key=lambda w: (w["top"], w["x0"]))
-        first_top = below[0]["top"]
-        row_words = [w for w in below if abs(w["top"] - first_top) <= 4]
-        return " ".join(w["text"] for w in sorted(row_words, key=lambda w: w["x0"])).strip()
-
-    asn_id = ""
-    m = re.search(r"(?:NO\.?\s*FACTURA|INVOICE)\s*[:/#]*\s*([0-9][0-9A-Za-z\-]{2,})", full, re.I)
-    if m:
-        asn_id = m.group(1).strip()
-
-    vendor = value_below("SHIPPER", "REMITENTE")
-    seller = value_below("SELLER", "VENDEDOR")
-    brand = (seller.split()[0] if seller else "").upper()
-
-    NUM = re.compile(r"\d[\d,]*\.\d+|\d[\d,]*")
-    item_re = re.compile(r"^\((\d+)\)\s*(\S+)?")
-    items: list[dict] = []
-    cur: dict | None = None
-
-    def flush():
-        nonlocal cur
-        if cur and cur.get("part_number"):
-            desc = " ".join(cur.pop("_desc", [])).strip()
-            cur["description"] = desc
-            cur["fabric_content"] = _extract_fabric_from_description(desc)
-            items.append(cur)
-        cur = None
-
-    for ln in lines:
-        s = ln.strip()
-        if not s:
-            continue
-        mi = item_re.match(s)
-        if mi:
-            flush()
-            part = (mi.group(2) or "").strip().upper()
-            rest = s[mi.end():]
-            nums = [float(x.replace(",", "")) for x in NUM.findall(rest)]
-            whole_pos = [n for n in nums if n > 0 and abs(n - round(n)) < 1e-6]
-            qty = int(round(whole_pos[0])) if whole_pos else (int(round(max(nums))) if nums else 0)
-            cur = {
-                "line_no": int(mi.group(1)),
-                "part_number": part,
-                "_desc": [],
-                "qty_expected": qty,
-                "qty_received": 0,
-                "country": "",
-                "brand": brand,
-            }
-            continue
-        if cur is None:
-            continue
-        u = s.upper()
-        cm = re.match(r"PA[IÍ]S\s*ORIGEN\s*[:]?\s*([A-Za-z]{2,3})", u)
-        if cm:
-            cur["country"] = cm.group(1).upper()
-            continue
-        if u.startswith(("FRACCION", "FRACCIÓN", "PO:", "LOT:", "PESO", "NET WT", "U.M.C", "UMC")):
-            continue
-        if not s.startswith("(") and len(cur["_desc"]) < 4:
-            cur["_desc"].append(s)
-    flush()
-
-    return {
-        "asn_id": asn_id,
-        "vendor": (vendor or "").upper(),
-        "brand": brand,
-        "customer": vendor or "",
-        "po_number": "",
-        "items": items,
-    }
-
-
-# ── Columnas personalizadas de las líneas de entrada (ASN/BPO) ───────────────
-# Igual que el CRM (column_config), pero con su propio config_id: una sola
-# definición GLOBAL para todas las entradas. Los valores viven en
-# items[].extra = {key: valor}, separados de los campos fijos que consume
-# receiving (part_number/color/size/country/fabric/qty_expected). Las columnas
-# de fórmula no se guardan: se calculan en el cliente con lib/formula.js.
 ASN_LINE_FIXED_FIELDS = {
     "line_no", "part_number", "description", "qty_expected", "qty_received",
     "country", "brand", "color", "size", "fabric", "extra",
+    # Formato único de línea (2026-09-15): lo que trae el packing list / la
+    # factura antes de que llegue el material. garment/gender/fabric/country
+    # componen el número de parte (services/part_number.py).
+    "style", "garment", "gender", "sample", "unit", "import_type", "po",
+    "unit_cost", "total_cost", "net_weight", "gross_weight", "bundles", "package_type",
+    "part_number_auto", "composition_code", "country_code",
 }
+
+
+# ── Número de parte: configuración y compositor ─────────────────────────────
+async def _pn_config() -> dict:
+    doc = await db.wms_part_number_config.find_one({"config_id": "main"}, {"_id": 0, "config_id": 0})
+    return pn.merge_config(doc)
+
+
+@router.get("/asn/part-number/config")
+async def get_part_number_config(request: Request):
+    """Catálogos del número de parte (prefijos, prendas, fibras, países) ya
+    fusionados con los defaults. La UI los usa para los selectores."""
+    await require_auth(request)
+    return await _pn_config()
+
+
+@router.put("/asn/part-number/config")
+async def put_part_number_config(request: Request):
+    """Sobrescribe SOLO lo que venga (diccionarios se fusionan por llave; las
+    listas reemplazan completas). Admin nivel 3+."""
+    user = await require_admin(request)
+    body = await request.json()
+    allowed = {k: v for k, v in (body or {}).items() if k in pn.DEFAULT_CONFIG}
+    if not allowed:
+        raise HTTPException(400, f"Nada que guardar; llaves válidas: {sorted(pn.DEFAULT_CONFIG)}")
+    stored = await db.wms_part_number_config.find_one({"config_id": "main"}, {"_id": 0, "config_id": 0}) or {}
+    for k, v in allowed.items():
+        # La pestaña manda su tabla COMPLETA (defaults + guardado): reemplaza lo
+        # guardado de esa llave. Un valor vacío retira la entrada (ver
+        # merge_config); la fusión con los defaults sigue al leer.
+        if isinstance(pn.DEFAULT_CONFIG[k], dict):
+            stored[k] = {str(a): str(b) for a, b in (v or {}).items()}
+        else:
+            stored[k] = list(v or [])
+    await db.wms_part_number_config.update_one(
+        {"config_id": "main"},
+        {"$set": {**stored, "config_id": "main", "updated_at": now_iso(), "updated_by": user.get("user_id")}},
+        upsert=True)
+    await log_activity(user, "wms_part_number_config_updated", {"keys": sorted(allowed)})
+    return await _pn_config()
+
+
+@router.post("/asn/part-number/propose")
+async def propose_part_number(request: Request):
+    """Lee la descripción y propone prenda/género/composición; con lo que la
+    persona ya eligió (explícito manda sobre lo propuesto) compone el número
+    de parte. Devuelve la propuesta + el resultado del compositor con errores
+    legibles; NUNCA guarda nada."""
+    await require_auth(request)
+    body = await request.json()
+    cfg = await _pn_config()
+    prop = pn.parse_description(body.get("description", ""), cfg)
+    garment = str(body.get("garment") or prop["garment"] or "").upper()
+    gender = body.get("gender")
+    gender = prop["gender"] if gender is None else str(gender).upper()
+    fabric = (body.get("fabric") or "").strip()
+    fibers, unknown = pn.parse_fibers(fabric, cfg) if fabric else (prop["fibers"], prop["unknown_fibers"])
+    result = pn.compose(body.get("customer", ""), garment, gender, fibers, body.get("country", ""),
+                        sample=bool(body.get("sample")), cfg=cfg)
+    if unknown:
+        # Que el mensaje nombre la fibra: "composición vacía" no le dice nada al capturista.
+        result.update(ok=False, part_number="",
+                      errors=[f"fibra no reconocida: {', '.join(unknown)}"] + [e for e in result["errors"] if e != "composición vacía"])
+    return {
+        "proposed": {"garment": prop["garment"], "gender": prop["gender"],
+                     "fabric": pn.composition_text(prop["fibers"], cfg), "unknown_fibers": prop["unknown_fibers"]},
+        "garment": garment, "gender": gender, "fabric": pn.composition_text(fibers, cfg),
+        **result,
+    }
+
+
+def _normalize_asn_line_format(it: dict, customer: str, cfg: dict) -> dict:
+    """Campos del formato único + número de parte compuesto.
+
+    Si la línea trae prenda + composición + país y el cliente tiene prefijo,
+    el número de parte SE COMPONE aquí (el cliente manda el suyo solo como
+    referencia; el servidor es la verdad) y se marca part_number_auto=True.
+    Si falta algo, se respeta el part_number que venga (importador, líneas
+    viejas, códigos que no siguen la gramática) con part_number_auto=False."""
+    garment = str(it.get("garment") or "").strip().upper()
+    gender = str(it.get("gender") or "").strip().upper()
+    fabric = str(it.get("fabric", it.get("fabric_content", "")) or "").strip().upper()
+    country = str(it.get("country") or "").strip().upper()
+    sample = bool(it.get("sample"))
+    out = {
+        "garment": garment, "gender": gender, "sample": sample,
+        "unit": (str(it.get("unit") or "PZA").strip().upper() or "PZA"),
+        "import_type": str(it.get("import_type") or "").strip(),
+        "po": str(it.get("po") or "").strip(),
+        # Estilo OPCIONAL y aparte del número de parte: a veces se sabe antes
+        # (viene en el packing list) y a veces hasta que se escanea el UPC.
+        "style": str(it.get("style") or "").strip().upper(),
+        "package_type": str(it.get("package_type") or "").strip().upper(),
+        "part_number_auto": False, "composition_code": "", "country_code": pn.country_code(country, cfg),
+    }
+    for k in ("unit_cost", "total_cost", "net_weight", "gross_weight", "bundles"):
+        v = it.get(k)
+        try:
+            out[k] = float(v) if v not in (None, "") else None
+        except (TypeError, ValueError):
+            out[k] = None
+    if garment and fabric and country:
+        r = pn.compose(customer, garment, gender, fabric, country, sample=sample, cfg=cfg)
+        if r["ok"]:
+            out["part_number"] = r["part_number"]
+            out["part_number_auto"] = True
+            out["composition_code"] = r["composition_code"]
+            # forma canónica de la composición para que recibo/inventario la
+            # comparen sin ambigüedad ("100% ALGODON", no "100%C")
+            out["fabric"] = pn.composition_text(pn.parse_fibers(fabric, cfg)[0], cfg)
+    return out
 ASN_COLUMN_TYPES = {"text", "number", "date", "link", "checkbox", "select", "formula"}
 _ASN_COLUMN_KEY_RE = re.compile(r"^[a-z0-9_]{1,40}$")
 
@@ -10978,6 +10743,8 @@ async def create_asn(request: Request):
         raise HTTPException(409, f"ASN {asn_id} ya existe")
 
     custom_cols = await _asn_custom_columns()
+    pn_cfg = await _pn_config()
+    customer = str(body.get("customer", "")).strip().upper()
     normalized_items = []
     for idx, it in enumerate(items, start=1):
         qty = int(it.get("qty_expected", it.get("quantity", 0)) or 0)
@@ -10995,10 +10762,12 @@ async def create_asn(request: Request):
             "size": str(it.get("size", "")).strip().upper(),
             "fabric": str(it.get("fabric", it.get("fabric_content", ""))).strip().upper(),
             "extra": _normalize_asn_extra(it.get("extra"), custom_cols),
+            **_normalize_asn_line_format(it, customer, pn_cfg),
         })
 
     doc = {
         "asn_id": asn_id,
+        "customer": customer,
         # Tipo de entrada: 'ASN' (aviso de llegada) o 'BPO' (blanket purchase
         # order). Ambos entran por el mismo numero; receiving recibe igual.
         "tipo": (str(body.get("tipo", "ASN")).strip().upper() or "ASN"),
@@ -11198,10 +10967,10 @@ async def update_asn(asn_id: str, request: Request):
     body = await request.json()
 
     update = {}
-    for k in ("po_number", "vendor", "expected_date", "tipo"):
+    for k in ("po_number", "vendor", "expected_date", "tipo", "customer"):
         if k in body:
             v = str(body.get(k) or "").strip()
-            update[k] = v.upper() if k in ("vendor", "tipo") else v
+            update[k] = v.upper() if k in ("vendor", "tipo", "customer") else v
 
     if "items" in body:
         incoming = body.get("items") or []
@@ -11213,6 +10982,8 @@ async def update_asn(asn_id: str, request: Request):
         for it in prev:
             by_part.setdefault(str(it.get("part_number", "")).upper(), it)
         custom_cols = await _asn_custom_columns()
+        pn_cfg = await _pn_config()
+        line_customer = update.get("customer", asn.get("customer") or "")
         normalized = []
         for idx, it in enumerate(incoming, start=1):
             part = str(it.get("part_number", it.get("sku", ""))).strip().upper()
@@ -11238,6 +11009,7 @@ async def update_asn(asn_id: str, request: Request):
                 "size": str(it.get("size", "")).strip().upper(),
                 "fabric": str(it.get("fabric", it.get("fabric_content", ""))).strip().upper(),
                 "extra": _normalize_asn_extra(it.get("extra"), custom_cols),
+                **_normalize_asn_line_format(it, line_customer, pn_cfg),
             })
         update["items"] = normalized
 
@@ -11328,193 +11100,6 @@ async def reopen_asn(asn_id: str, request: Request):
     })
     await log_movement(user, MovementType.ASN_RECEIPT, {"asn_id": asn_id, "reopened": True})
     return await db.wms_asn.find_one({"asn_id": asn_id}, {"_id": 0})
-
-@router.post("/asn/import")
-async def import_asn(
-    request: Request,
-    file: UploadFile = File(...),
-    sheet_name: Optional[str] = Query(default=None),
-):
-    """Two-phase import:
-       - Phase 1 (no sheet_name): inspect the file and return its sheets + detected
-         ASN# per sheet so the user can choose which to import.
-       - Phase 2 (with sheet_name): parse that sheet and persist.
-    """
-    user = await require_auth(request)
-    import openpyxl
-    try:
-        contents = await file.read()
-    except Exception as e:
-        logger.exception("ASN import: failed to read uploaded file")
-        raise HTTPException(400, f"No se pudo leer el archivo subido: {e}")
-    if not contents:
-        raise HTTPException(400, "Archivo vacio o no recibido")
-
-    # ── PDF branch: aduanal "Lista de Empaque / Packing List" ────────────────
-    is_pdf = (file.filename or "").lower().endswith(".pdf") or \
-             (file.content_type or "").lower() == "application/pdf" or \
-             contents[:5] == b"%PDF-"
-    if is_pdf:
-        try:
-            parsed = _parse_packing_list_pdf(contents)
-        except Exception as e:
-            logger.exception("ASN import: PDF parse failed")
-            raise HTTPException(400, f"No se pudo leer el PDF del packing list: {e}")
-        asn_id = parsed.get("asn_id") or ""
-        items = parsed.get("items") or []
-        if not asn_id:
-            raise HTTPException(400, "No se encontró el número de factura/INVOICE en el PDF")
-        if not items:
-            raise HTTPException(400, "No se detectaron líneas de mercancía en el PDF")
-        PDF_SHEET = "PACKING LIST (PDF)"
-
-        # Phase 1: inspect → present a single virtual sheet for confirmation.
-        if not sheet_name:
-            return {"action": "select_sheet", "filename": file.filename, "sheets": [{
-                "name": PDF_SHEET,
-                "kind": "pdf",
-                "detected_asn_id": asn_id,
-                "detected_customer": parsed.get("vendor") or "",
-                "row_count": len(items),
-                "detected_columns": {"part_number": "PDF", "qty": "PDF", "country": "PDF"},
-                "missing_required": [],
-            }]}
-
-        # Phase 2: persist.
-        if await db.wms_asn.find_one({"asn_id": asn_id}, {"_id": 1}):
-            raise HTTPException(409, f"ASN {asn_id} ya existe en el sistema")
-        doc = {
-            "asn_id": asn_id,
-            "po_number": parsed.get("po_number") or "",
-            "customer": parsed.get("customer") or "",
-            "vendor": parsed.get("vendor") or "",
-            "expected_date": now_iso(),
-            "source_sheet": PDF_SHEET,
-            "source_file": file.filename or "",
-            "items": items,
-            "status": AsnStatus.PENDING,
-            "created_at": now_iso(),
-            "created_by": user.get("user_id"),
-        }
-        await db.wms_asn.insert_one(doc)
-        await log_movement(user, MovementType.ASN_IMPORTED, {
-            "asn_id": asn_id, "items": len(items), "source": "pdf",
-            "total_qty": sum(it.get("qty_expected", 0) for it in items),
-        })
-        return {
-            "status": "success",
-            "asn_id": asn_id,
-            "po_number": doc["po_number"],
-            "vendor": doc["vendor"],
-            "items_count": len(items),
-            "total_qty_expected": sum(it.get("qty_expected", 0) for it in items),
-            "detected_columns": {},
-        }
-
-    try:
-        wb = openpyxl.load_workbook(io.BytesIO(contents), data_only=True)
-    except Exception as e:
-        logger.exception("ASN import: openpyxl could not open workbook")
-        raise HTTPException(400, f"No se pudo leer el archivo Excel: {e}")
-
-    # Helper: convert 0-based col index to Excel letter for the UI
-    def _col_letter(idx: int) -> str:
-        n, s = idx + 1, ""
-        while n > 0:
-            n, r = divmod(n - 1, 26)
-            s = chr(65 + r) + s
-        return s
-
-    # Phase 1: inspect
-    if not sheet_name:
-        sheets = []
-        for sn in wb.sheetnames:
-            kind = _detect_sheet_kind(sn)
-            if not kind:
-                continue
-            ws = wb[sn]
-            asn_num = _find_asn_number(ws)
-            col_map, data_start = _detect_columns(ws)
-            count = 0
-            if "part_number" in col_map:
-                pn_col = col_map["part_number"]
-                for row in ws.iter_rows(min_row=data_start, values_only=True):
-                    if not row or pn_col >= len(row):
-                        continue
-                    pn = row[pn_col]
-                    if pn and str(pn).strip().upper() != "TOTAL":
-                        count += 1
-            sheets.append({
-                "name": sn,
-                "kind": kind,
-                "detected_asn_id": asn_num,
-                "detected_customer": _find_label_value(ws, "Cliente", "Client", "Customer"),
-                "row_count": count,
-                "detected_columns": {f: _col_letter(c) for f, c in col_map.items()},
-                "missing_required": [f for f in _ASN_REQUIRED_FIELDS if f not in col_map],
-            })
-        if not sheets:
-            raise HTTPException(400, "No se encontraron hojas compatibles (RAW MATERIAL / EQUIPMENT / FINISHED GOODS)")
-        return {"action": "select_sheet", "filename": file.filename, "sheets": sheets}
-
-    # Phase 2: import the chosen sheet
-    if sheet_name not in wb.sheetnames:
-        raise HTTPException(400, f"Hoja '{sheet_name}' no existe en el archivo")
-    if not _detect_sheet_kind(sheet_name):
-        raise HTTPException(400, f"Hoja '{sheet_name}' no es de un tipo soportado")
-
-    ws = wb[sheet_name]
-    asn_id = _find_asn_number(ws)
-    if not asn_id:
-        raise HTTPException(400, "No se encontro el numero de ASN en la hoja (celda contigua al label 'ASN')")
-
-    if await db.wms_asn.find_one({"asn_id": asn_id}, {"_id": 1}):
-        raise HTTPException(409, f"ASN {asn_id} ya existe en el sistema")
-
-    items, po_number, col_map = _parse_packing_list(ws)
-    if not items:
-        raise HTTPException(400, "No se encontraron lineas con cantidad > 0 en la hoja")
-
-    # Vendor: most common brand wins, fallback to first
-    brands = [it["brand"] for it in items if it.get("brand")]
-    vendor = max(set(brands), key=brands.count) if brands else ""
-
-    # Customer: pulled from the "Cliente:" label at the top of the sheet
-    customer = _find_label_value(ws, "Cliente", "Client", "Customer")
-
-    doc = {
-        "asn_id": asn_id,
-        "po_number": po_number,
-        "customer": customer,
-        "vendor": vendor,
-        "expected_date": now_iso(),
-        "source_sheet": sheet_name,
-        "source_file": file.filename or "",
-        "items": items,
-        "status": AsnStatus.PENDING,
-        "created_at": now_iso(),
-        "created_by": user.get("user_id"),
-    }
-    await db.wms_asn.insert_one(doc)
-
-    detected_columns = {f: _col_letter(c) for f, c in col_map.items()}
-    await log_movement(user, MovementType.ASN_IMPORTED, {
-        "asn_id": asn_id, "po_number": po_number,
-        "items": len(items), "sheet": sheet_name,
-        "total_qty": sum(it["qty_expected"] for it in items),
-        "detected_columns": detected_columns,
-    })
-
-    return {
-        "status": "success",
-        "asn_id": asn_id,
-        "po_number": po_number,
-        "vendor": vendor,
-        "items_count": len(items),
-        "total_qty_expected": sum(it["qty_expected"] for it in items),
-        "detected_columns": detected_columns,
-    }
-
 
 async def _apply_receiving_to_asn(
     asn_id: str,
