@@ -50,6 +50,17 @@ const GRID_CLS = "w-full h-9 px-2 bg-transparent border-0 rounded-none text-xs f
 const slugKey = (name) => String(name || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
   .toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 40) || 'col';
 
+// Anchos de la hoja de captura: TODAS las columnas arrancan iguales (como una
+// hoja nueva de Excel) y el usuario las estira desde el borde del encabezado.
+// Lo que estira se recuerda en este navegador; doble clic regresa al estándar.
+const GRID_COL_W = 140;
+const GRID_MIN_W = 60;
+const GRID_ROWNUM_W = 40;
+const GRID_TRASH_W = 40;
+const GRID_W_KEY = 'mos_asn_grid_widths_v1';
+const loadGridWidths = () => { try { return JSON.parse(localStorage.getItem(GRID_W_KEY) || '{}') || {}; } catch { return {}; } };
+const saveGridWidths = (w) => { try { localStorage.setItem(GRID_W_KEY, JSON.stringify(w)); } catch { /* sin storage: solo esta sesión */ } };
+
 // Fila plana {campo fijo + extra} — es lo que ve el motor de fórmulas.
 const lineRow = (it) => ({ ...(it || {}), ...((it && it.extra) || {}) });
 
@@ -69,7 +80,7 @@ function ExtraCell({ col, line, cols, onChange, readOnly = false, grid = false }
     if (readOnly) return badge;
     return (
       <select value={value || ''} onChange={e => onChange(e.target.value)} className={base}
-        style={{ minWidth: 110, ...(opt ? { backgroundColor: opt.color, color: '#fff' } : {}) }}>
+        style={{ ...(grid ? {} : { minWidth: 110 }), ...(opt ? { backgroundColor: opt.color, color: '#fff' } : {}) }}>
         <option value="">—</option>
         {(col.statusOptions || []).map(o => <option key={o.value} value={o.value}>{o.value}</option>)}
       </select>
@@ -86,7 +97,7 @@ function ExtraCell({ col, line, cols, onChange, readOnly = false, grid = false }
   }
   const inputType = col.type === 'number' ? 'number' : col.type === 'date' ? 'date' : col.type === 'link' ? 'url' : 'text';
   return <input type={inputType} value={value ?? ''} onChange={e => onChange(e.target.value)}
-    className={`${base} ${col.type === 'number' ? 'text-right tabular-nums' : ''}`} style={{ minWidth: col.type === 'date' ? 130 : 110 }} />;
+    className={`${base} ${col.type === 'number' ? 'text-right tabular-nums' : ''}`} style={grid ? undefined : { minWidth: col.type === 'date' ? 130 : 110 }} />;
 }
 
 export const AsnModule = ({ currentUser }) => {
@@ -178,14 +189,43 @@ export const AsnModule = ({ currentUser }) => {
     { key: 'country', upper: true }, { key: 'fabric', upper: true }, { key: 'qty_expected' },
   ];
   const gridCols = [...GRID_FIXED, ...asnCols.map(c => ({ key: c.key, extra: true, type: c.type }))];
+  // Etiquetas de encabezado de la hoja, en el mismo orden que gridCols.
+  const gridHeaders = [
+    { key: 'part_number', label: 'Style / Part #' }, { key: 'color', label: t('wms_label_color') },
+    { key: 'size', label: t('wms_label_size') }, { key: 'country', label: t('wms_country') },
+    { key: 'fabric', label: 'Fabric' }, { key: 'qty_expected', label: t('quantity'), right: true },
+    ...asnCols.map(c => ({ key: c.key, label: c.label, custom: true })),
+  ];
+  const [gridW, setGridW] = useState(loadGridWidths);
+  const colWidth = (key) => Math.max(GRID_MIN_W, Number(gridW[key]) || GRID_COL_W);
+  const gridTotalW = GRID_ROWNUM_W + GRID_TRASH_W + gridHeaders.reduce((a, h) => a + colWidth(h.key), 0);
+  const resizing = useRef(null); // {key, startX, startW}
+  // Pointer events (no mouse): el mismo arrastre sirve con ratón, dedo o lápiz
+  // en la tableta; `touch-none` en la manija evita que el gesto haga scroll.
+  const startResize = (key) => (e) => {
+    e.preventDefault(); e.stopPropagation();
+    resizing.current = { key, startX: e.clientX, startW: colWidth(key) };
+    const onMove = (ev) => {
+      const r = resizing.current; if (!r) return;
+      setGridW(w => ({ ...w, [r.key]: Math.max(GRID_MIN_W, r.startW + (ev.clientX - r.startX)) }));
+    };
+    const onUp = () => {
+      resizing.current = null;
+      window.removeEventListener('pointermove', onMove); window.removeEventListener('pointerup', onUp); window.removeEventListener('pointercancel', onUp);
+      setGridW(w => { saveGridWidths(w); return w; });
+    };
+    window.addEventListener('pointermove', onMove); window.addEventListener('pointerup', onUp); window.addEventListener('pointercancel', onUp);
+  };
+  const resetWidth = (key) => setGridW(w => { const n = { ...w }; delete n[key]; saveGridWidths(n); return n; });
   const gridRef = useRef(null);
   const pendingFocus = useRef(null); // {r, c}: celda a enfocar cuando exista la fila nueva
   // Se localizan las filas con querySelectorAll y no con tBodies[0].rows: en dev
   // el editor visual envuelve cada <tr> en un <span display:contents> y las
   // colecciones nativas (rows, sectionRowIndex) dejan de verlas.
   const gridRows = () => Array.from(gridRef.current?.querySelectorAll('tbody tr') || []);
+  const rowCells = (tr) => Array.from(tr?.querySelectorAll('td') || []);
   const focusCell = (r, c) => {
-    const el = gridRows()[r]?.cells?.[c]?.querySelector('input,select');
+    const el = rowCells(gridRows()[r])[c]?.querySelector('input,select');
     if (el) { el.focus(); if (el.select) el.select(); }
     return !!el;
   };
@@ -196,7 +236,8 @@ export const AsnModule = ({ currentUser }) => {
     const td = target?.closest?.('td'); const tr = td?.closest?.('tr');
     if (!td || !tr) return null;
     const r = gridRows().indexOf(tr);
-    return r < 0 ? null : { r, c: td.cellIndex };
+    const c = rowCells(tr).indexOf(td);
+    return r < 0 || c < 0 ? null : { r, c };
   };
   // Enter baja a la misma columna de la fila siguiente (y crea la fila si es la
   // última); Tab en la última celda de la última fila crea una fila nueva.
@@ -208,9 +249,11 @@ export const AsnModule = ({ currentUser }) => {
       e.preventDefault();
       if (pos.r < last) focusCell(pos.r + 1, pos.c);
       else { pendingFocus.current = { r: pos.r + 1, c: pos.c }; addCLine(); }
-    } else if (e.key === 'Tab' && !e.shiftKey && pos.r === last && pos.c === gridCols.length) {
-      e.preventDefault();
-      pendingFocus.current = { r: pos.r + 1, c: 1 }; addCLine();
+    } else if (e.key === 'Tab' && !e.shiftKey && pos.r === last) {
+      // Última celda EDITABLE de la última fila (una fórmula al final no cuenta).
+      const tr = e.target.closest('tr');
+      const hasEditableAfter = rowCells(tr).slice(pos.c + 1).some(td => td.querySelector('input,select'));
+      if (!hasEditableAfter) { e.preventDefault(); pendingFocus.current = { r: pos.r + 1, c: 1 }; addCLine(); }
     }
   };
   // Pegar un bloque de Excel (celdas separadas por tab, filas por salto de
@@ -680,18 +723,36 @@ export const AsnModule = ({ currentUser }) => {
           {/* Cuadrícula */}
           <div className="overflow-x-auto">
             <table ref={gridRef} onKeyDown={onGridKeyDown} onPaste={onGridPaste}
-              className="w-full text-sm border-collapse [&_th]:border [&_th]:border-border/70 [&_td]:border [&_td]:border-border/60 [&_td]:p-0">
-              <thead className="bg-muted/50">
+              style={{ tableLayout: 'fixed', width: gridTotalW, minWidth: '100%' }}
+              className="text-sm border-collapse [&_th]:border [&_th]:border-border/70 [&_td]:border [&_td]:border-border/60 [&_td]:p-0 [&_td]:overflow-hidden">
+              {/* Anchos reales de la cuadrícula: uniformes por default, cada uno
+                  estirable. Con table-layout fixed el ancho lo manda el <col>,
+                  no el contenido, igual que en una hoja de cálculo. */}
+              <colgroup>
+                <col style={{ width: GRID_ROWNUM_W }} />
+                {gridHeaders.map(h => <col key={h.key} style={{ width: colWidth(h.key) }} />)}
+                <col style={{ width: GRID_TRASH_W }} />
+              </colgroup>
+              <thead className="bg-muted/50 select-none">
                 <tr>
-                  <th className="w-10 px-2 py-2 text-center text-xs font-semibold text-muted-foreground">#</th>
-                  <th className="px-2 py-2 text-left text-xs font-semibold text-muted-foreground min-w-[160px]">Style / Part #</th>
-                  <th className="px-2 py-2 text-left text-xs font-semibold text-muted-foreground min-w-[120px]">{t('wms_label_color')}</th>
-                  <th className="px-2 py-2 text-left text-xs font-semibold text-muted-foreground w-20">{t('wms_label_size')}</th>
-                  <th className="px-2 py-2 text-left text-xs font-semibold text-muted-foreground w-28">{t('wms_country')}</th>
-                  <th className="px-2 py-2 text-left text-xs font-semibold text-muted-foreground w-32">Fabric</th>
-                  <th className="px-2 py-2 text-right text-xs font-semibold text-muted-foreground w-28">{t('quantity')}</th>
-                  {asnCols.map(c => <ExtraTh key={c.key} col={c} cls="px-2 py-2 text-left text-xs font-semibold text-muted-foreground whitespace-nowrap" />)}
-                  <th className="w-10" />
+                  <th className="px-2 py-2 text-center text-xs font-semibold text-muted-foreground">#</th>
+                  {gridHeaders.map(h => (
+                    <th key={h.key} className={`relative px-2 py-2 text-xs font-semibold text-muted-foreground whitespace-nowrap overflow-hidden text-ellipsis ${h.right ? 'text-right' : 'text-left'}`} title={h.label}>
+                      <span className="inline-flex items-center gap-1 max-w-full">
+                        <span className="truncate">{h.label}</span>
+                        {h.custom && isSupersu && (
+                          <button onClick={() => removeAsnColumn(h.key)} className="p-0.5 rounded text-muted-foreground/60 hover:text-destructive hover:bg-destructive/10 flex-shrink-0" title={t('wms_remove_column')}>
+                            <X className="w-3 h-3" />
+                          </button>
+                        )}
+                      </span>
+                      {/* Manija de redimensionado: el borde derecho del encabezado. */}
+                      <span onPointerDown={startResize(h.key)} onDoubleClick={() => resetWidth(h.key)}
+                        className="absolute top-0 right-0 h-full w-2 cursor-col-resize touch-none hover:bg-primary/50 active:bg-primary"
+                        title={t('wms_resize_column')} data-testid={`asn-col-resize-${h.key}`} />
+                    </th>
+                  ))}
+                  <th />
                 </tr>
               </thead>
               <tbody>
