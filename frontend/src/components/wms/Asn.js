@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { toast } from "sonner";
 import { FileDown, FileUp, Loader2, X, Package, Search, AlertTriangle, Trash2, Pencil, Plus, Check, CheckCircle2, RotateCcw, Lock, Columns3 } from "lucide-react";
 import * as XLSX from "xlsx";
@@ -41,6 +41,9 @@ const ASN_FIXED_LINE_COLS = [
   { key: 'qty_received', label: 'Recibido', type: 'number' },
 ];
 const CELL_CLS = "w-full h-8 px-2 bg-card border border-input rounded-md text-xs focus:outline-none focus:border-primary";
+// Celda de hoja: sin caja propia, llena el <td>; el foco se marca con un anillo
+// interior para que la cuadrícula se vea como una hoja de cálculo.
+const GRID_CLS = "w-full h-9 px-2 bg-transparent border-0 rounded-none text-xs focus:outline-none focus:ring-1 focus:ring-inset focus:ring-primary focus:bg-primary/10";
 
 // Clave estable para la definición: sin acentos ni símbolos, para que el backend
 // la acepte (^[a-z0-9_]+$) y una fórmula la pueda escribir sin corchetes.
@@ -51,11 +54,12 @@ const slugKey = (name) => String(name || '').normalize('NFKD').replace(/[\u0300-
 const lineRow = (it) => ({ ...(it || {}), ...((it && it.extra) || {}) });
 
 // Una celda de columna personalizada, por tipo. readOnly = tabla de detalle.
-function ExtraCell({ col, line, cols, onChange, readOnly = false }) {
+function ExtraCell({ col, line, cols, onChange, readOnly = false, grid = false }) {
   const value = (line.extra || {})[col.key];
+  const base = grid ? GRID_CLS : CELL_CLS;
   if (col.type === 'formula') {
     const v = formatResult(evalFormula(col.formula, lineRow(line), cols));
-    return <span className="text-xs tabular-nums text-muted-foreground">{v}</span>;
+    return <span className={`text-xs tabular-nums text-muted-foreground ${grid ? 'block px-2 h-9 leading-9' : ''}`}>{v}</span>;
   }
   if (col.type === 'select') {
     const opt = (col.statusOptions || []).find(o => o.value === value);
@@ -64,7 +68,7 @@ function ExtraCell({ col, line, cols, onChange, readOnly = false }) {
       : <span className="text-xs text-muted-foreground">—</span>;
     if (readOnly) return badge;
     return (
-      <select value={value || ''} onChange={e => onChange(e.target.value)} className={CELL_CLS}
+      <select value={value || ''} onChange={e => onChange(e.target.value)} className={base}
         style={{ minWidth: 110, ...(opt ? { backgroundColor: opt.color, color: '#fff' } : {}) }}>
         <option value="">—</option>
         {(col.statusOptions || []).map(o => <option key={o.value} value={o.value}>{o.value}</option>)}
@@ -72,7 +76,7 @@ function ExtraCell({ col, line, cols, onChange, readOnly = false }) {
     );
   }
   if (col.type === 'checkbox') {
-    return <input type="checkbox" checked={!!value} disabled={readOnly} onChange={e => onChange(e.target.checked)} className="w-4 h-4 accent-primary" />;
+    return <input type="checkbox" checked={!!value} disabled={readOnly} onChange={e => onChange(e.target.checked)} className={`w-4 h-4 accent-primary ${grid ? 'block mx-auto my-2.5' : ''}`} />;
   }
   if (readOnly) {
     if (value === undefined || value === null || value === '') return <span className="text-xs text-muted-foreground">—</span>;
@@ -82,7 +86,7 @@ function ExtraCell({ col, line, cols, onChange, readOnly = false }) {
   }
   const inputType = col.type === 'number' ? 'number' : col.type === 'date' ? 'date' : col.type === 'link' ? 'url' : 'text';
   return <input type={inputType} value={value ?? ''} onChange={e => onChange(e.target.value)}
-    className={`${CELL_CLS} ${col.type === 'number' ? 'text-right tabular-nums' : ''}`} style={{ minWidth: col.type === 'date' ? 130 : 110 }} />;
+    className={`${base} ${col.type === 'number' ? 'text-right tabular-nums' : ''}`} style={{ minWidth: col.type === 'date' ? 130 : 110 }} />;
 }
 
 export const AsnModule = ({ currentUser }) => {
@@ -165,6 +169,81 @@ export const AsnModule = ({ currentUser }) => {
   const addCLine = () => setCreateDraft(d => ({ ...d, items: [...d.items, NEW_LINE()] }));
   const rmCLine = (i) => setCreateDraft(d => ({ ...d, items: d.items.filter((_, j) => j !== i) }));
   const setCLineExtra = (i, key, v) => setCreateDraft(d => ({ ...d, items: d.items.map((it, j) => j === i ? { ...it, extra: { ...(it.extra || {}), [key]: v } } : it) }));
+
+  // ── Hoja de captura: se comporta como una hoja de cálculo ──────────────────
+  // Orden de columnas de la cuadrícula (después de la columna "#"). Es el mismo
+  // orden en que se pegan las celdas que vienen de Excel.
+  const GRID_FIXED = [
+    { key: 'part_number', upper: true }, { key: 'color', upper: true }, { key: 'size', upper: true },
+    { key: 'country', upper: true }, { key: 'fabric', upper: true }, { key: 'qty_expected' },
+  ];
+  const gridCols = [...GRID_FIXED, ...asnCols.map(c => ({ key: c.key, extra: true, type: c.type }))];
+  const gridRef = useRef(null);
+  const pendingFocus = useRef(null); // {r, c}: celda a enfocar cuando exista la fila nueva
+  // Se localizan las filas con querySelectorAll y no con tBodies[0].rows: en dev
+  // el editor visual envuelve cada <tr> en un <span display:contents> y las
+  // colecciones nativas (rows, sectionRowIndex) dejan de verlas.
+  const gridRows = () => Array.from(gridRef.current?.querySelectorAll('tbody tr') || []);
+  const focusCell = (r, c) => {
+    const el = gridRows()[r]?.cells?.[c]?.querySelector('input,select');
+    if (el) { el.focus(); if (el.select) el.select(); }
+    return !!el;
+  };
+  useEffect(() => {
+    if (pendingFocus.current && focusCell(pendingFocus.current.r, pendingFocus.current.c)) pendingFocus.current = null;
+  }, [createDraft?.items?.length]); // eslint-disable-line react-hooks/exhaustive-deps
+  const cellPos = (target) => {
+    const td = target?.closest?.('td'); const tr = td?.closest?.('tr');
+    if (!td || !tr) return null;
+    const r = gridRows().indexOf(tr);
+    return r < 0 ? null : { r, c: td.cellIndex };
+  };
+  // Enter baja a la misma columna de la fila siguiente (y crea la fila si es la
+  // última); Tab en la última celda de la última fila crea una fila nueva.
+  const onGridKeyDown = (e) => {
+    if (e.target.tagName === 'SELECT' && e.key !== 'Tab') return;
+    const pos = cellPos(e.target); if (!pos) return;
+    const last = createDraft.items.length - 1;
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (pos.r < last) focusCell(pos.r + 1, pos.c);
+      else { pendingFocus.current = { r: pos.r + 1, c: pos.c }; addCLine(); }
+    } else if (e.key === 'Tab' && !e.shiftKey && pos.r === last && pos.c === gridCols.length) {
+      e.preventDefault();
+      pendingFocus.current = { r: pos.r + 1, c: 1 }; addCLine();
+    }
+  };
+  // Pegar un bloque de Excel (celdas separadas por tab, filas por salto de
+  // línea) a partir de la celda con foco; agrega las filas que hagan falta.
+  const onGridPaste = (e) => {
+    const text = e.clipboardData?.getData('text/plain') || '';
+    if (!/[\t\r\n]/.test(text.trim())) return; // un solo valor: pegado normal
+    const pos = cellPos(e.target); if (!pos) return;
+    e.preventDefault();
+    const rows = text.replace(/\r/g, '').split('\n').filter((l, i, a) => l.length || i < a.length - 1).map(l => l.split('\t'));
+    const c0 = pos.c - 1; // la columna 0 de la cuadrícula es "#"
+    const truthy = (v) => /^(1|true|si|sí|x|yes|ok)$/i.test(String(v).trim());
+    setCreateDraft(d => {
+      const items = d.items.slice();
+      rows.forEach((cells, ri) => {
+        const r = pos.r + ri;
+        while (items.length <= r) items.push(NEW_LINE());
+        const it = { ...items[r], extra: { ...(items[r].extra || {}) } };
+        cells.forEach((raw, ci) => {
+          const col = gridCols[c0 + ci]; if (!col) return;
+          const v = String(raw).trim();
+          if (col.extra) {
+            if (col.type === 'formula') return;
+            it.extra[col.key] = col.type === 'checkbox' ? truthy(v) : v;
+          } else {
+            it[col.key] = col.upper ? v.toUpperCase() : v;
+          }
+        });
+        items[r] = it;
+      });
+      return { ...d, items };
+    });
+  };
   const submitCreate = async () => {
     const d = createDraft;
     if (!d.asn_id.trim()) { toast.error(t('wms_asn_entry_num_req')); return; }
@@ -560,88 +639,85 @@ export const AsnModule = ({ currentUser }) => {
         existingColumns={allLineCols}
         sampleRow={lineRow((createDraft?.items || editDraft?.items || detailData?.asn?.items || [])[0])} />
 
-      {/* Nueva entrada — captura tipo Excel (ASN o BPO). El módulo NO es un
-          Radix Dialog, así que un overlay simple funciona sin bloquear clics. */}
-      {showCreate && createDraft && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" onClick={() => !savingCreate && setShowCreate(false)}>
-          <div className="w-full max-w-4xl max-h-[90vh] overflow-y-auto bg-card border border-border rounded-xl shadow-2xl" onClick={e => e.stopPropagation()}>
-            <div className="flex items-center justify-between px-5 py-3 border-b border-border sticky top-0 bg-card z-10">
-              <h3 className="font-bold text-base flex items-center gap-2"><Plus className="w-5 h-5" /> {t('wms_asn_new_modal_title')}</h3>
-              <button onClick={() => setShowCreate(false)} className="p-1.5 rounded-lg hover:bg-secondary text-muted-foreground hover:text-foreground"><X className="w-5 h-5" /></button>
-            </div>
-            <div className="p-5 space-y-4">
-              <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-                <label className="text-xs font-semibold text-muted-foreground flex flex-col gap-1">{t('wms_asn_entry_number')} *
-                  <input value={createDraft.asn_id} onChange={e => setCreateDraft(d => ({ ...d, asn_id: e.target.value }))} className="h-8 px-2 bg-card border border-input rounded-md text-sm" placeholder={t('wms_asn_entry_ph')} />
-                </label>
-                <label className="text-xs font-semibold text-muted-foreground flex flex-col gap-1">{t('wms_type')}
-                  <select value={createDraft.tipo} onChange={e => setCreateDraft(d => ({ ...d, tipo: e.target.value }))} className="h-8 px-2 bg-card border border-input rounded-md text-sm">
-                    <option value="ASN">ASN</option>
-                    <option value="BPO">BPO</option>
-                  </select>
-                </label>
-                <label className="text-xs font-semibold text-muted-foreground flex flex-col gap-1">{t('wms_asn_vendor')}
-                  <input value={createDraft.vendor} onChange={e => setCreateDraft(d => ({ ...d, vendor: e.target.value.toUpperCase() }))} className="h-8 px-2 bg-card border border-input rounded-md text-sm" />
-                </label>
-                <label className="text-xs font-semibold text-muted-foreground flex flex-col gap-1">PO #
-                  <input value={createDraft.po_number} onChange={e => setCreateDraft(d => ({ ...d, po_number: e.target.value }))} className="h-8 px-2 bg-card border border-input rounded-md text-sm" />
-                </label>
-                <label className="text-xs font-semibold text-muted-foreground flex flex-col gap-1">{t('wms_asn_eta')}
-                  <input type="date" value={createDraft.expected_date} onChange={e => setCreateDraft(d => ({ ...d, expected_date: e.target.value }))} className="h-8 px-2 bg-card border border-input rounded-md text-sm" />
-                </label>
-              </div>
-
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <h4 className="text-xs font-semibold text-muted-foreground">{t('wms_asn_lines_fmt')}</h4>
-                  <div className="flex items-center gap-2">
-                    {isSupersu && <Btn onClick={() => setShowAddCol(true)}><Columns3 className="w-3.5 h-3.5" /> {t('wms_add_column')}</Btn>}
-                    <Btn onClick={addCLine}><Plus className="w-3.5 h-3.5" /> {t('wms_add_line')}</Btn>
-                  </div>
-                </div>
-                <div className="border border-border rounded-lg overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead className="bg-muted/50 border-b border-border">
-                      <tr>
-                        <th className="px-2 py-2 text-left text-xs font-semibold text-muted-foreground">Style / Part #</th>
-                        <th className="px-2 py-2 text-left text-xs font-semibold text-muted-foreground">{t('wms_label_color')}</th>
-                        <th className="px-2 py-2 text-left text-xs font-semibold text-muted-foreground">{t('wms_label_size')}</th>
-                        <th className="px-2 py-2 text-left text-xs font-semibold text-muted-foreground">{t('wms_country')}</th>
-                        <th className="px-2 py-2 text-left text-xs font-semibold text-muted-foreground">Fabric</th>
-                        <th className="px-2 py-2 text-right text-xs font-semibold text-muted-foreground">{t('quantity')}</th>
-                        {asnCols.map(c => <ExtraTh key={c.key} col={c} cls="px-2 py-2 text-left text-xs font-semibold text-muted-foreground whitespace-nowrap" />)}
-                        <th className="px-2 py-2" />
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-border/60">
-                      {createDraft.items.map((it, i) => (
-                        <tr key={i}>
-                          <td className="p-1.5"><input value={it.part_number} onChange={e => setCLine(i, 'part_number', e.target.value.toUpperCase())} className="w-full min-w-[150px] h-8 px-2 bg-card border border-input rounded-md text-xs font-mono" /></td>
-                          <td className="p-1.5"><input value={it.color} onChange={e => setCLine(i, 'color', e.target.value.toUpperCase())} className="w-full min-w-[110px] h-8 px-2 bg-card border border-input rounded-md text-xs" /></td>
-                          <td className="p-1.5"><input value={it.size} onChange={e => setCLine(i, 'size', e.target.value.toUpperCase())} className="w-20 h-8 px-2 bg-card border border-input rounded-md text-xs" /></td>
-                          <td className="p-1.5"><input value={it.country} onChange={e => setCLine(i, 'country', e.target.value.toUpperCase())} className="w-24 h-8 px-2 bg-card border border-input rounded-md text-xs" /></td>
-                          <td className="p-1.5"><input value={it.fabric} onChange={e => setCLine(i, 'fabric', e.target.value.toUpperCase())} className="w-28 h-8 px-2 bg-card border border-input rounded-md text-xs" /></td>
-                          <td className="p-1.5"><input type="number" min="0" value={it.qty_expected} onChange={e => setCLine(i, 'qty_expected', e.target.value)} className="w-24 h-8 px-2 bg-card border border-input rounded-md text-xs text-right tabular-nums" /></td>
-                          {asnCols.map(c => <td key={c.key} className="p-1.5"><ExtraCell col={c} line={it} cols={allLineCols} onChange={v => setCLineExtra(i, c.key, v)} /></td>)}
-                          <td className="p-1.5 text-center"><button onClick={() => rmCLine(i)} className="p-1.5 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded"><Trash2 className="w-3.5 h-3.5" /></button></td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-
-              <div className="flex justify-end gap-2">
-                <button onClick={() => setShowCreate(false)} className="px-3 py-1.5 text-sm rounded-md text-muted-foreground hover:text-foreground">{t('cancel')}</button>
-                <button onClick={submitCreate} disabled={savingCreate} className="px-4 py-1.5 text-sm font-semibold rounded-md bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-50 flex items-center gap-1.5">
-                  {savingCreate ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} {t('wms_asn_save_entry')}
-                </button>
-              </div>
+      {/* Nueva entrada — hoja de captura EN LÍNEA (no un modal): ocupa el ancho
+          del módulo y la cuadrícula se comporta como una hoja de cálculo
+          (Tab/Enter para moverse, pegado directo desde Excel). Mientras está
+          abierta reemplaza la lista para que la captura sea lo único en pantalla. */}
+      {showCreate && createDraft ? (
+        <div className="border border-border rounded-lg bg-card overflow-hidden" data-testid="asn-create-sheet">
+          <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 border-b border-border bg-muted/30">
+            <h3 className="font-bold text-sm flex items-center gap-2"><Plus className="w-4 h-4" /> {t('wms_asn_new_modal_title')}</h3>
+            <div className="flex items-center gap-2">
+              {isSupersu && <Btn onClick={() => setShowAddCol(true)}><Columns3 className="w-3.5 h-3.5" /> {t('wms_add_column')}</Btn>}
+              <Btn onClick={addCLine}><Plus className="w-3.5 h-3.5" /> {t('wms_add_line')}</Btn>
+              <button onClick={() => !savingCreate && setShowCreate(false)} className="px-3 py-1.5 text-sm rounded-md text-muted-foreground hover:text-foreground">{t('cancel')}</button>
+              <button onClick={submitCreate} disabled={savingCreate} className="px-4 py-1.5 text-sm font-semibold rounded-md bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-50 flex items-center gap-1.5" data-testid="asn-create-save">
+                {savingCreate ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} {t('wms_asn_save_entry')}
+              </button>
             </div>
           </div>
-        </div>
-      )}
 
+          {/* Cabecera de la entrada: una sola franja, campos sin caja. */}
+          <div className="grid grid-cols-2 md:grid-cols-5 divide-x divide-border border-b border-border">
+            {[
+              { label: `${t('wms_asn_entry_number')} *`, el: <input value={createDraft.asn_id} onChange={e => setCreateDraft(d => ({ ...d, asn_id: e.target.value }))} className={`${GRID_CLS} font-mono`} placeholder={t('wms_asn_entry_ph')} autoFocus data-testid="asn-create-id" /> },
+              { label: t('wms_type'), el: (
+                <select value={createDraft.tipo} onChange={e => setCreateDraft(d => ({ ...d, tipo: e.target.value }))} className={GRID_CLS}>
+                  <option value="ASN">ASN</option>
+                  <option value="BPO">BPO</option>
+                </select>) },
+              { label: t('wms_asn_vendor'), el: <input value={createDraft.vendor} onChange={e => setCreateDraft(d => ({ ...d, vendor: e.target.value.toUpperCase() }))} className={GRID_CLS} /> },
+              { label: 'PO #', el: <input value={createDraft.po_number} onChange={e => setCreateDraft(d => ({ ...d, po_number: e.target.value }))} className={GRID_CLS} /> },
+              { label: t('wms_asn_eta'), el: <input type="date" value={createDraft.expected_date} onChange={e => setCreateDraft(d => ({ ...d, expected_date: e.target.value }))} className={GRID_CLS} /> },
+            ].map((f, i) => (
+              <label key={i} className="flex flex-col">
+                <span className="px-2 pt-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{f.label}</span>
+                {f.el}
+              </label>
+            ))}
+          </div>
+
+          {/* Cuadrícula */}
+          <div className="overflow-x-auto">
+            <table ref={gridRef} onKeyDown={onGridKeyDown} onPaste={onGridPaste}
+              className="w-full text-sm border-collapse [&_th]:border [&_th]:border-border/70 [&_td]:border [&_td]:border-border/60 [&_td]:p-0">
+              <thead className="bg-muted/50">
+                <tr>
+                  <th className="w-10 px-2 py-2 text-center text-xs font-semibold text-muted-foreground">#</th>
+                  <th className="px-2 py-2 text-left text-xs font-semibold text-muted-foreground min-w-[160px]">Style / Part #</th>
+                  <th className="px-2 py-2 text-left text-xs font-semibold text-muted-foreground min-w-[120px]">{t('wms_label_color')}</th>
+                  <th className="px-2 py-2 text-left text-xs font-semibold text-muted-foreground w-20">{t('wms_label_size')}</th>
+                  <th className="px-2 py-2 text-left text-xs font-semibold text-muted-foreground w-28">{t('wms_country')}</th>
+                  <th className="px-2 py-2 text-left text-xs font-semibold text-muted-foreground w-32">Fabric</th>
+                  <th className="px-2 py-2 text-right text-xs font-semibold text-muted-foreground w-28">{t('quantity')}</th>
+                  {asnCols.map(c => <ExtraTh key={c.key} col={c} cls="px-2 py-2 text-left text-xs font-semibold text-muted-foreground whitespace-nowrap" />)}
+                  <th className="w-10" />
+                </tr>
+              </thead>
+              <tbody>
+                {createDraft.items.map((it, i) => (
+                  <tr key={i} className="hover:bg-muted/20">
+                    <td className="text-center text-xs font-mono text-muted-foreground select-none">{i + 1}</td>
+                    <td><input value={it.part_number} onChange={e => setCLine(i, 'part_number', e.target.value.toUpperCase())} className={`${GRID_CLS} font-mono`} data-testid={`asn-cell-pn-${i}`} /></td>
+                    <td><input value={it.color} onChange={e => setCLine(i, 'color', e.target.value.toUpperCase())} className={GRID_CLS} /></td>
+                    <td><input value={it.size} onChange={e => setCLine(i, 'size', e.target.value.toUpperCase())} className={GRID_CLS} /></td>
+                    <td><input value={it.country} onChange={e => setCLine(i, 'country', e.target.value.toUpperCase())} className={GRID_CLS} /></td>
+                    <td><input value={it.fabric} onChange={e => setCLine(i, 'fabric', e.target.value.toUpperCase())} className={GRID_CLS} /></td>
+                    <td><input type="number" min="0" value={it.qty_expected} onChange={e => setCLine(i, 'qty_expected', e.target.value)} className={`${GRID_CLS} text-right tabular-nums`} /></td>
+                    {asnCols.map(c => <td key={c.key}><ExtraCell col={c} line={it} cols={allLineCols} grid onChange={v => setCLineExtra(i, c.key, v)} /></td>)}
+                    <td className="text-center"><button tabIndex={-1} onClick={() => rmCLine(i)} className="p-1.5 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded" title={t('wms_remove_line')}><Trash2 className="w-3.5 h-3.5" /></button></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="flex items-center justify-between px-4 py-2 border-t border-border text-xs text-muted-foreground">
+            <span>{createDraft.items.length} {t('wms_lines_lc')}</span>
+            <span>{t('wms_asn_sheet_hint')}</span>
+          </div>
+        </div>
+      ) : (
+        <>
       {/* Status tabs */}
       <div className="flex flex-wrap gap-1 p-1 bg-muted/50 rounded-lg w-fit border border-border">
         {TABS.map(tab => {
@@ -749,6 +825,9 @@ export const AsnModule = ({ currentUser }) => {
           </table>
         </div>
       </div>
+
+        </>
+      )}
 
       {/* Sheet picker dialog (Phase 1 → Phase 2) */}
       {sheetChoices && (
