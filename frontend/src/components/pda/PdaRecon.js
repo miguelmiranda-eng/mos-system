@@ -7,6 +7,7 @@ import {
   Loader2, Trash2, PackageCheck, AlertTriangle, RotateCcw, Languages,
 } from "lucide-react";
 import { useLang } from "../../contexts/LanguageContext";
+import { scanFeedback, duplicateScan } from "../wms/lib";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api/wms`;
 const fetcher = (u) => fetch(`${API}${u}`, { credentials: "include" }).then(r => (r.ok ? r.json() : Promise.reject(r)));
@@ -29,6 +30,10 @@ export default function PdaRecon() {
   const [phase, setPhase] = useState("loc"); // loc | scan | done | locked
   const [loc, setLoc] = useState(null);       // { location, expected, expected_count }
   const [scanned, setScanned] = useState([]); // [{ id, known, lpn? }]
+  // Espejo de `scanned` para que addScanned (useCallback sin deps) pueda
+  // detectar el duplicado FUERA del updater y avisar una sola vez.
+  const scannedRef = useRef(scanned);
+  useEffect(() => { scannedRef.current = scanned; }, [scanned]);
   const [result, setResult] = useState(null);
   const [busy, setBusy] = useState(false);
   const [pick, setPick] = useState(null);     // { code, candidates } — selector de LPN sin casar
@@ -59,11 +64,11 @@ export default function PdaRecon() {
 
   // Agrega un objeto de caja a la lista, deduplicando por box_id.
   const addScanned = useCallback((item) => {
-    setScanned(prev => {
-      if (prev.some(b => b.id === item.id)) { toast.info(tRef.current('pda_already_scanned')); return prev; }
-      buzz(40);
-      return [item, ...prev];
-    });
+    // Doble escaneo: mismo aviso que en todo el WMS (toast + doble beep +
+    // vibración), y la caja NO se agrega dos veces.
+    if (scannedRef.current.some(b => b.id === item.id)) { duplicateScan(tRef.current, item.id); return; }
+    setScanned(prev => prev.some(b => b.id === item.id) ? prev : [item, ...prev]);
+    scanFeedback('ok');
   }, []);
 
   const addBox = useCallback((raw) => {
@@ -81,7 +86,7 @@ export default function PdaRecon() {
       if (!res.ok) { toast.error(data.detail || t('pda_resolve_err')); buzz([120, 60, 120]); return; }
       if (data.matched) {
         const box = data.box || {};
-        if (scanned.some(b => b.id === data.box_id)) { toast.info(t('pda_already_scanned')); return; }
+        if (scanned.some(b => b.id === data.box_id)) { duplicateScan(t, data.box_id); return; }
         const label = `${box.style || box.sku || ""} ${box.color || ""} ${box.size || ""}`.trim() || data.box_id;
         addScanned({ id: data.box_id, known: data.here, lpn: code });
         if (data.here === false) { toast.warning(t('pda_moved_here', { label })); }

@@ -5,7 +5,7 @@ import * as XLSX from "xlsx";
 import SearchableSelect from "../SearchableSelect";
 import { useLang } from "../../contexts/LanguageContext";
 import { useAuth } from "../../App";
-import { fetcher, poster, putter, deleter, logLoadError, useWmsCatalogs, mergeUnique } from "./lib";
+import { fetcher, poster, putter, deleter, logLoadError, useWmsCatalogs, mergeUnique, scanFeedback, duplicateScan } from "./lib";
 import { PrefixLocationInput } from "./PrefixLocationInput";
 import { Btn, Chip, cls, EmptyState, StatCard, Th } from "./ui";
 
@@ -603,8 +603,9 @@ export const CycleCountModule = () => {
           };
         })
       }));
-      if (alreadyScanned) toast.warning(t('wms_cc_scan_already', { box: shown }));
-      else if (data.bound) toast.success(t('wms_cc_scan_bound', { box: shown }));
+      if (alreadyScanned) { duplicateScan(t, shown); return; }
+      scanFeedback(data.expected_here ? 'ok' : 'error');
+      if (data.bound) toast.success(t('wms_cc_scan_bound', { box: shown }));
       else if (!data.expected_here) toast.warning(t('wms_cc_scan_foreign', { box: shown, loc }));
     };
 

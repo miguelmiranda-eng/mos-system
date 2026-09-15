@@ -36,6 +36,49 @@ export const deleter = (url) => apiFetch(`${API}${url}`, { method: 'DELETE' }).t
 // are preserved, and trailing whitespace is trimmed.
 export const cleanScan = (raw) => (raw || "").toUpperCase().replace(/^[^A-Z0-9]+/, "").trimEnd();
 
+// ─── Feedback de escaneo (compartido por todos los flujos que escanean caja) ─
+// El operador mira la caja, no la pantalla: un aviso solo visual se pierde.
+// Beep con WebAudio (no requiere archivo) + vibración donde exista.
+//   ok   → un tono agudo corto
+//   dup  → DOS tonos medios (distinto de error, para que se reconozca de oído)
+//   error→ tono grave largo
+const SCAN_TONES = {
+  ok:    { pattern: [[880, 0.12]],                 vibrate: 60 },
+  dup:   { pattern: [[440, 0.10], [440, 0.10]],    vibrate: [60, 40, 60] },
+  error: { pattern: [[200, 0.35]],                 vibrate: [120, 60, 120] },
+};
+export const scanFeedback = (kind = 'ok') => {
+  const tone = SCAN_TONES[kind] || SCAN_TONES.ok;
+  try {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (Ctx) {
+      const ctx = new Ctx();
+      let at = ctx.currentTime;
+      tone.pattern.forEach(([hz, secs], i) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.connect(gain); gain.connect(ctx.destination);
+        osc.frequency.value = hz;
+        gain.gain.value = 0.08;
+        osc.start(at);
+        osc.stop(at + secs);
+        if (i === tone.pattern.length - 1) osc.onended = () => ctx.close();
+        at += secs + 0.06;
+      });
+    }
+  } catch { /* sin audio no pasa nada */ }
+  try { if (navigator.vibrate) navigator.vibrate(tone.vibrate); } catch { /* idem */ }
+};
+
+// Caja escaneada por segunda vez en el mismo flujo. REGLA: nunca se procesa
+// dos veces ni se deselecciona en silencio — se avisa igual en todos los
+// módulos (mismo texto, mismo color, mismo sonido). `t` es el traductor del
+// módulo que llama; el mensaje vive en i18n (`wms_scan_duplicate`).
+export const duplicateScan = (t, box) => {
+  toast.warning(t('wms_scan_duplicate', { box }));
+  scanFeedback('dup');
+};
+
 // ─── Error helpers — replace silent `catch {}` patterns ─────────────────────
 export const logLoadError = (what) => (err) => console.error(`[WMS] Failed to load ${what}:`, err);
 export const toastActionError = (what) => (err) => { console.error(`[WMS] ${what} failed:`, err); toast.error(`No se pudo ${what}`); };

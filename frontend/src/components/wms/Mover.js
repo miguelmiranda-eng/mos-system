@@ -5,7 +5,7 @@ import {
   CheckCircle2, RotateCcw, Search, X, Move, Tag, Scale, Printer,
 } from "lucide-react";
 import { useLang } from "../../contexts/LanguageContext";
-import { fetcher, poster, cleanScan, logLoadError, API, useWmsSizes, useWmsCatalogs, mergeUnique } from "./lib";
+import { fetcher, poster, cleanScan, logLoadError, API, useWmsSizes, useWmsCatalogs, mergeUnique, scanFeedback, duplicateScan } from "./lib";
 import SearchableSelect from "../SearchableSelect";
 import { adminLevelOf } from "./modules";
 import { ModuleToolbar, SoftAlert, Btn, Chip, EmptyState } from "./ui";
@@ -334,7 +334,10 @@ export function MoverModule({ currentUser }) {
     setSelectedBoxes(p => p.includes(id) ? p.filter(x => x !== id) : [...p, id]);
 
   // Scanning a box barcode in box mode. If the box belongs to the scanned origin
-  // we toggle it. If it lives elsewhere, we look it up and ask "move it anyway?"
+  // we SELECT it; a second scan of the same box warns "ya escaneada" instead of
+  // toggling it off (before, re-scanning silently dropped the box from the
+  // move — the operator never noticed). Deselecting is only by tapping the row.
+  // If it lives elsewhere, we look it up and ask "move it anyway?"
   // (relocate works from any source, rebalancing the box's real location).
   const boxScanRef = useRef(null);
   const clearBoxInput = () => { if (boxScanRef.current) boxScanRef.current.value = ""; };
@@ -343,22 +346,30 @@ export function MoverModule({ currentUser }) {
     if (!code) return;
     const here = contents.boxes.find(b => (b.box_id || "").toUpperCase() === code || (b.barcode || "").toUpperCase() === code);
     const already = foreignBoxes.find(b => (b.box_id || "").toUpperCase() === code || (b.barcode || "").toUpperCase() === code);
-    if (here) { toggleBox(here.box_id); clearBoxInput(); return; }
-    if (already) { toggleBox(already.box_id); clearBoxInput(); return; }
+    const found = here || already;
+    if (found) {
+      clearBoxInput();
+      if (selectedBoxes.includes(found.box_id)) { duplicateScan(t, found.box_id); return; }
+      setSelectedBoxes(p => p.includes(found.box_id) ? p : [...p, found.box_id]);
+      scanFeedback('ok');
+      return;
+    }
     // Not in this location — find where it actually is.
     setScanLookup(true);
     try {
       const box = await fetcher(`/boxes/${encodeURIComponent(code)}`);
       clearBoxInput();
-      if (!box || !box.box_id) { toast.error(t('wms_box_not_exists', { box: code })); return; }
+      if (!box || !box.box_id) { toast.error(t('wms_box_not_exists', { box: code })); scanFeedback('error'); return; }
       if ((box.location || "").toUpperCase() === origin.toUpperCase()) {
         addForeignBox(box); // belongs here but wasn't in the loaded list
+        scanFeedback('ok');
       } else {
         setPendingForeign(box); // ask before pulling it from another slot
       }
     } catch {
       clearBoxInput();
       toast.error(t('wms_box_not_found', { box: code }));
+      scanFeedback('error');
     } finally { setScanLookup(false); }
   };
 

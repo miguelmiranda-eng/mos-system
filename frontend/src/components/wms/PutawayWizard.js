@@ -5,7 +5,7 @@ import {
   Package, Eye, EyeOff, CheckCircle2, X, Boxes, ArrowRight,
 } from "lucide-react";
 import { useLang } from "../../contexts/LanguageContext";
-import { fetcher, poster, cleanScan, logLoadError } from "./lib";
+import { fetcher, poster, cleanScan, logLoadError, scanFeedback, duplicateScan } from "./lib";
 import { ModuleToolbar } from "./ui";
 
 const TRANSIT_LEGACY = "UBICACION TEMPORAL";
@@ -146,12 +146,13 @@ export function PutawayWizard() {
     const id = cleanScan(boxScan);
     if (!id) return;
     const box = cartBoxes.find(b => (b.box_id || "").toUpperCase() === id);
-    if (!box) { toast.error(t('wms_pw_box_not_in_cart', { box: id, cart: origin })); setBoxScan(""); return; }
-    setSelected(prev => {
-      if (prev.has(box.box_id)) { toast.info(t('wms_pw_box_already_in_batch', { box: box.box_id })); return prev; }
-      return new Set(prev).add(box.box_id);
-    });
+    if (!box) { toast.error(t('wms_pw_box_not_in_cart', { box: id, cart: origin })); scanFeedback('error'); setBoxScan(""); return; }
     setBoxScan("");
+    // Doble escaneo: se avisa igual que en todos los módulos, nunca se procesa
+    // dos veces. Se decide fuera del updater (que en dev corre dos veces).
+    if (selected.has(box.box_id)) { duplicateScan(t, box.box_id); return; }
+    setSelected(prev => new Set(prev).add(box.box_id));
+    scanFeedback('ok');
   };
 
   const selectAll = () => setSelected(new Set(cartBoxes.map(b => b.box_id)));

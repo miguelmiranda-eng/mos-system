@@ -4,7 +4,7 @@ import {
   Loader2, Search, X, MapPin, ChevronRight, CheckSquare, Square, ArrowRightLeft, Truck, Edit3, Save,
   ScanLine, AlertTriangle, ClipboardCheck, CheckCircle2, Plus,
 } from "lucide-react";
-import { fetcher, poster, putter, logLoadError, cleanScan } from "./lib";
+import { fetcher, poster, putter, logLoadError, cleanScan, scanFeedback, duplicateScan } from "./lib";
 import { useAuth } from "../../App";
 import { useLang } from "../../contexts/LanguageContext";
 import { PutawayWizard } from "./PutawayWizard";
@@ -272,16 +272,15 @@ export const TransitModule = () => {
     const box = boxes.find(b => (b.box_id || "").toUpperCase() === id);
     if (!box) {
       toast.error(t("wms_box_not_in_transit", { box: id }));
+      scanFeedback('error');
       setBoxScan("");
       return;
     }
-    setSelected(prev => {
-      if (prev.has(box.box_id)) { toast.info(t("wms_box_already_in_batch", { box: box.box_id })); return prev; }
-      const next = new Set(prev);
-      next.add(box.box_id);
-      return next;
-    });
     setBoxScan("");
+    // Doble escaneo: aviso uniforme (ver duplicateScan en lib.js), sin reprocesar.
+    if (selected.has(box.box_id)) { duplicateScan(t, box.box_id); return; }
+    setSelected(prev => new Set(prev).add(box.box_id));
+    scanFeedback('ok');
   };
 
   // "Terminar" — raise the warning before committing the move.

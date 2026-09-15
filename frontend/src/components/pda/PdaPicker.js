@@ -11,7 +11,7 @@ import { CommentsModal } from "../dashboard/CommentsModal";
 import { useLang } from "../../contexts/LanguageContext";
 // cleanScan se usaba en reportarCorrupto sin importarse (ReferenceError en
 // runtime al tocar "Reportar y continuar"); la definicion vive en wms/lib.
-import { cleanScan } from "../wms/lib";
+import { cleanScan, scanFeedback, duplicateScan } from "../wms/lib";
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api/wms`;
 const ORDERS_API = `${process.env.REACT_APP_BACKEND_URL}/api/orders`;
@@ -618,6 +618,12 @@ function PickScreen({ ticket, onSave, onPickSize, onRefresh, saving }) {
     const lpn = String(raw || "").trim();
     setBoxScan("");
     if (!lpn) return;
+    // Doble escaneo: se detecta ANTES de ir al backend, comparando contra el
+    // box_id y contra la etiqueta física con la que se escaneó la caja.
+    if (cart.some(it => norm(it.box_id) === norm(lpn) || norm(it.lpn) === norm(lpn))) {
+      duplicateScan(t, lpn);
+      return;
+    }
     try {
       const r = await fetch(`${API}/pick-tickets/${ticket.ticket_id}/scan-box`, {
         method: "POST", credentials: "include",
@@ -668,8 +674,8 @@ function PickScreen({ ticket, onSave, onPickSize, onRefresh, saving }) {
       return;
     }
     if (cart.some(it => it.box_id === box.box_id)) {
-      toast.error(t('pda_box_already_listed'));
-      if (navigator.vibrate) navigator.vibrate([60, 40, 60]);
+      // Doble escaneo: aviso uniforme del WMS (toast + doble beep + vibración).
+      duplicateScan(t, lpn || box.physical_lpn || box.box_id);
       return;
     }
     setActiveBox({
