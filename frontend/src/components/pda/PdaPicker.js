@@ -28,6 +28,16 @@ const norm = (s) => String(s || "").trim().toUpperCase();
 // box. Big touch targets, one ticket at a time.
 export default function PdaPicker() {
   const navigate = useNavigate();
+  // La PWA del surtido tiene su propio manifest (start_url /pda): instalarla
+  // desde esta pantalla abre directo el surtido, sin pasar por el shell del
+  // WMS (150 KB gz + WebSocket + badges) como hacía el manifest general.
+  useEffect(() => {
+    const link = document.querySelector('link[rel="manifest"]');
+    if (!link) return undefined;
+    const prev = link.getAttribute("href");
+    link.setAttribute("href", "/manifest-pda.json");
+    return () => { if (prev) link.setAttribute("href", prev); };
+  }, []);
   const { user, logout } = useAuth();
   const { t, lang, toggleLang } = useLang();
   // loadTickets es un useCallback sin deps (dispara la carga inicial): lee el

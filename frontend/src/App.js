@@ -672,11 +672,11 @@ const LandingPage = () => {
   );
 };
 
-// HomeDashboard stays eager: it's the first screen after login, so lazy-loading
-// it would only add a spinner flash. Every other route module is code-split with
-// React.lazy so a given role downloads only the chunks it actually visits instead
-// of the whole ~928KB main bundle.
-import HomeDashboard from "./components/HomeDashboard";
+// HomeDashboard también va en lazy: arrastraba GlobalColumnManager,
+// FormulaEditor, NewOrderForm y ui/select al bundle inicial, y la PDA de
+// surtido (/pda) y el WMS los descargaban sin usarlos. El "spinner flash" al
+// entrar a la oficina lo cubre el mismo Suspense que ya envuelve las rutas.
+const HomeDashboard = lazy(() => import("./components/HomeDashboard"));
 const Dashboard = lazy(() => import("./components/Dashboard"));
 const WMS = lazy(() => import("./components/WMS"));
 const OperatorView = lazy(() => import("./components/OperatorView"));

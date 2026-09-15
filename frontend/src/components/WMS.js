@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef, lazy, Suspense } from "react";
 import { useNavigate } from "react-router-dom";
 import { Toaster, toast } from "sonner";
 import {
@@ -8,7 +8,6 @@ import {
   Camera,
 } from "lucide-react";
 
-import InventoryDashboard from "./InventoryDashboard";
 import OrderHistoryModal from "./OrderHistoryModal";
 import { useLang } from "../contexts/LanguageContext";
 import { useTheme } from "../contexts/ThemeContext";
@@ -17,26 +16,32 @@ import { DropsLoader } from "./wms/DropsLoader";
 import { useWmsWebSocket } from "./wms/useWmsWebSocket";
 import { BoxSearchBar } from "./wms/BoxSearch";
 import { BoxStatus, TicketStatus, CycleCountStatus } from "./wms/constants";
-import { HomeModule } from "./wms/Home";
-import { ReceivingModule } from "./wms/Receiving";
-import { PutawayModule } from "./wms/Putaway";
-import { InventoryModule } from "./wms/Inventory";
-import { AgingModule } from "./wms/Aging";
-import { LocationsModule } from "./wms/Locations";
-import { PickingModule } from "./wms/Picking";
-import { NeckCuttingModule } from "./wms/NeckCutting";
-import { FinishedGoodsModule } from "./wms/FinishedGoods";
-import { MovementsModule } from "./wms/Movements";
-import { CycleCountModule } from "./wms/CycleCount";
-import { DirectedWorkModule } from "./wms/DirectedWork";
-import { AsnModule } from "./wms/Asn";
-import { TransitModule } from "./wms/Transit";
-import { MoverModule } from "./wms/Mover";
-import { AuditModule } from "./wms/Audit";
-import { TrazabilidadModule } from "./wms/Trazabilidad";
-import { ReconciliationModule } from "./wms/Reconciliation";
-import IncidentsModule from "./wms/Incidents";
-import ReportsModule from "./wms/Reports";
+// Cada módulo es un chunk propio (React.lazy): el shell del WMS pesaba 150 KB gz
+// porque traía los 25 módulos (con xlsx incluido) aunque el usuario solo fuera
+// a Receiving o al launcher del picker. Ahora se descarga el módulo que se abre.
+// Los que exportan con nombre se adaptan a `default` en el import().
+const named = (loader, name) => lazy(() => loader().then(m => ({ default: m[name] })));
+const InventoryDashboard  = lazy(() => import("./InventoryDashboard"));
+const HomeModule          = named(() => import("./wms/Home"), "HomeModule");
+const ReceivingModule     = named(() => import("./wms/Receiving"), "ReceivingModule");
+const PutawayModule       = named(() => import("./wms/Putaway"), "PutawayModule");
+const InventoryModule     = named(() => import("./wms/Inventory"), "InventoryModule");
+const AgingModule         = named(() => import("./wms/Aging"), "AgingModule");
+const LocationsModule     = named(() => import("./wms/Locations"), "LocationsModule");
+const PickingModule       = named(() => import("./wms/Picking"), "PickingModule");
+const NeckCuttingModule   = named(() => import("./wms/NeckCutting"), "NeckCuttingModule");
+const FinishedGoodsModule = named(() => import("./wms/FinishedGoods"), "FinishedGoodsModule");
+const MovementsModule     = named(() => import("./wms/Movements"), "MovementsModule");
+const CycleCountModule    = named(() => import("./wms/CycleCount"), "CycleCountModule");
+const DirectedWorkModule  = named(() => import("./wms/DirectedWork"), "DirectedWorkModule");
+const AsnModule           = named(() => import("./wms/Asn"), "AsnModule");
+const TransitModule       = named(() => import("./wms/Transit"), "TransitModule");
+const MoverModule         = named(() => import("./wms/Mover"), "MoverModule");
+const AuditModule         = named(() => import("./wms/Audit"), "AuditModule");
+const TrazabilidadModule  = named(() => import("./wms/Trazabilidad"), "TrazabilidadModule");
+const ReconciliationModule = named(() => import("./wms/Reconciliation"), "ReconciliationModule");
+const IncidentsModule     = lazy(() => import("./wms/Incidents"));
+const ReportsModule       = lazy(() => import("./wms/Reports"));
 import { TopNav, LangToggle } from "./wms/TopNav";
 import { buildModules, filterModules, groupModules, badgeOf } from "./wms/modules";
 
@@ -426,7 +431,9 @@ export default function WMS() {
             </button>
           </header>
           <main className="flex-1 overflow-auto custom-scrollbar p-3 sm:p-6">
-            <InventoryDashboard customer={associatedCustomer} apiBase={API} />
+            <Suspense fallback={<DropsLoader label={t('wms_loading_module')} />}>
+              <InventoryDashboard customer={associatedCustomer} apiBase={API} />
+            </Suspense>
           </main>
         </div>
       </WmsContext.Provider>
@@ -632,7 +639,9 @@ export default function WMS() {
             gotas tapan hasta que el contenido está disponible. */}
         <div className="p-3 sm:p-6 pt-2 relative">
           <div key={currentUser.role === 'customer' ? 'dashboard' : activeModule} className="animate-in fade-in duration-200">
-            {renderActiveModule(currentUser.role === 'customer' ? 'dashboard' : activeModule, { associatedCustomer, setActiveModule, currentUser })}
+            <Suspense fallback={<DropsLoader label={t('wms_loading_module')} />}>
+              {renderActiveModule(currentUser.role === 'customer' ? 'dashboard' : activeModule, { associatedCustomer, setActiveModule, currentUser })}
+            </Suspense>
           </div>
           {moduleSwitching && (
             <div className="absolute inset-0 z-20 bg-background flex items-start justify-center animate-in fade-in duration-100">
