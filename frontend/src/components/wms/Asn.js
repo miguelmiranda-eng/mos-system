@@ -193,7 +193,7 @@ export const AsnModule = ({ currentUser }) => {
   const gridHeaders = [
     { key: 'part_number', label: 'Style / Part #' }, { key: 'color', label: t('wms_label_color') },
     { key: 'size', label: t('wms_label_size') }, { key: 'country', label: t('wms_country') },
-    { key: 'fabric', label: 'Fabric' }, { key: 'qty_expected', label: t('quantity'), right: true },
+    { key: 'fabric', label: 'Fabric' }, { key: 'qty_expected', label: t('quantity') },
     ...asnCols.map(c => ({ key: c.key, label: c.label, custom: true })),
   ];
   const [gridW, setGridW] = useState(loadGridWidths);
@@ -737,8 +737,8 @@ export const AsnModule = ({ currentUser }) => {
                 <tr>
                   <th className="px-2 py-2 text-center text-xs font-semibold text-muted-foreground">#</th>
                   {gridHeaders.map(h => (
-                    <th key={h.key} className={`relative px-2 py-2 text-xs font-semibold text-muted-foreground whitespace-nowrap overflow-hidden text-ellipsis ${h.right ? 'text-right' : 'text-left'}`} title={h.label}>
-                      <span className="inline-flex items-center gap-1 max-w-full">
+                    <th key={h.key} className="relative px-2 py-2 text-xs font-semibold text-muted-foreground whitespace-nowrap overflow-hidden text-ellipsis text-center" title={h.label}>
+                      <span className="inline-flex items-center justify-center gap-1 max-w-full">
                         <span className="truncate">{h.label}</span>
                         {h.custom && isSupersu && (
                           <button onClick={() => removeAsnColumn(h.key)} className="p-0.5 rounded text-muted-foreground/60 hover:text-destructive hover:bg-destructive/10 flex-shrink-0" title={t('wms_remove_column')}>
