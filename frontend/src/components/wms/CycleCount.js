@@ -103,6 +103,37 @@ export const CycleCountModule = () => {
   // por el piso al toparse con una caja no confiable.
   const [cuarentena, setCuarentena] = useState(null);
   const [loadingCuar, setLoadingCuar] = useState(false);
+  // ── Tareas: Location Check (el picker no encontró una caja) ─────────────
+  const [lcItems, setLcItems] = useState(null);
+  const [lcOpenCount, setLcOpenCount] = useState(0);
+  const [lcShowResolved, setLcShowResolved] = useState(false);
+  const [loadingLc, setLoadingLc] = useState(false);
+  const [lcResolve, setLcResolve] = useState(null); // { check, resolution, note }
+  const loadLocationChecks = useCallback(async (showResolved = false) => {
+    setLoadingLc(true);
+    try {
+      const d = await fetcher(`/location-checks?status=${showResolved ? 'all' : 'open'}&limit=300`);
+      setLcItems(d.items || []);
+      setLcOpenCount(d.open_count || 0);
+    } catch (e) { logLoadError('location checks')(e); setLcItems([]); }
+    finally { setLoadingLc(false); }
+  }, []);
+  // El contador de la pestaña se conoce desde que abre el módulo.
+  useEffect(() => {
+    fetcher('/location-checks?status=open&limit=1').then(d => setLcOpenCount(d?.open_count || 0)).catch(() => {});
+  }, []);
+  const submitLcResolve = async () => {
+    if (!lcResolve) return;
+    try {
+      const res = await poster(`/location-checks/${encodeURIComponent(lcResolve.check.check_id)}/resolve`, { resolution: lcResolve.resolution, note: lcResolve.note || '' });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) { toast.error(d.detail || t('wms_lc_resolve_err')); return; }
+      toast.success(t('wms_lc_resolved'));
+      setLcResolve(null);
+      loadLocationChecks(lcShowResolved);
+    } catch { toast.error(t('wms_lc_resolve_err')); }
+  };
+
   const loadCuarentena = useCallback(async () => {
     setLoadingCuar(true);
     try {
@@ -1258,6 +1289,21 @@ export const CycleCountModule = () => {
               {t('wms_cc_tab_efficiency')}
             </button>
           )}
+          {/* Tareas: Location Check. Las crea el picker desde la PDA cuando no
+              encuentra una caja en su ubicación; inventarios las cierra aquí. */}
+          <button
+            onClick={() => { setActiveTab('tasks'); if (lcItems === null && !loadingLc) loadLocationChecks(lcShowResolved); }}
+            className={`flex items-center gap-2 px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${activeTab === 'tasks' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+            data-testid="cc-tab-tasks"
+          >
+            <ClipboardList className="w-4 h-4" />
+            {t('wms_cc_tab_tasks')}
+            {lcOpenCount > 0 && (
+              <span className="px-1.5 py-0.5 rounded-full bg-red-500 text-white text-[10px] font-bold tabular-nums">
+                {lcOpenCount}
+              </span>
+            )}
+          </button>
           {/* Cola de auditoría del material de la carga inicial. La llena el
               piso: cada vez que un operador se topa con una caja no confiable
               reporta su ubicación, y aquí se ve ordenada por cuánto estorba. */}
@@ -1888,6 +1934,107 @@ export const CycleCountModule = () => {
                 </div>
               )}
             </>
+          )}
+        </div>
+      )}
+
+      {activeTab === 'tasks' && (
+        <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-300" data-testid="cc-tasks">
+          <div className="rounded-lg border border-blue-500/30 bg-blue-500/5 p-4">
+            <div className="flex items-center gap-2 text-blue-600 dark:text-blue-400 font-semibold text-sm">
+              <ClipboardList className="w-4 h-4" /> {t('wms_lc_title')}
+            </div>
+            <p className="text-xs text-muted-foreground mt-1.5 leading-relaxed">{t('wms_lc_desc')}</p>
+          </div>
+          <div className="flex items-center gap-3 flex-wrap">
+            <Btn variant="secondary" onClick={() => loadLocationChecks(lcShowResolved)} disabled={loadingLc}>
+              {loadingLc ? t('loading') : t('wms_refresh')}
+            </Btn>
+            <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer">
+              <input type="checkbox" checked={lcShowResolved} onChange={e => { setLcShowResolved(e.target.checked); loadLocationChecks(e.target.checked); }} className="accent-primary" />
+              {t('wms_lc_show_resolved')}
+            </label>
+            <span className="text-xs text-muted-foreground">{t('wms_lc_open_n', { n: lcOpenCount })}</span>
+          </div>
+          {loadingLc && lcItems === null ? (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground p-6"><Loader2 className="w-4 h-4 animate-spin" /> {t('loading')}</div>
+          ) : !lcItems?.length ? (
+            <EmptyState art="done" title={t('wms_lc_empty_title')} subtitle={t('wms_lc_empty_sub')} />
+          ) : (
+            <div className="overflow-x-auto rounded-lg border border-border">
+              <table className="w-full text-sm" data-testid="cc-tasks-table">
+                <thead className="bg-muted/40">
+                  <tr>
+                    <Th>{t('status')}</Th>
+                    <Th>{t('location')}</Th>
+                    <Th>{t('wms_box')}</Th>
+                    <Th>{t('wms_audit_col_product')}</Th>
+                    <Th className="text-right">{t('wms_label_pieces')}</Th>
+                    <Th>{t('wms_audit_col_reference')}</Th>
+                    <Th>{t('wms_lc_reported')}</Th>
+                    <Th>{t('wms_cc_action')}</Th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {lcItems.map(it => {
+                    const open = it.status === 'open';
+                    return (
+                      <tr key={it.check_id} className={`border-t border-border/60 hover:bg-muted/20 ${open ? '' : 'opacity-70'}`} data-testid="cc-task-row">
+                        <td className="px-3 py-2">
+                          {open
+                            ? <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-red-500/15 text-red-500">{t('wms_lc_st_open')}</span>
+                            : <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-emerald-500/15 text-emerald-500" title={it.resolution_note || ''}>{t(`wms_lc_res_${it.resolution}`)}</span>}
+                        </td>
+                        <td className="px-3 py-2 font-mono font-semibold">{it.location}</td>
+                        <td className="px-3 py-2 font-mono">{it.box_id || <span className="text-muted-foreground italic">{t('wms_lc_no_box')}</span>}</td>
+                        <td className="px-3 py-2">
+                          <div className="font-medium">{[it.style, it.color, it.size].filter(Boolean).join(' · ') || '—'}</div>
+                          {it.customer && <div className="text-xs text-muted-foreground">{it.customer}</div>}
+                        </td>
+                        <td className="px-3 py-2 text-right tabular-nums">{it.expected_units || '—'}</td>
+                        <td className="px-3 py-2 text-xs">
+                          <div className="flex flex-wrap gap-1">
+                            {it.order_number && <span className="px-1.5 py-0.5 rounded bg-muted border border-border font-mono" title={t('wms_audit_col_order')}>{it.order_number}</span>}
+                            {it.ticket_id && <span className="px-1.5 py-0.5 rounded bg-muted border border-border font-mono" title="Ticket">{it.ticket_id}</span>}
+                          </div>
+                        </td>
+                        <td className="px-3 py-2 text-xs text-muted-foreground">
+                          <div>{(it.created_at || '').slice(0, 16).replace('T', ' ')} · {it.reported_by_name}</div>
+                          {(it.reports || 1) > 1 && <div className="text-amber-600 dark:text-amber-400 font-semibold">{t('wms_lc_reports_n', { n: it.reports })}</div>}
+                          {it.note && <div className="italic truncate max-w-[220px]" title={it.note}>“{it.note}”</div>}
+                          {!open && <div>{t('wms_lc_resolved_by', { who: it.resolved_by_name || '—', when: (it.resolved_at || '').slice(0, 16).replace('T', ' ') })}</div>}
+                        </td>
+                        <td className="px-3 py-2">
+                          {open ? (
+                            <div className="flex flex-wrap gap-1">
+                              <Btn variant="secondary" onClick={() => setLcResolve({ check: it, resolution: 'found', note: '' })} data-testid={`cc-task-found-${it.check_id}`}>{t('wms_lc_res_found')}</Btn>
+                              <Btn variant="secondary" onClick={() => setLcResolve({ check: it, resolution: 'relocated', note: '' })}>{t('wms_lc_res_relocated')}</Btn>
+                              <Btn variant="secondary" onClick={() => setLcResolve({ check: it, resolution: 'missing', note: '' })}>{t('wms_lc_res_missing')}</Btn>
+                              <Btn variant="secondary" onClick={() => { setForm(f => ({ ...f, name: t('wms_cc_audit_name', { loc: it.location }), location_filter: it.location, include_empty: true })); setActiveTab('active'); setShowForm(true); }}>{t('wms_create_cc')}</Btn>
+                            </div>
+                          ) : <span className="text-xs text-muted-foreground">—</span>}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {lcResolve && (
+            <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/50 p-4" onClick={() => setLcResolve(null)}>
+              <div className="bg-card border border-border rounded-xl shadow-2xl w-full max-w-md p-5 space-y-3" onClick={e => e.stopPropagation()} data-testid="cc-task-resolve">
+                <div className="font-semibold">{t('wms_lc_resolve_title', { loc: lcResolve.check.location, box: lcResolve.check.box_id || t('wms_lc_no_box') })}</div>
+                <div className="text-sm">{t('wms_lc_resolve_as')}: <b>{t(`wms_lc_res_${lcResolve.resolution}`)}</b></div>
+                <p className="text-xs text-muted-foreground">{t(`wms_lc_hint_${lcResolve.resolution}`)}</p>
+                <textarea value={lcResolve.note} onChange={e => setLcResolve(r => ({ ...r, note: e.target.value }))} placeholder={t('wms_lc_note_ph')} rows={3}
+                  className="w-full px-3 py-2 bg-background border border-input rounded-md text-sm focus:outline-none focus:border-primary" data-testid="cc-task-note" />
+                <div className="flex justify-end gap-2">
+                  <Btn onClick={() => setLcResolve(null)}>{t('cancel')}</Btn>
+                  <Btn variant="primary" onClick={submitLcResolve} data-testid="cc-task-confirm">{t('wms_lc_confirm')}</Btn>
+                </div>
+              </div>
+            </div>
           )}
         </div>
       )}

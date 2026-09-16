@@ -764,6 +764,99 @@ async def list_incidents(request: Request, kind: str = "", days: int = 30,
     }
 
 
+# ==================== LOCATION CHECK (tarea de revisión de ubicación) ====================
+# Problema: el picker no encuentra una caja en su ubicación y se lo dice a
+# inventarios de palabra. Ahora lo declara desde la PDA y el WMS crea una
+# tarea "Location Check" que inventarios ve en Conteo cíclico → Tareas y
+# cierra con una resolución (encontrada / reubicada / no está → baja / otro).
+LOCATION_CHECK_RESOLUTIONS = {"found", "relocated", "missing", "other"}
+
+
+@router.post("/location-checks")
+async def create_location_check(request: Request):
+    """La PDA (o cualquier usuario) declara que no encuentra una caja en una
+    ubicación. Si ya hay una revisión ABIERTA para la misma ubicación + caja
+    no se duplica: se suma el reporte (contador + quién) y se devuelve la
+    misma tarea, para que inventarios vea cuántas veces ha estorbado."""
+    user = await require_auth(request)
+    body = await request.json()
+    location = str(body.get("location") or "").strip().upper()
+    if not location:
+        raise HTTPException(400, "location requerido")
+    box_id = str(body.get("box_id") or "").strip().upper()
+    who = user.get("name") or user.get("email") or user.get("user_id") or ""
+    now = now_iso()
+    existing = await db.wms_location_checks.find_one(
+        {"status": "open", "location": location, "box_id": box_id}, {"_id": 0})
+    if existing:
+        await db.wms_location_checks.update_one(
+            {"check_id": existing["check_id"]},
+            {"$inc": {"reports": 1}, "$set": {"last_reported_at": now, "last_reported_by": who},
+             "$addToSet": {"reporters": who}})
+        existing["reports"] = int(existing.get("reports") or 1) + 1
+        return {"created": False, "check": existing}
+    box = await db.wms_boxes.find_one({"box_id": box_id}, {"_id": 0}) if box_id else None
+    check = {
+        "check_id": gen_id("lc"), "kind": "location_check", "status": "open",
+        "location": location, "box_id": box_id,
+        "style": str(body.get("style") or (box or {}).get("style") or "").strip().upper(),
+        "color": str(body.get("color") or (box or {}).get("color") or "").strip().upper(),
+        "size": str(body.get("size") or (box or {}).get("size") or "").strip().upper(),
+        "customer": str(body.get("customer") or (box or {}).get("customer") or "").strip().upper(),
+        "expected_units": int(body.get("expected_units") or (box or {}).get("units") or 0),
+        "ticket_id": str(body.get("ticket_id") or "").strip(),
+        "order_number": str(body.get("order_number") or "").strip(),
+        "note": str(body.get("note") or "").strip(),
+        "reported_by": user.get("user_id"), "reported_by_name": who, "reporters": [who],
+        "reports": 1, "created_at": now, "last_reported_at": now, "last_reported_by": who,
+    }
+    await db.wms_location_checks.insert_one(check)
+    check.pop("_id", None)
+    await log_movement(user, "location_check_created", {
+        "check_id": check["check_id"], "location": location, "box_id": box_id,
+        "style": check["style"], "color": check["color"], "size": check["size"],
+        "ticket_id": check["ticket_id"], "order_number": check["order_number"], "note": check["note"],
+    })
+    return {"created": True, "check": check}
+
+
+@router.get("/location-checks")
+async def list_location_checks(request: Request, status: str = "open", limit: int = 200):
+    """Tareas de revisión de ubicación. status = open | resolved | all."""
+    await require_auth(request)
+    q = {}
+    if status in ("open", "resolved"):
+        q["status"] = status
+    items = await db.wms_location_checks.find(q, {"_id": 0}).sort("created_at", -1).to_list(max(1, min(int(limit or 200), 1000)))
+    open_count = await db.wms_location_checks.count_documents({"status": "open"})
+    return {"items": items, "open_count": open_count}
+
+
+@router.post("/location-checks/{check_id}/resolve")
+async def resolve_location_check(check_id: str, request: Request):
+    """Inventarios cierra la tarea con lo que encontró. No mueve ni da de baja
+    inventario por sí mismo: la caja se reubica con Mover o se da de baja con
+    los flujos de siempre (y quedan en Auditoría); aquí solo queda el veredicto."""
+    user = await require_inventory_level(request, 1)
+    body = await request.json() if await request.body() else {}
+    resolution = str(body.get("resolution") or "").strip().lower()
+    if resolution not in LOCATION_CHECK_RESOLUTIONS:
+        raise HTTPException(400, f"resolution debe ser uno de {sorted(LOCATION_CHECK_RESOLUTIONS)}")
+    who = user.get("name") or user.get("email") or user.get("user_id") or ""
+    res = await db.wms_location_checks.find_one_and_update(
+        {"check_id": check_id, "status": "open"},
+        {"$set": {"status": "resolved", "resolution": resolution, "resolution_note": str(body.get("note") or "").strip(),
+                  "resolved_at": now_iso(), "resolved_by": user.get("user_id"), "resolved_by_name": who}},
+        projection={"_id": 0}, return_document=ReturnDocument.AFTER)
+    if not res:
+        raise HTTPException(404, "Revisión no encontrada o ya resuelta")
+    await log_movement(user, "location_check_resolved", {
+        "check_id": check_id, "location": res.get("location"), "box_id": res.get("box_id"),
+        "resolution": resolution, "note": res.get("resolution_note"), "reports": res.get("reports"),
+    })
+    return {"message": "Revisión resuelta", "check": res}
+
+
 @router.post("/incidents/{incident_id}/resolve")
 async def resolve_incident(incident_id: str, request: Request):
     """Marca una incidencia como atendida. Acceso configurable (default: solo
@@ -3350,13 +3443,17 @@ async def get_badges(request: Request):
         db.wms_boxes.count_documents({"status": {"$in": ["received", "putaway_pending"]}, "units": {"$gt": 0}}),
         db.wms_pick_tickets.count_documents({"status": "pending"}),
         db.wms_cycle_counts.count_documents({"status": "in_progress"}),
-        db.wms_pick_tickets.count_documents({"status": "in_neck_cutting"})
+        db.wms_pick_tickets.count_documents({"status": "in_neck_cutting"}),
+        db.wms_location_checks.count_documents({"status": "open"}),
     )
     return {
         "putaway": counts[0],
         "picking": counts[1],
-        "cycle_count": counts[2],
-        "neck_cutting": counts[3]
+        # Conteo cíclico: conteos en curso + tareas Location Check abiertas
+        # (las dos son trabajo pendiente de inventarios en ese módulo).
+        "cycle_count": counts[2] + counts[4],
+        "neck_cutting": counts[3],
+        "location_checks": counts[4],
     }
 
 # ==================== BOXES ====================

@@ -62,6 +62,8 @@ export const MV_TYPE_KEYS = {
   phantom_scan: "wms_mvt_phantom_scan",
   incident_reported: "wms_mvt_incident_reported",
   manual_correction: "wms_mvt_manual_correction",
+  location_check_created: "wms_mvt_location_check_created",
+  location_check_resolved: "wms_mvt_location_check_resolved",
 };
 
 // Etiqueta legible de un tipo de movimiento; los tipos sin traducción (hay

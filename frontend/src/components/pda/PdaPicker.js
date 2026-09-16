@@ -429,6 +429,34 @@ function PickScreen({ ticket, onSave, onPickBoxes, onRefresh, saving }) {
   // el operador igual debe escanear cada una). Fuente para seleccionar LPN a mano.
   const [locBoxes, setLocBoxes] = useState([]);
   const [locBoxesLoading, setLocBoxesLoading] = useState(false);
+  // "No encuentro la caja": el picker lo declara aquí y el WMS crea la tarea
+  // Location Check que inventarios ve en Conteo cíclico → Tareas. Antes se
+  // avisaba de palabra y nadie lo registraba.
+  const [lcOpen, setLcOpen] = useState(false);
+  const [lcBox, setLcBox] = useState('');      // box_id elegido, '' = ninguna / ubicación vacía
+  const [lcNote, setLcNote] = useState('');
+  const [lcSending, setLcSending] = useState(false);
+  const reportLocationCheck = async () => {
+    if (!activeLocation || lcSending) return;
+    setLcSending(true);
+    try {
+      const box = locBoxes.find(b => b.box_id === lcBox);
+      const r = await fetch(`${API}/location-checks`, {
+        method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          location: activeLocation.location, box_id: lcBox || '',
+          style: box?.style || ticket.style || '', color: box?.color || ticket.color || '', size: box?.size || activeSize || '',
+          customer: ticket.customer || '', expected_units: box?.units || 0,
+          ticket_id: ticket.ticket_id, order_number: ticket.order_number || '', note: lcNote,
+        }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) { toast.error(d.detail || t('ceo_err_connection')); return; }
+      toast.success(d.created ? t('pda_lc_sent', { loc: activeLocation.location }) : t('pda_lc_exists', { loc: activeLocation.location }));
+      setLcOpen(false); setLcBox(''); setLcNote('');
+    } catch { toast.error(t('ceo_err_connection')); }
+    finally { setLcSending(false); }
+  };
 
   // Inputs de scan por stage
   const locScanRef = useRef(null);
@@ -1054,6 +1082,45 @@ function PickScreen({ ticket, onSave, onPickBoxes, onRefresh, saving }) {
                     </div>
                   );
                 })}
+              </div>
+            )}
+          </div>
+
+          {/* No encuentro la caja → tarea Location Check para inventarios */}
+          <div className="rounded-2xl border border-amber-500/30 bg-amber-500/5 overflow-hidden" data-testid="pda-lc">
+            {!lcOpen ? (
+              <button type="button" onClick={() => setLcOpen(true)}
+                className="w-full px-3 py-2.5 flex items-center gap-2 text-amber-300 text-xs font-black uppercase tracking-widest active:bg-amber-500/10"
+                data-testid="pda-lc-open">
+                <AlertTriangle className="w-4 h-4 shrink-0" /> {t('pda_lc_btn')}
+              </button>
+            ) : (
+              <div className="p-3 space-y-2">
+                <div className="text-[10px] font-black uppercase tracking-widest text-amber-300">{t('pda_lc_which')}</div>
+                <div className="space-y-1 max-h-40 overflow-auto">
+                  {locBoxes.map(b => (
+                    <label key={b.box_id} className={`flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs ${lcBox === b.box_id ? 'bg-amber-500/20 text-amber-100' : 'bg-black/20 text-slate-300'}`}>
+                      <input type="radio" name="lc-box" checked={lcBox === b.box_id} onChange={() => setLcBox(b.box_id)} className="accent-amber-400" />
+                      <span className="font-mono flex-1 truncate">{b.box_id}</span>
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/5">{b.size}</span>
+                      <span className="font-mono tabular-nums">{b.units}</span>
+                    </label>
+                  ))}
+                  <label className={`flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs ${lcBox === '' ? 'bg-amber-500/20 text-amber-100' : 'bg-black/20 text-slate-300'}`}>
+                    <input type="radio" name="lc-box" checked={lcBox === ''} onChange={() => setLcBox('')} className="accent-amber-400" />
+                    <span className="flex-1">{t('pda_lc_none')}</span>
+                  </label>
+                </div>
+                <input value={lcNote} onChange={e => setLcNote(e.target.value)} placeholder={t('pda_lc_note')}
+                  className="w-full px-3 py-2 rounded-lg bg-black/30 border border-white/10 text-sm text-white placeholder:text-slate-500"
+                  data-testid="pda-lc-note" />
+                <div className="flex gap-2">
+                  <button type="button" onClick={() => { setLcOpen(false); setLcBox(''); setLcNote(''); }}
+                    className="flex-1 px-3 py-2.5 rounded-xl border border-white/10 text-xs font-black uppercase tracking-widest text-slate-300">{t('cancel')}</button>
+                  <button type="button" onClick={reportLocationCheck} disabled={lcSending}
+                    className="flex-1 px-3 py-2.5 rounded-xl bg-amber-500 text-black text-xs font-black uppercase tracking-widest disabled:opacity-50"
+                    data-testid="pda-lc-send">{lcSending ? '…' : t('pda_lc_send')}</button>
+                </div>
               </div>
             )}
           </div>
