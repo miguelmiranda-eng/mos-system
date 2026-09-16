@@ -1,31 +1,12 @@
 import { useState, useRef } from "react";
 import { createPortal } from "react-dom";
 import { toast } from "sonner";
-import { ScanLine, X, Loader2, MapPin, Package, History, AlertTriangle, Printer, FileText } from "lucide-react";
+import { ScanLine, X, Loader2, MapPin, Package, History, AlertTriangle, Printer, FileText, Boxes } from "lucide-react";
 import { useLang } from "../../contexts/LanguageContext";
 import { fetcher, cleanScan, API, useWms } from "./lib";
 import { Chip } from "./ui";
+import { MV_TYPE_KEYS } from "./movementTypes";
 
-// Friendly labels (i18n keys) for the movement types a box's timeline can surface.
-const MV_TYPE_KEYS = {
-  receiving: "wms_mv_receiving", receiving_update: "wms_bs_mv_receiving_update",
-  putaway: "wms_bs_mv_putaway", putaway_bulk: "wms_bs_mv_putaway_bulk",
-  box_edited: "wms_bs_mv_box_edited", box_deleted: "wms_bs_mv_box_deleted",
-  inventory_adjust_box: "wms_bs_mv_inventory_adjust_box", lpn_reconciled: "wms_bs_mv_lpn_reconciled",
-  bulk_relocation: "wms_bs_mv_bulk_relocation", transit_relocation: "wms_bs_mv_transit_relocation",
-  edit_finished_good: "wms_bs_mv_edit_finished_good", production_move: "wms_bs_mv_production_move",
-  shipment: "wms_mv_shipment", allocation: "wms_bs_mv_allocation", deallocate: "wms_mv_deallocate",
-  pick_ticket_created: "wms_bs_mv_pick_ticket_created", pick_confirmed: "wms_bs_mv_pick_confirmed",
-  pick_progress: "wms_bs_mv_pick_progress", neck_cut_delivery: "wms_bs_mv_neck_cut_delivery",
-  manual_inventory_add: "wms_bs_mv_manual_inventory_add", manual_inventory_remove: "wms_bs_mv_manual_inventory_remove",
-  // Faltaban: sin ellos el descuento por surtido (el evento que baja las piezas
-  // de la caja al surtir una orden) salía como chip crudo "pick deduction", y el
-  // resto de eventos de conteo/generación sin etiqueta legible.
-  pick_deduction: "wms_bs_mv_pick_deduction", exit_to_production: "wms_bs_mv_exit_to_production",
-  cycle_count_shrink: "wms_bs_mv_cycle_count_shrink", cycle_count_manual_discard: "wms_bs_mv_cycle_count_manual_discard",
-  cycle_count_manual_create: "wms_bs_mv_cycle_count_manual_create", cycle_count_bind_box: "wms_bs_mv_cycle_count_bind_box",
-  box_generated: "wms_bs_mv_box_generated", box_style_restored: "wms_bs_mv_box_style_restored",
-};
 
 // CÓMO se disparó una reubicación (details.trigger). Desambigua el `type`
 // compartido: "Reubicación masiva" puede ser un barrido de ubicación ENTERA
@@ -115,20 +96,27 @@ export function BoxSearchBar({ compact = false }) {
   const [code, setCode] = useState("");
   const [open, setOpen] = useState(false);
   const [data, setData] = useState(null);
+  // Ubicación escaneada (GET /locations/lookup): cajas y unidades en stock,
+  // desglose por producto y lista de cajas. Excluyente con `data`.
+  const [loc, setLoc] = useState(null);
   const [loading, setLoading] = useState(false);
   const inputRef = useRef(null);
   // Salto al detalle de la entrada (lo provee WMS.js; en otros hosts es null).
   const { openAsn } = useWms();
 
-  const search = async (e) => {
-    e?.preventDefault();
-    const q = cleanScan(code);
-    if (!q) return;
+  // Orden de resolución: primero caja (el 99 % de los escaneos, sin costo
+  // extra); si la caja no existe, ubicación (la etiqueta de ubicación codifica
+  // el nombre); si tampoco, la vista de "caja borrada" con su historial.
+  const lookup = async (q) => {
     setOpen(true);
     setLoading(true);
-    setData(null);
+    setData(null); setLoc(null);
     try {
       const res = await fetcher(`/boxes/${encodeURIComponent(q)}/history`);
+      if (!res?.found) {
+        const l = await fetcher(`/locations/lookup?code=${encodeURIComponent(q)}`).catch(() => null);
+        if (l?.found) { setLoc(l); return; }
+      }
       setData(res);
     } catch {
       setData(null);
@@ -137,8 +125,16 @@ export function BoxSearchBar({ compact = false }) {
       setLoading(false);
     }
   };
+  const search = async (e) => {
+    e?.preventDefault();
+    const q = cleanScan(code);
+    if (!q) return;
+    await lookup(q);
+  };
+  // Desde el panel de ubicación: abrir el historial de una de sus cajas.
+  const openBox = (id) => { setCode(id); lookup(id); };
 
-  const close = () => { setOpen(false); setData(null); setCode(""); };
+  const close = () => { setOpen(false); setData(null); setLoc(null); setCode(""); };
 
   return (
     <>
@@ -172,7 +168,7 @@ export function BoxSearchBar({ compact = false }) {
             className="bg-card border border-border rounded-lg w-full max-w-2xl max-h-[80vh] flex flex-col shadow-xl animate-in zoom-in-95 duration-150">
             <div className="flex items-center justify-between p-4 border-b border-border/20">
               <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
-                <Package className="w-4 h-4 text-muted-foreground" /> {t("wms_bs_box_lpn")}
+                {loc ? <MapPin className="w-4 h-4 text-muted-foreground" /> : <Package className="w-4 h-4 text-muted-foreground" />} {loc ? t("wms_bs_location") : t("wms_bs_box_lpn")}
               </div>
               <button onClick={close} className="p-1.5 hover:bg-secondary rounded-lg transition-all">
                 <X className="w-5 h-5 text-muted-foreground" />
@@ -184,6 +180,101 @@ export function BoxSearchBar({ compact = false }) {
                 <div className="flex flex-col items-center justify-center py-16 gap-3 text-muted-foreground">
                   <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
                   <span className="text-xs font-medium">{t("wms_searching")}</span>
+                </div>
+              ) : loc ? (
+                <div className="space-y-4" data-testid="bs-location">
+                  <div className="bg-muted/30 border border-border rounded-lg p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="text-xs font-medium text-muted-foreground">{t("wms_bs_location")}</div>
+                        <div className="text-2xl font-mono font-semibold truncate">{loc.location.name}</div>
+                        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1 text-xs text-muted-foreground">
+                          {loc.location.zone && <span>{t("wms_zone")}: <b className="text-foreground">{loc.location.zone}</b></span>}
+                          {loc.location.type && <span>{t("wms_type")}: <b className="text-foreground">{loc.location.type}</b></span>}
+                          {!loc.location.exists && (
+                            <span className="inline-flex items-center gap-1 text-amber-600 dark:text-amber-400"><AlertTriangle className="w-3.5 h-3.5" /> {t("wms_bs_loc_unregistered")}</span>
+                          )}
+                        </div>
+                      </div>
+                      <div className="text-right flex-shrink-0">
+                        <div className="text-3xl font-semibold tabular-nums leading-none" data-testid="bs-loc-boxes">{loc.boxes_in_stock}</div>
+                        <div className="text-xs text-muted-foreground">{t("wms_bs_loc_boxes")}</div>
+                        <div className="text-sm font-semibold tabular-nums mt-1">{(loc.units_in_stock || 0).toLocaleString()} <span className="text-xs font-normal text-muted-foreground">{t("wms_bs_units_lc")}</span></div>
+                        {loc.units_allocated > 0 && (
+                          <div className="text-xs font-medium text-amber-600 dark:text-amber-400">{t("wms_committed_short", { n: loc.units_allocated })}</div>
+                        )}
+                      </div>
+                    </div>
+                    {loc.boxes_in_stock > 0 && (
+                      <button
+                        onClick={() => window.open(`${API}/labels/location?location=${encodeURIComponent(loc.location.name)}`, '_blank')}
+                        className="mt-3 w-full inline-flex items-center justify-center gap-2 px-3 py-2 bg-primary text-primary-foreground rounded-md text-sm font-medium hover:opacity-90 active:scale-95 transition-all"
+                        data-testid="bs-loc-print"
+                      >
+                        <Printer className="w-4 h-4" /> {t("wms_bs_loc_print")}
+                      </button>
+                    )}
+                  </div>
+
+                  {loc.boxes_in_stock === 0 ? (
+                    <p className="text-sm text-muted-foreground italic py-3 text-center">
+                      {t("wms_bs_loc_empty")}{loc.boxes_total > 0 ? ` · ${t("wms_bs_loc_only_empty", { n: loc.boxes_total })}` : ""}
+                    </p>
+                  ) : (
+                    <>
+                      {/* Por producto: lo que un supervisor quiere saber al escanear un rack. */}
+                      <div>
+                        <div className="text-xs font-medium text-muted-foreground mb-2 flex items-center gap-2">
+                          <Boxes className="w-3.5 h-3.5" /> {t("wms_bs_loc_by_sku")}
+                        </div>
+                        <div className="border border-border rounded-lg overflow-hidden">
+                          <table className="w-full text-xs">
+                            <thead className="bg-muted/50 border-b border-border text-muted-foreground">
+                              <tr>
+                                <th className="px-2 py-1.5 text-left font-semibold">{t("client")}</th>
+                                <th className="px-2 py-1.5 text-left font-semibold">{t("wms_label_style")}</th>
+                                <th className="px-2 py-1.5 text-left font-semibold">{t("wms_label_color")}</th>
+                                <th className="px-2 py-1.5 text-left font-semibold">{t("wms_label_size")}</th>
+                                <th className="px-2 py-1.5 text-right font-semibold">{t("wms_boxes")}</th>
+                                <th className="px-2 py-1.5 text-right font-semibold">{t("wms_label_units")}</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-border/60">
+                              {loc.by_sku.map(r => (
+                                <tr key={`${r.customer}|${r.style}|${r.color}|${r.size}`}>
+                                  <td className="px-2 py-1.5 truncate max-w-[140px]" title={r.customer}>{r.customer || "—"}</td>
+                                  <td className="px-2 py-1.5 font-mono font-medium">{r.style || "—"}</td>
+                                  <td className="px-2 py-1.5">{r.color || "—"}</td>
+                                  <td className="px-2 py-1.5 font-mono">{r.size || "—"}</td>
+                                  <td className="px-2 py-1.5 text-right tabular-nums">{r.boxes}</td>
+                                  <td className="px-2 py-1.5 text-right tabular-nums font-semibold">{r.units.toLocaleString()}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                      {/* Cajas: cada una abre su historial. */}
+                      <div>
+                        <div className="text-xs font-medium text-muted-foreground mb-2 flex items-center gap-2">
+                          <Package className="w-3.5 h-3.5" /> {t("wms_bs_loc_boxes_list", { n: loc.boxes_in_stock })}
+                        </div>
+                        <div className="border border-border rounded-lg divide-y divide-border/60 max-h-72 overflow-auto">
+                          {loc.boxes.map(b => (
+                            <button key={b.box_id} type="button" onClick={() => openBox(b.box_id)}
+                              className="w-full flex items-center gap-3 px-3 py-2 text-left hover:bg-muted/40 transition-colors" data-testid="bs-loc-box">
+                              <span className="font-mono font-semibold text-primary text-sm">{b.box_id}</span>
+                              <span className="text-xs text-muted-foreground truncate flex-1">{b.style} · {b.color || "—"} · {b.size || "—"}{b.part_number ? ` · ${b.part_number}` : ""}</span>
+                              <span className="text-sm font-semibold tabular-nums">{b.units}</span>
+                            </button>
+                          ))}
+                          {loc.boxes_truncated > 0 && (
+                            <div className="px-3 py-2 text-xs text-muted-foreground italic">{t("wms_bs_loc_more", { n: loc.boxes_truncated })}</div>
+                          )}
+                        </div>
+                      </div>
+                    </>
+                  )}
                 </div>
               ) : !data ? (
                 <div className="text-center py-12">

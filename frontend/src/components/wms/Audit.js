@@ -1,13 +1,14 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   Activity, PackageSearch, Layers, History, Search, Loader2,
-  AlertTriangle, CheckCircle2, RefreshCw, FlaskConical, XCircle, Download, Ghost, Barcode,
+  AlertTriangle, CheckCircle2, RefreshCw, FlaskConical, XCircle, Download, Ghost, Barcode, ChevronRight,
 } from "lucide-react";
 import { toast } from "sonner";
 import * as XLSX from "xlsx";
 import { saveAs } from "file-saver";
 import { useLang } from "../../contexts/LanguageContext";
-import { fetcher, poster } from "./lib";
+import { fetcher, poster, logLoadError } from "./lib";
+import { mvTypeLabel } from "./movementTypes";
 import { Btn, Th, Chip, tableCls } from "./ui";
 
 // Módulo de Auditoría — admin nivel 5 y supersu (el backend valida con
@@ -578,10 +579,18 @@ const MovementsTab = () => {
   const [filters, setFilters] = useState({ q: "", movement_type: "", user: "", since: "", until: "" });
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
+  // Tipos y usuarios que existen en la bitácora (con conteo) para los
+  // desplegables; el backend los cachea 10 min.
+  const [facets, setFacets] = useState({ types: [], users: [] });
+  const [openRow, setOpenRow] = useState(null); // movement_id con el JSON abierto
+  useEffect(() => {
+    fetcher("/audit/movements/facets").then(f => setFacets(f || { types: [], users: [] })).catch(logLoadError("audit facets"));
+  }, []);
 
   const run = async (e) => {
     e?.preventDefault();
     setLoading(true);
+    setOpenRow(null);
     try {
       const p = new URLSearchParams(Object.fromEntries(Object.entries(filters).filter(([, v]) => v)));
       setData(await fetcher(`/audit/movements?${p}`));
@@ -589,32 +598,75 @@ const MovementsTab = () => {
     finally { setLoading(false); }
   };
 
+  // Mismas columnas que la tabla (el backend ya aplanó `details` a `rows`);
+  // el JSON crudo va al final por si alguien necesita el dato exacto.
   const exportExcel = () => {
     if (!data) return;
-    const rows = (data.movements || []).map(m => ({
-      "Fecha": m.created_at || "",
-      "Tipo": m.type || "",
-      "Usuario": m.user_name || "",
-      "Detalles": JSON.stringify(m.details || {}),
+    const raw = Object.fromEntries((data.movements || []).map(m => [m.movement_id, m.details]));
+    const rows = (data.rows || []).map(r => ({
+      [t("date")]: fmtDate(r.created_at),
+      [t("wms_type")]: mvTypeLabel(r.type, t),
+      [t("wms_audit_col_type_code")]: r.type,
+      [t("user")]: r.user_name,
+      [t("wms_box")]: r.box_id,
+      [t("client")]: r.customer,
+      [t("wms_label_style")]: r.style,
+      [t("wms_label_color")]: r.color,
+      [t("wms_label_size")]: r.size,
+      "SKU": r.sku,
+      [t("location")]: r.location,
+      [t("wms_audit_col_from")]: r.from,
+      [t("wms_audit_col_to")]: r.to,
+      [t("wms_label_units")]: r.units,
+      [t("wms_audit_col_before")]: r.before,
+      [t("wms_audit_col_after")]: r.after,
+      "Delta": r.delta,
+      [t("wms_audit_col_order")]: r.order_number,
+      "Ticket": r.ticket_id,
+      [t("wms_dl_receiving")]: r.receiving_id,
+      [t("wms_bs_asn_entry")]: r.asn_id,
+      [t("wms_audit_col_count")]: r.count_id,
+      "Batch": r.batch,
+      [t("wms_audit_col_reason")]: r.reason,
+      [t("wms_audit_col_detail")]: r.detail,
+      "ID": r.movement_id,
+      "JSON": JSON.stringify(raw[r.movement_id] || {}),
     }));
     downloadXlsx([{ name: "Movimientos", rows }], `Movimientos_${today()}.xlsx`);
     toast.success(t("wms_excel_exported"));
   };
+
+  const sel = "px-3 py-2.5 bg-card border border-input rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring/25 focus:border-ring";
+  const th = "px-2 py-2 text-left text-[11px] font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap";
+  const td = "px-2 py-1.5 align-top";
+  const rawById = Object.fromEntries((data?.movements || []).map(m => [m.movement_id, m]));
+  const refChips = (r) => [
+    r.order_number && [t("wms_audit_col_order"), r.order_number],
+    r.ticket_id && ["Ticket", r.ticket_id],
+    r.receiving_id && [t("wms_dl_receiving"), r.receiving_id],
+    r.asn_id && [t("wms_bs_asn_entry"), r.asn_id],
+    r.count_id && [t("wms_audit_col_count"), r.count_id],
+    r.batch && ["Batch", r.batch],
+  ].filter(Boolean);
 
   return (
     <div className="space-y-4">
       <form onSubmit={run} className="flex flex-wrap gap-2 items-end">
         <input value={filters.q} onChange={e => setFilters({ ...filters, q: e.target.value })}
           placeholder={t("wms_audit_mv_placeholder")}
-          className="flex-1 min-w-[220px] px-3 py-2.5 bg-card border border-input rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring/25 focus:border-ring" />
-        <input value={filters.movement_type} onChange={e => setFilters({ ...filters, movement_type: e.target.value })}
-          placeholder={t("wms_audit_mv_type_placeholder")} className="w-48 px-3 py-2.5 bg-card border border-input rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring/25 focus:border-ring" />
-        <input value={filters.user} onChange={e => setFilters({ ...filters, user: e.target.value })}
-          placeholder={t("user")} className="w-36 px-3 py-2.5 bg-card border border-input rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring/25 focus:border-ring" />
-        <input type="date" value={filters.since} onChange={e => setFilters({ ...filters, since: e.target.value })}
-          className="px-3 py-2.5 bg-card border border-input rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring/25 focus:border-ring" />
-        <input type="date" value={filters.until} onChange={e => setFilters({ ...filters, until: e.target.value })}
-          className="px-3 py-2.5 bg-card border border-input rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring/25 focus:border-ring" />
+          className={`flex-1 min-w-[220px] ${sel}`} />
+        <select value={filters.movement_type} onChange={e => setFilters({ ...filters, movement_type: e.target.value })}
+          className={`w-64 ${sel}`} data-testid="audit-mv-type">
+          <option value="">{t("wms_audit_mv_all_types")}</option>
+          {facets.types.map(x => <option key={x.type} value={x.type}>{mvTypeLabel(x.type, t)} ({x.n.toLocaleString()})</option>)}
+        </select>
+        <select value={filters.user} onChange={e => setFilters({ ...filters, user: e.target.value })}
+          className={`w-52 ${sel}`} data-testid="audit-mv-user">
+          <option value="">{t("wms_audit_mv_all_users")}</option>
+          {facets.users.map(x => <option key={x.user} value={x.user}>{x.user} ({x.n.toLocaleString()})</option>)}
+        </select>
+        <input type="date" value={filters.since} onChange={e => setFilters({ ...filters, since: e.target.value })} className={sel} />
+        <input type="date" value={filters.until} onChange={e => setFilters({ ...filters, until: e.target.value })} className={sel} />
         <button disabled={loading} className="px-5 py-2.5 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 transition-colors disabled:opacity-50">
           {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : t("search")}
         </button>
@@ -623,19 +675,75 @@ const MovementsTab = () => {
         <div className="border border-border rounded-lg overflow-hidden">
           <div className="px-3 py-2 bg-muted/50 border-b border-border text-xs font-semibold text-muted-foreground flex items-center justify-between gap-2">
             <span>{t("wms_audit_mv_count", { count: data.count, total: data.total.toLocaleString() })}</span>
-            {data.movements?.length > 0 && (
+            {data.rows?.length > 0 && (
               <Btn onClick={exportExcel}><Download className="w-3.5 h-3.5" /> {t("export_excel")}</Btn>
             )}
           </div>
-          <div className="max-h-[32rem] overflow-y-auto divide-y divide-border/60">
-            {data.movements.map((m, i) => (
-              <div key={i} className="px-3 py-2 text-xs flex items-start gap-3">
-                <span className="text-muted-foreground whitespace-nowrap font-mono">{fmtDate(m.created_at)}</span>
-                <span className="font-medium whitespace-nowrap">{m.type}</span>
-                <span className="text-muted-foreground whitespace-nowrap">{m.user_name}</span>
-                <span className="truncate text-muted-foreground">{JSON.stringify(m.details || {}).slice(0, 180)}</span>
-              </div>
-            ))}
+          <div className="max-h-[36rem] overflow-auto">
+            <table className="w-full text-xs" data-testid="audit-mv-table">
+              <thead className="bg-muted/40 sticky top-0 z-10">
+                <tr>
+                  <th className={th}>{t("date")}</th>
+                  <th className={th}>{t("wms_type")}</th>
+                  <th className={th}>{t("user")}</th>
+                  <th className={th}>{t("wms_box")}</th>
+                  <th className={th}>{t("wms_audit_col_product")}</th>
+                  <th className={th}>{t("location")}</th>
+                  <th className={`${th} text-right`}>{t("wms_label_units")}</th>
+                  <th className={th}>{t("wms_audit_col_reference")}</th>
+                  <th className={th}>{t("wms_audit_col_reason")}</th>
+                  <th className={th}>{t("wms_audit_col_detail")}</th>
+                  <th className="w-8" />
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border/60">
+                {(data.rows || []).map((r) => {
+                  const product = [r.style, r.color, r.size].filter(Boolean).join(" · ");
+                  const open = openRow === r.movement_id;
+                  const hasBA = r.before !== "" || r.after !== "";
+                  return [
+                    <tr key={r.movement_id} className="hover:bg-muted/30" data-testid="audit-mv-row">
+                      <td className={`${td} font-mono text-muted-foreground whitespace-nowrap`}>{fmtDate(r.created_at)}</td>
+                      <td className={`${td} whitespace-nowrap`}><span className="font-medium">{mvTypeLabel(r.type, t)}</span></td>
+                      <td className={`${td} whitespace-nowrap text-muted-foreground`}>{r.user_name || "—"}</td>
+                      <td className={`${td} font-mono whitespace-nowrap max-w-[180px] truncate`} title={r.box_id}>{r.box_id || "—"}</td>
+                      <td className={td}>
+                        <div className="font-medium whitespace-nowrap">{product || "—"}</div>
+                        {r.sku && r.sku !== r.style && <div className="font-mono text-muted-foreground">{r.sku}</div>}
+                        {r.customer && <div className="text-muted-foreground truncate max-w-[160px]" title={r.customer}>{r.customer}</div>}
+                      </td>
+                      <td className={`${td} font-mono whitespace-nowrap`}>
+                        {r.from || r.to ? <span>{r.from || "?"} <span className="text-muted-foreground">→</span> {r.to || "?"}</span> : (r.location || "—")}
+                      </td>
+                      <td className={`${td} text-right tabular-nums whitespace-nowrap`}>
+                        {hasBA ? (
+                          <span>{r.before !== "" && <>{r.before} </>}<span className="text-muted-foreground">→</span> {r.after !== "" ? r.after : "?"}{r.delta && <span className={`ml-1 font-semibold ${Number(r.delta) < 0 ? "text-red-500" : Number(r.delta) > 0 ? "text-emerald-500" : "text-muted-foreground"}`}>({Number(r.delta) > 0 ? "+" : ""}{r.delta})</span>}</span>
+                        ) : (r.units ? <span className="font-semibold">{r.units}</span> : (r.delta ? <span className={`font-semibold ${Number(r.delta) < 0 ? "text-red-500" : "text-emerald-500"}`}>{Number(r.delta) > 0 ? "+" : ""}{r.delta}</span> : "—"))}
+                      </td>
+                      <td className={td}>
+                        <div className="flex flex-wrap gap-1">
+                          {refChips(r).map(([k, v]) => <span key={k} className="px-1.5 py-0.5 rounded bg-muted border border-border font-mono whitespace-nowrap" title={k}>{v}</span>)}
+                        </div>
+                      </td>
+                      <td className={`${td} max-w-[200px] truncate`} title={r.reason}>{r.reason || "—"}</td>
+                      <td className={`${td} text-muted-foreground max-w-[260px] truncate`} title={r.detail}>{r.detail || ""}</td>
+                      <td className={`${td} text-center`}>
+                        <button type="button" onClick={() => setOpenRow(open ? null : r.movement_id)} className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted" title="JSON" data-testid="audit-mv-json">
+                          <ChevronRight className={`w-3.5 h-3.5 transition-transform ${open ? "rotate-90" : ""}`} />
+                        </button>
+                      </td>
+                    </tr>,
+                    open && (
+                      <tr key={`${r.movement_id}__json`} className="bg-muted/20">
+                        <td colSpan={11} className="px-3 py-2">
+                          <pre className="text-[11px] font-mono whitespace-pre-wrap break-all text-muted-foreground">{JSON.stringify(rawById[r.movement_id]?.details || {}, null, 2)}</pre>
+                        </td>
+                      </tr>
+                    ),
+                  ];
+                })}
+              </tbody>
+            </table>
             {data.count === 0 && <div className="p-3 text-xs text-muted-foreground">{t("wms_audit_no_results_filters")}</div>}
           </div>
         </div>

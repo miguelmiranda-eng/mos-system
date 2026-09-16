@@ -1934,6 +1934,58 @@ async def list_location_names(request: Request):
     return rows
 
 
+@router.get("/locations/lookup")
+async def lookup_location(request: Request, code: str = ""):
+    """Buscador global del header (Buscar caja / LPN / ubicación): cuando el
+    código escaneado NO es una caja, se prueba como ubicación. La etiqueta de
+    ubicación codifica el nombre, así que se resuelve por nombre (sin
+    distinguir mayúsculas). También responde para ubicaciones que solo existen
+    en el campo `location` de las cajas (custom / fantasma tipo "PO#1849"):
+    `exists` = False para que la UI lo diga.
+
+    Devuelve lo que un supervisor quiere ver al escanear un rack: cajas y
+    unidades EN STOCK (units > 0 y estado vivo; las `depleted` no cuentan),
+    desglose por producto y la lista de cajas (tope 300)."""
+    await require_auth(request)
+    code = (code or "").strip()
+    if not code:
+        raise HTTPException(400, "code requerido")
+    rx = {"$regex": f"^{re.escape(code)}$", "$options": "i"}
+    loc = await db.wms_locations.find_one({"name": rx}, {"_id": 0})
+    boxes = await db.wms_boxes.find({"location": rx}, {"_id": 0}).to_list(5000)
+    if not loc and not boxes:
+        return {"found": False, "code": code}
+    name = loc["name"] if loc else boxes[0].get("location")
+    live = [b for b in boxes if _box_in_stock(b)]
+    by_sku: dict[str, dict] = {}
+    for b in live:
+        u = int(b.get("units") or b.get("qty") or 0)
+        k = "|".join(str(b.get(x) or "").strip().upper() for x in ("customer", "style", "color", "size"))
+        row = by_sku.setdefault(k, {"customer": b.get("customer") or "", "style": b.get("style") or "",
+                                    "color": b.get("color") or "", "size": b.get("size") or "",
+                                    "boxes": 0, "units": 0, "units_allocated": 0})
+        row["boxes"] += 1
+        row["units"] += u
+        row["units_allocated"] += int(b.get("units_allocated") or 0)
+    live.sort(key=lambda b: (str(b.get("style") or ""), str(b.get("color") or ""), str(b.get("size") or ""), str(b.get("box_id") or "")))
+    return {
+        "found": True,
+        "location": {
+            "name": name, "zone": (loc or {}).get("zone", ""), "type": (loc or {}).get("type", ""),
+            "active": (loc or {}).get("active", True), "exists": loc is not None,
+        },
+        "boxes_in_stock": len(live),
+        "units_in_stock": sum(int(b.get("units") or b.get("qty") or 0) for b in live),
+        "units_allocated": sum(int(b.get("units_allocated") or 0) for b in live),
+        "boxes_total": len(boxes),
+        "by_sku": sorted(by_sku.values(), key=lambda r: (-r["units"], r["style"], r["color"], r["size"])),
+        "boxes": [{k: b.get(k) for k in ("box_id", "customer", "style", "color", "size", "units",
+                                          "units_allocated", "status", "part_number", "received_at", "created_at")}
+                  for b in live[:300]],
+        "boxes_truncated": max(0, len(live) - 300),
+    }
+
+
 @router.get("/locations/zones")
 async def list_location_zones(request: Request):
     """Zonas del almacen con su conteo de ubicaciones — alimenta el selector de
@@ -8485,11 +8537,119 @@ async def audit_sku(request: Request, style: str, color: str = "", size: str = "
     }
 
 
+# ── Movimientos aplanados a columnas (Auditoría → Movimientos) ──────────────
+# `details` cambia de forma por tipo (~100 tipos en prod); para la tabla y el
+# Excel se proyecta a columnas fijas y lo que no cabe en ninguna va a `detalle`
+# como "llave: valor · llave: valor" (sin llaves ni comillas). Una sola verdad
+# para pantalla y export.
+_MV_COL_ALIASES = {
+    "box_id": ("box_id", "physical_lpn", "lpn", "carton"),
+    "customer": ("customer",),
+    "style": ("style", "material"),
+    "color": ("color",),
+    "size": ("size",),
+    "sku": ("sku",),
+    "location": ("location", "inv_location", "container"),
+    "from": ("from", "origins", "sources", "from_sources", "original_location", "old_name", "de"),
+    "to": ("to", "destination", "new_name", "a"),
+    "units": ("units", "qty", "units_moved", "units_batch", "total_units", "added_units", "removed_units",
+              "units_removed", "units_added", "units_dados_de_baja", "unidades", "total_deducted", "count"),
+    "before": ("old_units", "from_units", "before", "papel_antes", "qty_received_before", "old"),
+    "after": ("new_units", "to_units", "after", "new_on_hand", "papel_despues", "qty_received_after", "new"),
+    "delta": ("delta_units", "delta", "line_delta", "discrepancy"),
+    "order_number": ("order_number",),
+    "ticket_id": ("ticket_id",),
+    "receiving_id": ("receiving_id",),
+    "asn_id": ("asn_id", "asn_reference"),
+    "count_id": ("count_id", "commit_id"),
+    "batch": ("batch", "batch_id"),
+    "reason": ("reason", "note", "motivo", "resolution"),
+}
+_MV_HIDDEN_KEYS = {"box_units", "backup", "backup_collections"}  # mapas internos / ruido
+
+
+def _mv_scalar(v, max_len: int = 80) -> str:
+    """Valor legible y corto para una celda: listas → 'n ítems: a, b, c…'."""
+    if v is None or v == "":
+        return ""
+    if isinstance(v, bool):
+        return "sí" if v else "no"
+    if isinstance(v, (int, float)):
+        return str(v)
+    if isinstance(v, list):
+        if not v:
+            return ""
+        if all(isinstance(x, (str, int, float)) for x in v):
+            head = ", ".join(str(x) for x in v[:6])
+            return f"{len(v)}: {head}{'…' if len(v) > 6 else ''}" if len(v) > 1 else head
+        return f"{len(v)} ítems"
+    if isinstance(v, dict):
+        return "; ".join(f"{k}={_mv_scalar(x, 30)}" for k, x in list(v.items())[:6]) + ("…" if len(v) > 6 else "")
+    t = str(v)
+    return t if len(t) <= max_len else t[:max_len - 1] + "…"
+
+
+def _flatten_movement(m: dict) -> dict:
+    d = dict(m.get("details") or {})
+    row = {"created_at": m.get("created_at"), "type": m.get("type") or "", "user_name": m.get("user_name") or m.get("user_id") or "",
+           "movement_id": m.get("movement_id") or ""}
+    used = set()
+    for col, aliases in _MV_COL_ALIASES.items():
+        val = ""
+        for a in aliases:
+            if a in d and d[a] not in (None, "", [], {}):
+                val = _mv_scalar(d[a])
+                used.add(a)
+                break
+        row[col] = val
+    # box_ids: la caja única ya salió; una lista va como "n cajas: …".
+    if not row["box_id"] and isinstance(d.get("box_ids"), list) and d["box_ids"]:
+        row["box_id"] = _mv_scalar(d["box_ids"])
+    used.add("box_ids")
+    # Delta derivado cuando solo hay antes/después.
+    if not row["delta"] and isinstance(d.get("old_units"), (int, float)) and isinstance(d.get("new_units"), (int, float)):
+        row["delta"] = str(int(d["new_units"]) - int(d["old_units"]))
+    # Surtido por lote: el detalle del ticket trae boxes[].taken; se resume.
+    if isinstance(d.get("boxes"), list) and d["boxes"] and all(isinstance(b, dict) for b in d["boxes"]):
+        taken = [b for b in d["boxes"] if b.get("box_id")]
+        if taken and not row["box_id"]:
+            row["box_id"] = _mv_scalar([b["box_id"] for b in taken])
+        used.add("boxes")
+    rest = {k: v for k, v in d.items() if k not in used and k not in _MV_HIDDEN_KEYS and v not in (None, "", [], {})}
+    row["detail"] = " · ".join(f"{k}: {_mv_scalar(v, 60)}" for k, v in rest.items())
+    return row
+
+
+_MV_FACETS_CACHE: dict = {"at": 0.0, "data": None}
+
+
+@router.get("/audit/movements/facets")
+async def audit_movements_facets(request: Request):
+    """Tipos y usuarios que EXISTEN en la bitácora, con su conteo, para los
+    desplegables de Auditoría → Movimientos. Es un $group sobre ~160k docs:
+    se cachea 10 min en proceso (los conteos no necesitan ser exactos)."""
+    await require_wms_module_access(request, "audit")
+    if _MV_FACETS_CACHE["data"] and time.time() - _MV_FACETS_CACHE["at"] < 600:
+        return _MV_FACETS_CACHE["data"]
+    types = await db.wms_movements.aggregate([
+        {"$group": {"_id": "$type", "n": {"$sum": 1}}}, {"$sort": {"n": -1}}]).to_list(500)
+    users = await db.wms_movements.aggregate([
+        {"$group": {"_id": "$user_name", "n": {"$sum": 1}}}, {"$sort": {"n": -1}}]).to_list(1000)
+    data = {
+        "types": [{"type": t["_id"], "n": t["n"]} for t in types if t["_id"]],
+        "users": [{"user": u["_id"], "n": u["n"]} for u in users if u["_id"]],
+    }
+    _MV_FACETS_CACHE.update(at=time.time(), data=data)
+    return data
+
+
 @router.get("/audit/movements")
 async def audit_movements(request: Request, q: str = "", movement_type: str = "", user: str = "",
                           since: str = "", until: str = "", limit: int = 200):
     """Busqueda de movimientos con filtros: texto libre (caja/sku/orden/
-    ubicacion/ticket), tipo, usuario y rango de fechas."""
+    ubicacion/ticket), tipo, usuario y rango de fechas. Devuelve los docs
+    crudos (`movements`) y su proyección a columnas (`rows`, ver
+    _flatten_movement) para la tabla y el Excel."""
     await require_wms_module_access(request, "audit")
     query = {}
     if movement_type.strip():
@@ -8515,7 +8675,8 @@ async def audit_movements(request: Request, q: str = "", movement_type: str = ""
     limit = max(1, min(int(limit or 200), 1000))
     movements = await db.wms_movements.find(query, {"_id": 0}).sort("created_at", -1).to_list(limit)
     total = await db.wms_movements.count_documents(query)
-    return {"total": total, "count": len(movements), "movements": movements}
+    return {"total": total, "count": len(movements), "movements": movements,
+            "rows": [_flatten_movement(m) for m in movements]}
 
 
 # ── Self-test: simula el flujo completo con datos marcados y auto-limpieza ──
