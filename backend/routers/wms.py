@@ -834,27 +834,58 @@ async def list_location_checks(request: Request, status: str = "open", limit: in
 
 @router.post("/location-checks/{check_id}/resolve")
 async def resolve_location_check(check_id: str, request: Request):
-    """Inventarios cierra la tarea con lo que encontró. No mueve ni da de baja
-    inventario por sí mismo: la caja se reubica con Mover o se da de baja con
-    los flujos de siempre (y quedan en Auditoría); aquí solo queda el veredicto."""
+    """Inventarios cierra la tarea con lo que encontró.
+
+    · found     → la caja sí estaba; veredicto + nota, no toca inventario.
+    · relocated → la caja apareció en OTRA ubicación: `location` (escaneada)
+                  es obligatoria y la caja se mueve ahí por `_relocate_boxes`,
+                  el MISMO camino que Mover (guard de HOLD, reproyección,
+                  movimiento bulk_relocation con trigger location_check). La
+                  tarea no tiene aritmética propia de inventario.
+    · missing   → no apareció en ningún lado: solo veredicto; la baja sigue
+                  siendo con motivo desde Inventario (queda en Auditoría).
+    · other     → veredicto libre (API)."""
     user = await require_inventory_level(request, 1)
     body = await request.json() if await request.body() else {}
     resolution = str(body.get("resolution") or "").strip().lower()
     if resolution not in LOCATION_CHECK_RESOLUTIONS:
         raise HTTPException(400, f"resolution debe ser uno de {sorted(LOCATION_CHECK_RESOLUTIONS)}")
+    ck = await db.wms_location_checks.find_one({"check_id": check_id, "status": "open"}, {"_id": 0})
+    if not ck:
+        raise HTTPException(404, "Revisión no encontrada o ya resuelta")
     who = user.get("name") or user.get("email") or user.get("user_id") or ""
+    fields = {"status": "resolved", "resolution": resolution, "resolution_note": str(body.get("note") or "").strip(),
+              "resolved_at": now_iso(), "resolved_by": user.get("user_id"), "resolved_by_name": who}
+    move = None
+    if resolution == "relocated":
+        found_at = str(body.get("location") or "").strip().upper()
+        if not found_at:
+            raise HTTPException(400, "Escanea la ubicación donde apareció la caja")
+        box_id = ck.get("box_id") or ""
+        if not box_id:
+            raise HTTPException(400, "Esta revisión no tiene caja: no hay qué mover. Ciérrala como encontrada o no está.")
+        box = await db.wms_boxes.find_one({"box_id": box_id}, {"_id": 0})
+        if not box:
+            raise HTTPException(404, f"La caja {box_id} ya no existe en el sistema")
+        if not _box_in_stock(box):
+            raise HTTPException(409, f"La caja {box_id} no tiene stock vivo ({int(box.get('units') or 0)} u, {box.get('status') or '-'}); no se puede reubicar")
+        move = await _relocate_boxes(user, [box_id], found_at, trigger=MovementTrigger.LOCATION_CHECK,
+                                     extra={"check_id": check_id, "reported_location": ck.get("location")})
+        fields.update({"moved_from": box.get("location") or "", "moved_to": move.get("to"),
+                       "moved_units": int(move.get("units_moved") or 0), "moved": bool(move.get("moved"))})
     res = await db.wms_location_checks.find_one_and_update(
-        {"check_id": check_id, "status": "open"},
-        {"$set": {"status": "resolved", "resolution": resolution, "resolution_note": str(body.get("note") or "").strip(),
-                  "resolved_at": now_iso(), "resolved_by": user.get("user_id"), "resolved_by_name": who}},
+        {"check_id": check_id, "status": "open"}, {"$set": fields},
         projection={"_id": 0}, return_document=ReturnDocument.AFTER)
     if not res:
         raise HTTPException(404, "Revisión no encontrada o ya resuelta")
     await log_movement(user, "location_check_resolved", {
         "check_id": check_id, "location": res.get("location"), "box_id": res.get("box_id"),
         "resolution": resolution, "note": res.get("resolution_note"), "reports": res.get("reports"),
+        **({"to": res.get("moved_to"), "from": res.get("moved_from"), "units": res.get("moved_units")} if move else {}),
     })
-    return {"message": "Revisión resuelta", "check": res}
+    if move:
+        await notify_badge_change("all")
+    return {"message": "Revisión resuelta", "check": res, "move": move}
 
 
 @router.post("/incidents/{incident_id}/resolve")
@@ -2325,7 +2356,17 @@ async def boxes_relocate(request: Request):
         )
     if not dst:
         raise HTTPException(400, "to es obligatorio")
+    result = await _relocate_boxes(user, box_ids, dst)
+    await notify_badge_change("all")
+    return result
 
+
+async def _relocate_boxes(user, box_ids: list, dst: str, *, trigger: str | None = None, extra: dict | None = None) -> dict:
+    """Mueve cajas enteras a `dst` — el ÚNICO camino para reubicar una caja
+    (lo usa /boxes/relocate y el resolve de Location Check). Valida destino
+    y HOLD, mueve las cajas y reproyecta cada material tocado desde sus cajas
+    (la caja manda). `trigger`/`extra` solo enriquecen el movimiento."""
+    dst = (dst or "").strip().upper()
     dst_loc = await db.wms_locations.find_one(
         {"name": {"$regex": f"^{re.escape(dst)}$", "$options": "i"}}
     )
@@ -2382,7 +2423,8 @@ async def boxes_relocate(request: Request):
     await log_movement(user, move_type, {
         # Aunque comparta `type` con el barrido de ubicación, aquí SÍ se
         # escanearon/eligieron cajas una por una — el trigger lo deja claro.
-        "trigger": MovementTrigger.TRANSIT if all_transit else MovementTrigger.BOX_SCAN,
+        "trigger": trigger or (MovementTrigger.TRANSIT if all_transit else MovementTrigger.BOX_SCAN),
+        **(extra or {}),
         "to": dst_name,
         "sources": sorted(sources_touched),          # legado
         "origins": sorted(sources_touched), "destination": dst_name,  # normalizado
@@ -2393,7 +2435,6 @@ async def boxes_relocate(request: Request):
         "box_units": _box_units_snapshot(boxes),     # {box_id: u} al momento
         "box_ids": moved_ids[:MOVEMENT_BOX_UNITS_CAP],  # cap log payload
     })
-    await notify_badge_change("all")
 
     return {
         "message": f"Movidas {len(moved_ids)} cajas ({units_moved} unidades) a {dst_name}",

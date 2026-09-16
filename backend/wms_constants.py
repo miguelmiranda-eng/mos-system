@@ -115,6 +115,7 @@ class MovementTrigger:
     BOX_SCAN = "box_scan"               # /boxes/relocate: cajas escaneadas / elegidas a mano
     UNIT_SPLIT = "unit_split"           # /move-units: unidades sueltas; puede partir una caja en dos
     TRANSIT = "transit"                 # /transit/relocate: sacar cajas de tránsito (carro / temporal) a un slot real
+    LOCATION_CHECK = "location_check"   # resolver una tarea Location Check: la caja apareció en otra ubicación y se movió ahí
 
 
 # Vocabulario normalizado del `details` de un movimiento. Objetivo: que TODO

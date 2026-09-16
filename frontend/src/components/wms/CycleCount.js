@@ -130,16 +130,31 @@ export const CycleCountModule = () => {
   useEffect(() => {
     fetcher('/location-checks?status=open&limit=1').then(d => setLcOpenCount(d?.open_count || 0)).catch(() => {});
   }, []);
+  // Dos acciones: "Encontrada aquí" (veredicto + nota) y "No estaba aquí"
+  // (escanear la ubicación donde apareció → el servidor la mueve por el mismo
+  // camino que Mover). Dentro de la segunda, "no apareció en ningún lado"
+  // cierra como `missing` sin mover: la baja sigue siendo desde Inventario.
+  const [lcSaving, setLcSaving] = useState(false);
   const submitLcResolve = async () => {
-    if (!lcResolve) return;
+    if (!lcResolve || lcSaving) return;
+    const isMove = lcResolve.resolution === 'relocated';
+    const nowhere = isMove && lcResolve.nowhere;
+    const location = (lcResolve.location || '').trim().toUpperCase();
+    if (isMove && !nowhere && !location) { toast.error(t('wms_lc_scan_required')); return; }
+    const body = nowhere
+      ? { resolution: 'missing', note: lcResolve.note || '' }
+      : { resolution: lcResolve.resolution, note: lcResolve.note || '', ...(isMove ? { location } : {}) };
+    setLcSaving(true);
     try {
-      const res = await poster(`/location-checks/${encodeURIComponent(lcResolve.check.check_id)}/resolve`, { resolution: lcResolve.resolution, note: lcResolve.note || '' });
+      const res = await poster(`/location-checks/${encodeURIComponent(lcResolve.check.check_id)}/resolve`, body);
       const d = await res.json().catch(() => ({}));
       if (!res.ok) { toast.error(d.detail || t('wms_lc_resolve_err')); return; }
-      toast.success(t('wms_lc_resolved'));
+      if (d.move) toast.success(d.move.moved ? t('wms_lc_moved_ok', { box: lcResolve.check.box_id, loc: d.move.to, u: d.move.units_moved }) : t('wms_lc_already_there', { loc: d.move.to }));
+      else toast.success(t('wms_lc_resolved'));
       setLcResolve(null);
       loadLocationChecks(lcShowResolved);
     } catch { toast.error(t('wms_lc_resolve_err')); }
+    finally { setLcSaving(false); }
   };
 
   const loadCuarentena = useCallback(async () => {
@@ -2011,14 +2026,14 @@ export const CycleCountModule = () => {
                           {(it.reports || 1) > 1 && <div className="text-amber-600 dark:text-amber-400 font-semibold">{t('wms_lc_reports_n', { n: it.reports })}</div>}
                           {it.note && <div className="italic truncate max-w-[220px]" title={it.note}>“{it.note}”</div>}
                           {!open && <div>{t('wms_lc_resolved_by', { who: it.resolved_by_name || '—', when: fmtLocalWhen(it.resolved_at) })}</div>}
+                          {!open && it.moved_to && <div className="font-mono">{it.moved_from || '?'} → {it.moved_to}{it.moved_units ? ` · ${it.moved_units} u` : ''}</div>}
                         </td>
                         <td className="px-3 py-2">
                           {open ? (
                             <div className="flex flex-wrap gap-1">
-                              <Btn variant="secondary" onClick={() => setLcResolve({ check: it, resolution: 'found', note: '' })} data-testid={`cc-task-found-${it.check_id}`}>{t('wms_lc_res_found')}</Btn>
-                              <Btn variant="secondary" onClick={() => setLcResolve({ check: it, resolution: 'relocated', note: '' })}>{t('wms_lc_res_relocated')}</Btn>
-                              <Btn variant="secondary" onClick={() => setLcResolve({ check: it, resolution: 'missing', note: '' })}>{t('wms_lc_res_missing')}</Btn>
-                              <Btn variant="secondary" onClick={() => { setForm(f => ({ ...f, name: t('wms_cc_audit_name', { loc: it.location }), location_filter: it.location, include_empty: true })); setActiveTab('active'); setShowForm(true); }}>{t('wms_create_cc')}</Btn>
+                              <Btn variant="secondary" onClick={() => setLcResolve({ check: it, resolution: 'found', note: '' })} data-testid={`cc-task-found-${it.check_id}`}>{t('wms_lc_act_found')}</Btn>
+                              {/* Sin caja no hay qué mover: la segunda acción cierra directo como "no está". */}
+                              <Btn variant="secondary" onClick={() => setLcResolve(it.box_id ? { check: it, resolution: 'relocated', note: '', location: '', nowhere: false } : { check: it, resolution: 'missing', note: '' })} data-testid={`cc-task-notfound-${it.check_id}`}>{t('wms_lc_act_not_here')}</Btn>
                             </div>
                           ) : <span className="text-xs text-muted-foreground">—</span>}
                         </td>
@@ -2033,13 +2048,27 @@ export const CycleCountModule = () => {
             <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/50 p-4" onClick={() => setLcResolve(null)}>
               <div className="bg-card border border-border rounded-xl shadow-2xl w-full max-w-md p-5 space-y-3" onClick={e => e.stopPropagation()} data-testid="cc-task-resolve">
                 <div className="font-semibold">{t('wms_lc_resolve_title', { loc: lcResolve.check.location, box: lcResolve.check.box_id || t('wms_lc_no_box') })}</div>
-                <div className="text-sm">{t('wms_lc_resolve_as')}: <b>{t(`wms_lc_res_${lcResolve.resolution}`)}</b></div>
-                <p className="text-xs text-muted-foreground">{t(`wms_lc_hint_${lcResolve.resolution}`)}</p>
+                <div className="text-sm">{t('wms_lc_resolve_as')}: <b>{t(lcResolve.resolution === 'relocated' && lcResolve.nowhere ? 'wms_lc_res_missing' : `wms_lc_res_${lcResolve.resolution}`)}</b></div>
+                <p className="text-xs text-muted-foreground">{t(lcResolve.resolution === 'relocated' && lcResolve.nowhere ? 'wms_lc_hint_missing' : `wms_lc_hint_${lcResolve.resolution}`)}</p>
+                {lcResolve.resolution === 'relocated' && (
+                  <div className="space-y-2">
+                    <input autoFocus value={lcResolve.location || ''} disabled={lcResolve.nowhere}
+                      onChange={e => setLcResolve(r => ({ ...r, location: e.target.value.toUpperCase() }))}
+                      onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); submitLcResolve(); } }}
+                      placeholder={t('wms_lc_scan_ph')} className="w-full h-10 px-3 bg-background border border-input rounded-md text-sm font-mono focus:outline-none focus:border-primary disabled:opacity-50" data-testid="cc-task-location" />
+                    <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer">
+                      <input type="checkbox" checked={!!lcResolve.nowhere} onChange={e => setLcResolve(r => ({ ...r, nowhere: e.target.checked }))} className="w-4 h-4 accent-primary" data-testid="cc-task-nowhere" />
+                      {t('wms_lc_nowhere')}
+                    </label>
+                  </div>
+                )}
                 <textarea value={lcResolve.note} onChange={e => setLcResolve(r => ({ ...r, note: e.target.value }))} placeholder={t('wms_lc_note_ph')} rows={3}
                   className="w-full px-3 py-2 bg-background border border-input rounded-md text-sm focus:outline-none focus:border-primary" data-testid="cc-task-note" />
                 <div className="flex justify-end gap-2">
                   <Btn onClick={() => setLcResolve(null)}>{t('cancel')}</Btn>
-                  <Btn variant="primary" onClick={submitLcResolve} data-testid="cc-task-confirm">{t('wms_lc_confirm')}</Btn>
+                  <Btn variant="primary" onClick={submitLcResolve} disabled={lcSaving} data-testid="cc-task-confirm">
+                    {lcResolve.resolution === 'relocated' && !lcResolve.nowhere ? t('wms_lc_confirm_move') : t('wms_lc_confirm')}
+                  </Btn>
                 </div>
               </div>
             </div>

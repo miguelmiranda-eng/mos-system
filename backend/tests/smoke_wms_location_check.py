@@ -11,6 +11,11 @@ Contrato:
   · POST /location-checks/{id}/resolve: inventarios (inventory_level ≥ 1 o
     admin) cierra con found|relocated|missing|other + nota; un picker sin nivel
     NO puede (403); resolver dos veces → 404; resolución inválida → 400.
+  · relocated = la caja apareció en OTRA ubicación: `location` obligatoria y
+    la caja se MUEVE ahí por el mismo camino que Mover (_relocate_boxes:
+    destino debe existir, HOLD, reproyección de wms_inventory, movimiento
+    bulk_relocation con trigger location_check + check_id). Sin caja → 400;
+    caja sin stock → 409. found / missing no tocan inventario.
 
 Base DESECHABLE.
 """
@@ -61,8 +66,16 @@ def sembrar():
         {"user_id": "u_picker2", "email": "picker2@test.local", "name": "Picker Dos", "role": "picker", "password_hash": bcrypt.hash("smoke123"), "active": True},
         {"user_id": "u_inv", "email": "inv@test.local", "name": "Inventarios", "role": "inventory", "inventory_level": 3, "password_hash": bcrypt.hash("smoke123"), "active": True},
     ])
-    sdb.wms_boxes.insert_one({"box_id": "BOX-000777", "location": "PS06-A29", "customer": "GOODIE TWO SLEEVES", "style": "6101", "color": "NATURAL", "size": "YS",
-                              "units": 36, "qty": 36, "status": "received", "state": "raw"})
+    sdb.wms_boxes.insert_many([
+        {"box_id": "BOX-000777", "location": "PS06-A29", "customer": "GOODIE TWO SLEEVES", "style": "6101", "color": "NATURAL", "size": "YS",
+         "units": 36, "qty": 36, "status": "received", "state": "raw"},
+        {"box_id": "BOX-000778", "location": "PS06-A29", "customer": "GOODIE TWO SLEEVES", "style": "6101", "color": "NATURAL", "size": "YM",
+         "units": 0, "qty": 0, "status": "depleted", "state": "raw"},
+    ])
+    sdb.wms_locations.insert_many([
+        {"name": "PS06-A29", "location_id": "loc_a29", "type": "rack", "active": True},
+        {"name": "PS06-A30", "location_id": "loc_a30", "type": "rack", "active": True},
+    ])
 
 
 async def login(transport, email):
@@ -114,10 +127,21 @@ async def main():
     check("un picker sin nivel no resuelve → 403", r.status_code == 403, r.status_code)
     r = await inv.post(f"/api/wms/location-checks/{ck['check_id']}/resolve", json={"resolution": "nope"})
     check("resolución inválida → 400", r.status_code == 400)
-    r = await inv.post(f"/api/wms/location-checks/{ck['check_id']}/resolve", json={"resolution": "relocated", "note": "estaba en PS06-A30, movida"})
+    r = await inv.post(f"/api/wms/location-checks/{ck['check_id']}/resolve", json={"resolution": "relocated", "note": "sin ubicación"})
+    check("relocated sin ubicación → 400 y la tarea sigue abierta", r.status_code == 400 and sdb.wms_location_checks.find_one({"check_id": ck["check_id"]})["status"] == "open", r.text[:120])
+    r = await inv.post(f"/api/wms/location-checks/{ck['check_id']}/resolve", json={"resolution": "relocated", "location": "NO-EXISTE"})
+    check("relocated a ubicación inexistente → 404 (mismo guard que Mover), caja no se movió", r.status_code == 404 and sdb.wms_boxes.find_one({"box_id": "BOX-000777"})["location"] == "PS06-A29", r.text[:120])
+    r = await inv.post(f"/api/wms/location-checks/{ck['check_id']}/resolve", json={"resolution": "relocated", "location": "ps06-a30", "note": "estaba en PS06-A30"})
     d = r.json()
     check("inventarios resuelve: relocated + nota + quién", r.status_code == 200 and d["check"]["status"] == "resolved" and d["check"]["resolution"] == "relocated" and d["check"]["resolved_by_name"] == "Inventarios" and d["check"]["resolution_note"].startswith("estaba"), r.text[:200])
-    check("movimiento location_check_resolved", sdb.wms_movements.count_documents({"type": "location_check_resolved", "details.check_id": ck["check_id"], "details.resolution": "relocated"}) == 1)
+    check("la tarea registra el movimiento (from/to/units)", d["check"]["moved_from"] == "PS06-A29" and d["check"]["moved_to"] == "PS06-A30" and d["check"]["moved_units"] == 36 and d["check"]["moved"] is True and d["move"]["moved"] == 1, d["check"])
+    box = sdb.wms_boxes.find_one({"box_id": "BOX-000777"})
+    check("la caja se MOVIÓ a PS06-A30 (nombre canónico)", box["location"] == "PS06-A30" and box["last_transferred_by"] == "Inventarios", box.get("location"))
+    inv_rows = {r_["location"]: int(r_.get("units_on_hand") or 0) for r_ in sdb.wms_inventory.find({"style": "6101", "color": "NATURAL", "size": "YS"})}
+    check("wms_inventory reproyectado: 36 u en PS06-A30 y nada vivo en PS06-A29", inv_rows.get("PS06-A30") == 36 and inv_rows.get("PS06-A29", 0) == 0, inv_rows)
+    mv = sdb.wms_movements.find_one({"type": "bulk_relocation", "details.check_id": ck["check_id"]})
+    check("movimiento bulk_relocation con trigger location_check, check_id y ubicación reportada", mv is not None and mv["details"]["trigger"] == "location_check" and mv["details"]["reported_location"] == "PS06-A29" and mv["details"]["to"] == "PS06-A30" and mv["details"]["boxes_moved"] == 1, (mv or {}).get("details"))
+    check("movimiento location_check_resolved con from/to", sdb.wms_movements.count_documents({"type": "location_check_resolved", "details.check_id": ck["check_id"], "details.resolution": "relocated", "details.to": "PS06-A30", "details.units": 36}) == 1)
     r = await inv.post(f"/api/wms/location-checks/{ck['check_id']}/resolve", json={"resolution": "found"})
     check("resolver dos veces → 404", r.status_code == 404)
     r = await inv.get("/api/wms/location-checks", params={"status": "all"})
@@ -126,6 +150,28 @@ async def main():
     check("resolved: 1", len(r.json()["items"]) == 1 and r.json()["items"][0]["resolution"] == "relocated")
     r = await picker.post("/api/wms/location-checks", json={"location": "PS06-A29", "box_id": "BOX-000777"})
     check("tras resolver, un nuevo reporte crea otra tarea", r.status_code == 200 and r.json()["created"] is True and r.json()["check"]["check_id"] != ck["check_id"])
+
+    print("\n== 5. Los otros veredictos no tocan inventario ==")
+    ck2 = r.json()["check"]
+    r = await inv.post(f"/api/wms/location-checks/{ck2['check_id']}/resolve", json={"resolution": "found", "note": "sí estaba, tapada"})
+    check("found: resuelta, sin move y la caja no cambia", r.status_code == 200 and r.json()["move"] is None and sdb.wms_boxes.find_one({"box_id": "BOX-000777"})["location"] == "PS06-A30", r.text[:120])
+    check("found no genera bulk_relocation", sdb.wms_movements.count_documents({"type": "bulk_relocation"}) == 1)
+    r = await picker.post("/api/wms/location-checks", json={"location": "PS06-A30", "box_id": "BOX-000777"})
+    ck3 = r.json()["check"]
+    r = await inv.post(f"/api/wms/location-checks/{ck3['check_id']}/resolve", json={"resolution": "missing", "note": "no apareció"})
+    check("missing: solo veredicto, la caja sigue viva en PS06-A30 (la baja va por Inventario)", r.status_code == 200 and sdb.wms_boxes.find_one({"box_id": "BOX-000777"})["units"] == 36 and sdb.wms_boxes.find_one({"box_id": "BOX-000777"})["location"] == "PS06-A30", r.text[:120])
+    empty = sdb.wms_location_checks.find_one({"status": "open", "box_id": ""})
+    r = await inv.post(f"/api/wms/location-checks/{empty['check_id']}/resolve", json={"resolution": "relocated", "location": "PS06-A30"})
+    check("relocated en tarea SIN caja → 400 (no hay qué mover)", r.status_code == 400, r.text[:120])
+    r = await picker.post("/api/wms/location-checks", json={"location": "PS06-A29", "box_id": "BOX-000778"})
+    ck4 = r.json()["check"]
+    r = await inv.post(f"/api/wms/location-checks/{ck4['check_id']}/resolve", json={"resolution": "relocated", "location": "PS06-A30"})
+    check("relocated con caja depleted (0 u) → 409, no se mueve", r.status_code == 409 and sdb.wms_boxes.find_one({"box_id": "BOX-000778"})["location"] == "PS06-A29", r.text[:120])
+    r = await picker.post("/api/wms/location-checks", json={"location": "PS06-A29", "box_id": "BOX-000777"})
+    ck5 = r.json()["check"]
+    r = await inv.post(f"/api/wms/location-checks/{ck5['check_id']}/resolve", json={"resolution": "relocated", "location": "PS06-A30"})
+    check("caja viva que YA está en la ubicación escaneada → 200, moved=0 (doble clic / ya movida con Mover)", r.status_code == 200 and r.json()["move"]["moved"] == 0 and r.json()["check"]["moved"] is False and r.json()["check"]["status"] == "resolved", r.text[:160])
+    check("…y no generó otro bulk_relocation", sdb.wms_movements.count_documents({"type": "bulk_relocation"}) == 1)
 
     for c in (picker, picker2, inv):
         await c.aclose()

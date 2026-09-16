@@ -85,12 +85,15 @@ export const apiFetch = async (url, options = {}) => {
     throw new Error('SESSION_EXPIRED');
   }
 
-  // Invalidate related GET caches after orders mutations
+  // Invalidate related GET caches after a mutation: the whole /orders family,
+  // y en general el RECURSO de la URL mutada (los dos primeros segmentos tras
+  // /api/, p. ej. /wms/location-checks/{id}/resolve → todo GET que traiga
+  // /wms/location-checks). Sin esto, recargar la lista justo después de
+  // escribir devolvía la copia de hasta 5 s atrás.
   const urlStr = url.toString();
-  if (urlStr.includes('/orders')) {
-    for (const key of reqCache.keys()) {
-      if (key.includes('/orders')) reqCache.delete(key);
-    }
+  const resource = urlStr.match(/\/api(\/[^/?#]+\/[^/?#]+)/)?.[1];
+  for (const key of reqCache.keys()) {
+    if ((urlStr.includes('/orders') && key.includes('/orders')) || (resource && key.includes(resource))) reqCache.delete(key);
   }
 
   return res;
