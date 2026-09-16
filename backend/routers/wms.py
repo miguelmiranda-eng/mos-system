@@ -1796,9 +1796,26 @@ async def release_location_hold(name: str, request: Request):
     return {"status": "released", "location": clean.upper()}
 
 
+# ── Quién puede crear / renombrar / eliminar ubicaciones ─────────────────────
+# Tarea #29 (2026-09-16): cualquier usuario podía crear ubicaciones. Ahora solo
+# CONTROL DE INVENTARIO (inventory_level 3 → admin efectivo 3), admin nivel 3+
+# y supersu. get_admin_level ya funde ambas escaleras, así que un solo umbral
+# cubre a la persona de inventarios y a los administradores; el resto (general,
+# operator, picker, admin 1-2) queda bloqueado. El frontend espeja el mismo
+# cálculo con adminLevelOf(); esta es la guarda real.
+LOCATION_MANAGER_LEVEL = 3
+
+
+async def require_location_manager(request: Request) -> dict:
+    user = await require_auth(request)
+    if get_admin_level(user) < LOCATION_MANAGER_LEVEL:
+        raise HTTPException(403, "Solo control de inventario (nivel 3) o administradores pueden crear, renombrar o eliminar ubicaciones")
+    return user
+
+
 @router.post("/locations")
 async def create_location(request: Request):
-    user = await require_auth(request)
+    user = await require_location_manager(request)
     body = await request.json()
     name = body.get("name", "").strip().upper()
     zone = body.get("zone", "").strip().upper()
@@ -2486,7 +2503,7 @@ async def delete_location(location_id: str, request: Request, force: bool = Fals
          rows pointing to it — otherwise the operator orphans stock that
          can't be surfaced anywhere in the UI. Pass `?force=true` to
          override this second guard (advanced; doesn't bypass #1)."""
-    user = await require_auth(request)
+    user = await require_location_manager(request)
     loc = await db.wms_locations.find_one({"location_id": location_id})
     if not loc:
         raise HTTPException(404, "Ubicacion no encontrada")
@@ -2537,7 +2554,7 @@ async def delete_location(location_id: str, request: Request, force: bool = Fals
 
 @router.put("/locations/{location_id}")
 async def update_location(location_id: str, request: Request):
-    user = await require_auth(request)
+    user = await require_location_manager(request)
     body = await request.json()
     new_name = body.get("name", "").strip().upper()
     new_zone = body.get("zone", "").strip().upper()

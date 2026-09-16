@@ -22,6 +22,10 @@ export const LocationsModule = ({ currentUser }) => {
   // require_admin_level(2) — no solo a supersu/admin.
   const adminLevel = adminLevelOf(currentUser);
   const canManageLocations = adminLevel >= 2;
+  // Crear / renombrar / eliminar ubicaciones: solo control de inventario
+  // (inventory_level 3 → nivel 3), admin 3+ y supersu — espejo de
+  // require_location_manager (backend). El resto no ve los botones.
+  const canEditLocations = adminLevel >= 3;
   const [clearingLoc, setClearingLoc] = useState(false);
   const [locations, setLocations] = useState([]);
   const [editingId, setEditingId] = useState(null);
@@ -592,10 +596,12 @@ export const LocationsModule = ({ currentUser }) => {
       />
               {t('wms_print_labels_btn')}
             </Btn>
-            <Btn variant="primary" onClick={() => setShowNewLoc(!showNewLoc)}>
-              {showNewLoc ? <X className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
-              {showNewLoc ? t('cancel') : t('wms_new_loc')}
-            </Btn>
+            {canEditLocations && (
+              <Btn variant="primary" onClick={() => setShowNewLoc(!showNewLoc)} data-testid="loc-new-btn">
+                {showNewLoc ? <X className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
+                {showNewLoc ? t('cancel') : t('wms_new_loc')}
+              </Btn>
+            )}
           </div>
         }
       />
@@ -854,7 +860,7 @@ export const LocationsModule = ({ currentUser }) => {
                             {l.on_hold ? <Unlock className="w-3.5 h-3.5" /> : <Lock className="w-3.5 h-3.5" />}
                           </button>
                         )}
-                        {!SYSTEM_TRANSIT_NAMES.has((l.name || '').toUpperCase()) && (
+                        {canEditLocations && !SYSTEM_TRANSIT_NAMES.has((l.name || '').toUpperCase()) && (
                           <>
                             <button
                               onClick={() => setEditingLoc({ location_id: l.location_id, name: l.name, zone: l.zone || '' })}

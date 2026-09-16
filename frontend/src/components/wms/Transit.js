@@ -6,6 +6,7 @@ import {
 } from "lucide-react";
 import { fetcher, poster, putter, logLoadError, cleanScan, scanFeedback, duplicateScan, useLocationSummary } from "./lib";
 import { useAuth } from "../../App";
+import { adminLevelOf } from "./modules";
 import { useLang } from "../../contexts/LanguageContext";
 import { PutawayWizard } from "./PutawayWizard";
 import { SoftAlert, Btn, ModuleToolbar } from "./ui";
@@ -27,7 +28,9 @@ const TRANSIT_LEGACY = "UBICACION TEMPORAL";
 export const TransitModule = () => {
   const { t } = useLang();
   const { user } = useAuth();
-  const isAdmin = ['admin', 'supersu'].includes(user?.role);
+  // Crear carros = crear ubicaciones: mismo umbral que el backend
+  // (require_location_manager, nivel 3: control de inventario, admin 3+, supersu).
+  const isAdmin = adminLevelOf(user) >= 3;
 
   // PDA / tablet get the guided cart-first wizard; desktop keeps the power-user
   // table below. Breakpoint at 1024px so phones AND tablets get the touch flow.
