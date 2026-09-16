@@ -3405,6 +3405,8 @@ const es = {
   wms_rcv_line_auto: "línea asignada",
   wms_rcv_line_pick: "Elige la línea: hay varias partes posibles para este cartón",
   wms_rcv_line_none: "Este cartón no viene en la entrada {asn}. Un líder debe agregar la línea en Entradas antes de recibirlo.",
+  wms_rcv_line_mismatch: "Línea {n} ({pn}): {field} del cartón {carton} ≠ {line} de la entrada",
+  wms_rcv_locked_by_line: "Heredado de la línea {n} de la entrada (la entrada manda)",
   wms_rcv_line_sample: "Línea de muestra: no se recibe al almacén",
   wms_rcv_asn_closed_or_empty: "Este ASN está cerrado o no tiene líneas — puedes recibir manualmente sin matchear.",
   wms_rcv_badge_pending: "pendientes",

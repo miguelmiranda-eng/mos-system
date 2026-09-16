@@ -105,6 +105,13 @@ async def main():
         check("mismo estilo, color distinto y país sin otra línea → none", r.json()["status"] == "none", r.json())
         r = await c.post(M, json={"style": "9999", "color": "RED", "country_of_origin": "MEXICO", "fabric_content": "100% ALGODON"})
         check("país que no viene → none", r.json()["status"] == "none", r.json())
+        d = r.json()
+        check("none explica por qué: país MX vs CN/HN por línea, con los datos del cartón",
+              d.get("carton", {}).get("country_code") == "MX" and all("country" in mm["fails"] for mm in d["mismatches"]) and {mm["country_code"] for mm in d["mismatches"]} == {"CN", "HN"}, d.get("mismatches"))
+        r = await c.post(M, json={"style": "M1163", "color": "BRACKEN", "country_of_origin": "CHINA", "fabric_content": "25% COTTON 50% POLYESTER 25% RAYON"})
+        d = r.json()
+        check("composición que no viene → none con 'composition' como falla y 50P25C25R del cartón",
+              d["status"] == "none" and d["carton"]["composition_code"] == "50P25C25R" and all(mm["fails"] == ["composition"] for mm in d["mismatches"] if mm["country_code"] == "CN"), d.get("mismatches"))
 
         print("\n== 2. Recibo hereda línea y número de parte ==")
         r = await c.post("/api/wms/receiving", json=recibo("M1163", "BRACKEN", "L", 60, "CHINA", "100% ALGODON", "156053-GOD01-A"))
@@ -126,7 +133,7 @@ async def main():
 
         print("\n== 3. Bloqueos ==")
         r = await c.post("/api/wms/receiving", json=recibo("M1163", "BRACKEN", "L", 10, "MEXICO", "100% ALGODON", "156053-GOD01-A"))
-        check("cartón de México: no viene en la entrada → 422", r.status_code == 422 and "no viene en la entrada" in r.text, f"{r.status_code} {r.text[:120]}")
+        check("cartón de México: no viene en la entrada → 422 y dice por qué (país MX vs CN)", r.status_code == 422 and "no viene en la entrada" in r.text and "país MX vs CN" in r.text, f"{r.status_code} {r.text[:200]}")
         check("nada se recibió", sdb.wms_boxes.count_documents({"country_of_origin": "MEXICO"}) == 0)
         r = await c.post("/api/wms/receiving", json=recibo("M1163", "BRACKEN", "L", 10, "CHINA", "", "156053-GOD01-A"))
         check("sin composición y dos partes posibles → 422 pide elegir", r.status_code == 422 and "Elige la línea" in r.text, f"{r.status_code} {r.text[:120]}")

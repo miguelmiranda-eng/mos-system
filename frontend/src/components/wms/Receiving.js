@@ -6,6 +6,7 @@ import ReturnReceiving from "./ReturnReceiving";
 import { useLang } from "../../contexts/LanguageContext";
 import { fetcher, poster, logLoadError, useWmsSizes, useWmsCatalogs, mergeUnique, API, cleanScan } from "./lib";
 import { AsnStatus } from "./constants";
+import { previewComposition } from "./composition";
 import { SoftAlert, Btn, Chip, cls } from "./ui";
 
 const STANDARD_UNITS_PER_BOX = 72;
@@ -169,6 +170,14 @@ export const ReceivingModule = () => {
   // trabajo diario.
   const [intake, setIntake] = useState('externo');
   const [openAsns, setOpenAsns] = useState([]);
+  // Fibras del compositor (services/part_number.py) para leer composiciones en
+  // el cliente: la tela de la línea ("50% ALGODON 50% POLIESTER") y las del
+  // catálogo del recibo ("50% COTTON 50% POLYESTER") se comparan por CÓDIGO
+  // (50C50P), nunca por parecido de texto.
+  const [pnFibers, setPnFibers] = useState([]);
+  useEffect(() => {
+    fetcher('/asn/part-number/config').then(c => setPnFibers(c?.fibers || [])).catch(logLoadError('part-number config'));
+  }, []);
   const [selectedAsnLine, setSelectedAsnLine] = useState(null); // line_no within the chosen ASN
   // Fase 2: qué línea de la entrada le toca a ESTE cartón. El servidor decide
   // con estilo/color (si la línea los trae), país y composición:
@@ -349,7 +358,10 @@ export const ReceivingModule = () => {
     if (manufacturer) { updates.manufacturer = manufacturer; matched.push(t('wms_label_manufacturer')); }
     else if (line.brand && form.customer) skipped.push(t('wms_label_manufacturer'));
 
-    const country = findInOptions(line.country, countryOptions, { iso3: COUNTRY_ISO3 });
+    let country = findInOptions(line.country, countryOptions, { iso3: COUNTRY_ISO3 });
+    // Entrada con número de parte: el país es identidad de la línea; si el
+    // catálogo del recibo no lo tiene con ese nombre, va el texto de la línea.
+    if (!country && line.part_number_auto && line.country) country = line.country;
     if (country) { updates.country_of_origin = country; matched.push(t('wms_country')); }
     else if (line.country) skipped.push(t('wms_country'));
 
@@ -363,7 +375,22 @@ export const ReceivingModule = () => {
       else if (line.description) skipped.push(t('description'));
     }
 
-    const fabric = findInOptions(line.fabric || line.fabric_content, fabricOptions);
+    // Tela: en entradas con número de parte se elige la opción del catálogo
+    // cuya composición compone IGUAL que la línea (50C50P). El match difuso por
+    // texto que se usaba antes emparejó "50% ALGODON 50% POLIESTER" con
+    // "25% COTTON 50% POLYESTER 25% RAYON" por el token "50%" y el cartón dejó
+    // de casar con su propia línea. Entradas viejas siguen con el difuso.
+    let fabric = '';
+    if (line.part_number_auto && line.composition_code) {
+      const target = line.composition_code;
+      const exact = fabricOptions.filter(o => previewComposition(o, pnFibers).code === target);
+      // Varias opciones con la misma composición (COTTON vs COMBED COTTON): la
+      // más corta es la genérica. Si el catálogo no tiene ninguna, va el texto
+      // canónico de la línea: la composición es identidad de la línea.
+      fabric = exact.sort((a, b) => a.length - b.length)[0] || line.fabric || line.fabric_content || '';
+    } else {
+      fabric = findInOptions(line.fabric || line.fabric_content, fabricOptions);
+    }
     if (fabric) { updates.fabric_content = fabric; matched.push(t('wms_rcv_fabric_short')); }
     else if (line.fabric || line.fabric_content) skipped.push(t('wms_rcv_fabric_short'));
 
@@ -389,9 +416,12 @@ export const ReceivingModule = () => {
     let alive = true;
     matchTimer.current = setTimeout(async () => {
       try {
+        // "La entrada manda": la línea se decide por estilo/color del UPC (o la
+        // elige el operador); país y tela NO desempatan — los hereda la caja de
+        // la línea. Mandarlos aquí hacía que un dedazo en la tela "desconectara"
+        // la caja de su propia línea.
         const res = await poster(`/asn/${encodeURIComponent(asnIdForMatch)}/match-line`, {
           style: form.style, color: form.color,
-          country_of_origin: form.country_of_origin, fabric_content: form.fabric_content,
         });
         if (!res.ok || !alive) return;
         const m = await res.json();
@@ -409,7 +439,13 @@ export const ReceivingModule = () => {
       } catch (e) { logLoadError('match asn line')(e); }
     }, 300);
     return () => { alive = false; clearTimeout(matchTimer.current); };
-  }, [asnIdForMatch, form.style, form.color, form.country_of_origin, form.fabric_content, editingId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [asnIdForMatch, form.style, form.color, editingId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Línea de una entrada con número de parte ya decidida: país y tela quedan
+  // bloqueados (heredados de la línea), igual que estilo/color/talla del UPC.
+  const lockedLine = (lineMatch?.formatted && selectedAsnLine != null)
+    ? ((selectedAsnDoc?.items || []).find(l => l.line_no === selectedAsnLine) || null)
+    : null;
 
   const clearAsnLine = () => {
     setSelectedAsnLine(null);
@@ -1091,8 +1127,25 @@ export const ReceivingModule = () => {
                     )}
                   </div>
                   {lineMatch?.formatted && lineMatch.status === 'none' && (
-                    <div className="px-3 py-2 text-xs font-medium text-red-600 dark:text-red-400 bg-red-500/10 border-b border-red-500/20 flex items-center gap-1.5" data-testid="rcv-line-none">
-                      <AlertTriangle className="w-3.5 h-3.5 shrink-0" /> {t('wms_rcv_line_none', { asn: form.asn_reference })}
+                    <div className="px-3 py-2 text-xs font-medium text-red-600 dark:text-red-400 bg-red-500/10 border-b border-red-500/20" data-testid="rcv-line-none">
+                      <div className="flex items-center gap-1.5"><AlertTriangle className="w-3.5 h-3.5 shrink-0" /> {t('wms_rcv_line_none', { asn: form.asn_reference })}</div>
+                      {/* Por qué: qué dato del cartón no cuadra con cada línea, con
+                          los valores de ambos lados. Sin esto el operador no sabe si
+                          corregir la tela/país del cartón o pedir la línea. */}
+                      {(lineMatch.mismatches || []).length > 0 && (
+                        <ul className="mt-1 ml-5 list-disc space-y-0.5 font-normal text-red-700/90 dark:text-red-300/90">
+                          {lineMatch.mismatches.slice(0, 4).map(mm => {
+                            const f = (mm.fails || [])[0];
+                            const key = { style: 'style', color: 'color', country: 'country_code', composition: 'composition_code' }[f];
+                            const label = { style: t('wms_label_style'), color: t('wms_label_color'), country: t('wms_country'), composition: t('wms_asn_composition') }[f];
+                            return (
+                              <li key={mm.line_no}>
+                                {t('wms_rcv_line_mismatch', { n: mm.line_no, pn: mm.part_number, field: label, carton: (lineMatch.carton || {})[key] || '—', line: mm[key] || '—' })}
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      )}
                     </div>
                   )}
                   {pendingAsnLines.length === 0 ? (
@@ -1332,18 +1385,18 @@ export const ReceivingModule = () => {
             </div>
             <div>
               <label className="text-xs font-medium text-muted-foreground block mb-1">
-                {t('country_of_origin')} {!editingId && <span className="text-red-600 dark:text-red-400">*</span>}
+                {t('country_of_origin')} {!editingId && <span className="text-red-600 dark:text-red-400">*</span>} {!!lockedLine && <span className="text-emerald-600 dark:text-emerald-400 text-[9px]" title={t('wms_rcv_locked_by_line', { n: lockedLine.line_no })}>🔒</span>}
               </label>
               <div className={!editingId && !form.country_of_origin?.trim() ? 'ring-1 ring-red-500/40 rounded' : ''}>
-                <SearchableSelect options={countryOptions} value={form.country_of_origin} onChange={val => setForm(p => ({ ...p, country_of_origin: val }))} placeholder={t('wms_search_country')} testId="rcv-country" allowCreate={false} />
+                <SearchableSelect options={countryOptions} value={form.country_of_origin} onChange={val => setForm(p => ({ ...p, country_of_origin: val }))} placeholder={t('wms_search_country')} testId="rcv-country" allowCreate={false} disabled={!!lockedLine} />
               </div>
             </div>
             <div>
               <label className="text-xs font-medium text-muted-foreground block mb-1">
-                {t('fabric_content')} {!editingId && <span className="text-red-600 dark:text-red-400">*</span>}
+                {t('fabric_content')} {!editingId && <span className="text-red-600 dark:text-red-400">*</span>} {!!lockedLine && <span className="text-emerald-600 dark:text-emerald-400 text-[9px]" title={t('wms_rcv_locked_by_line', { n: lockedLine.line_no })}>🔒</span>}
               </label>
               <div className={!editingId && !form.fabric_content?.trim() ? 'ring-1 ring-red-500/40 rounded' : ''}>
-                <SearchableSelect options={fabricOptions} value={form.fabric_content} onChange={val => setForm(p => ({ ...p, fabric_content: val }))} placeholder={t('wms_search_fabric')} testId="rcv-fabric" allowCreate={false} />
+                <SearchableSelect options={fabricOptions} value={form.fabric_content} onChange={val => setForm(p => ({ ...p, fabric_content: val }))} placeholder={t('wms_search_fabric')} testId="rcv-fabric" allowCreate={false} disabled={!!lockedLine} />
               </div>
             </div>
           </div>

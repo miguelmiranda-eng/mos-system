@@ -3591,6 +3591,8 @@ const en = {
   wms_rcv_line_auto: "line assigned",
   wms_rcv_line_pick: "Pick the line: several parts could match this carton",
   wms_rcv_line_none: "This carton is not on entry {asn}. A lead must add the line in Inbound before receiving it.",
+  wms_rcv_line_mismatch: "Line {n} ({pn}): carton {field} {carton} ≠ ASN {line}",
+  wms_rcv_locked_by_line: "Inherited from ASN line {n} (the ASN rules)",
   wms_rcv_line_sample: "Sample line: not received into the warehouse",
   wms_rcv_asn_closed_or_empty: "This ASN is closed or has no lines — you can receive manually without matching.",
   wms_rcv_badge_pending: "pending",

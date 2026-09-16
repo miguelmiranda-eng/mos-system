@@ -2777,7 +2777,8 @@ async def create_receiving(request: Request):
                 else:
                     raise HTTPException(422, (
                         f"Este cartón ({style} {color} · {country_of_origin or 'sin país'} · "
-                        f"{fabric_content or 'sin composición'}) no viene en la entrada {asn_ref}. "
+                        f"{fabric_content or 'sin composición'}) no viene en la entrada {asn_ref}: "
+                        f"{_describe_line_mismatch(_m)}. "
                         f"Un líder debe agregar la línea en Entradas antes de recibirlo."))
         if ref_asn and ref_asn.get("closed"):
             detalle = f"El ASN {asn_ref} ya cerró su recibo. Reábrelo para recibir más."
@@ -11058,19 +11059,23 @@ def _match_asn_line(asn: dict, cfg: dict, *, style="", color="", country="", fab
     st, co = pn.norm(style), pn.norm(color)
     cc = pn.country_code(country, cfg)
     comp = pn.composition_code(pn.parse_fibers(fabric, cfg)[0]) if fabric else ""
+    carton = {"style": st, "color": co, "country_code": cc, "composition_code": comp}
 
-    def ok(it):
+    def fails(it) -> list:
+        """Qué datos del cartón descartan esta línea (vacío = candidata)."""
+        out = []
         if st and pn.norm(it.get("style")) and pn.norm(it.get("style")) != st:
-            return False
+            out.append("style")
         if co and pn.norm(it.get("color")) and pn.norm(it.get("color")) != co:
-            return False
+            out.append("color")
         if cc and it.get("country_code") and it.get("country_code") != cc:
-            return False
+            out.append("country")
         if comp and it.get("composition_code") and it.get("composition_code") != comp:
-            return False
-        return True
+            out.append("composition")
+        return out
 
-    cands = [it for it in items if ok(it)]
+    checked = [(it, fails(it)) for it in items]
+    cands = [it for it, f in checked if not f]
     # Preferir las líneas que casan por estilo explícito sobre las "abiertas".
     if st:
         exact = [it for it in cands if pn.norm(it.get("style")) == st]
@@ -11078,11 +11083,31 @@ def _match_asn_line(asn: dict, cfg: dict, *, style="", color="", country="", fab
             cands = exact
     pns = {it.get("part_number") for it in cands}
     if not cands:
-        return {"status": "none", "line": None, "candidates": []}
+        # Decir POR QUÉ: el operador debe saber si es el país o la composición
+        # del cartón lo que no cuadra con la entrada (y contra qué valores).
+        return {"status": "none", "line": None, "candidates": [], "carton": carton,
+                "mismatches": [{"line_no": it.get("line_no"), "part_number": it.get("part_number"),
+                                "style": it.get("style") or "", "color": it.get("color") or "",
+                                "country_code": it.get("country_code") or "",
+                                "composition_code": it.get("composition_code") or "", "fails": f}
+                               for it, f in checked]}
     if len(pns) > 1:
         return {"status": "ambiguous", "line": None, "candidates": cands}
     with_room = [it for it in cands if int(it.get("qty_received") or 0) < int(it.get("qty_expected") or 0)]
     return {"status": "matched", "line": (with_room or cands[-1:])[0], "candidates": cands}
+
+
+def _describe_line_mismatch(m: dict) -> str:
+    """'composición 50P25C25R vs 50C50P (línea 1)' — para el 422 del recibo."""
+    names = {"style": "estilo", "color": "color", "country": "país", "composition": "composición"}
+    keys = {"style": "style", "color": "color", "country": "country_code", "composition": "composition_code"}
+    parts = []
+    for mm in (m.get("mismatches") or [])[:3]:
+        f = (mm.get("fails") or [None])[0]
+        if not f:
+            continue
+        parts.append(f"{names[f]} {m['carton'].get(keys[f]) or '—'} vs {mm.get(keys[f]) or '—'} (línea {mm.get('line_no')})")
+    return "; ".join(parts) or "ningún dato del cartón coincide"
 
 
 @router.post("/asn/{asn_id}/match-line")
