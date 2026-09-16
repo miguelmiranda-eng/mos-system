@@ -178,6 +178,26 @@ async def main():
         al = r.json().get("asn_link")
         check("caja sin línea: asn_link con la entrada pero sin parte", al and al["asn_id"] == "VIEJA-2" and al["line_no"] is None and al["part_number"] == "" and al["match"] is None, al)
 
+        print("\n== 5a. Export de inventario: columna Part Number en las dos hojas ==")
+        r = await c.get("/api/wms/export/inventory", params={"customer": "GOODIE TWO SLEEVES"})
+        check("xlsx", r.status_code == 200 and r.headers.get("content-type", "").startswith("application/vnd.openxmlformats"), r.status_code)
+        import openpyxl, io as _io
+        wb = openpyxl.load_workbook(_io.BytesIO(r.content), read_only=True)
+        inv = list(wb["Inventory"].iter_rows(values_only=True))
+        hdr = list(inv[0])
+        check("Inventory: 'Part Number' junto al UPC", "Part Number" in hdr and hdr.index("Part Number") == hdr.index("UPC") + 1, hdr[:8])
+        col = hdr.index("Part Number")
+        pns = {row[col] for row in inv[1:] if row[col]}
+        # La celda M1163/BRACKEN/L junta cajas de dos números de parte (60 de
+        # 100C y 10 de 50C50P en la misma ubicación): se listan separados por coma.
+        check("Inventory: la celda con dos partes las lista; la otra trae la suya", "GTS-SS100CCN, GTS-SS50C50PCN" in pns and "GTS-SS100CCN" in pns, pns)
+        bx_rows = list(wb["Cajas - LPNs"].iter_rows(values_only=True))
+        bh = list(bx_rows[0])
+        check("Cajas - LPNs: 'Part Number' junto al UPC", "Part Number" in bh and bh.index("Part Number") == bh.index("UPC") + 1, bh[:8])
+        bcol = bh.index("Part Number"); idcol = bh.index("Box / LPN")
+        by_box = {row[idcol]: row[bcol] for row in bx_rows[1:]}
+        check("cada caja trae su número de parte", by_box.get(bx["box_id"]) == "GTS-SS100CCN" and all(v for v in by_box.values()), by_box)
+
         print("\n== 5b. Etiqueta de caja: la celda Lote imprime el número de parte ==")
         r = await c.get(f"/api/wms/labels/box/{bx['box_id']}")
         check("caja nueva: 'N.º parte' + GTS-SS100CCN en la etiqueta", r.status_code == 200 and "N.º parte" in r.text and "GTS-SS100CCN" in r.text, r.status_code)
