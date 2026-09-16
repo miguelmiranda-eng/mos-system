@@ -10581,7 +10581,7 @@ async def export_inventory(request: Request, exclude_hold: bool = False, custome
     # SKU y UPC van pegados al Style: son la identidad con la que el cliente y
     # las etiquetas fisicas hablan (el UPC solo lo traen las filas que entraron
     # por receiving con codigo; puede venir vacio en cargas de Excel viejas).
-    headers = ["Customer", "Style", "SKU", "UPC", "Part Number", "Color", "Size", "Description", "Category",
+    headers = ["Customer", "Style", "SKU", "UPC", "IMMEX ID", "Color", "Size", "Description", "Category",
                "Manufacturer", "Location", "Total Boxes", "On Hand", "Allocated", "Available",
                "Country of Origin", "Fabric Content", "Is BPO",
                "Última transferencia", "Transferido por", "Órdenes"]
@@ -10627,7 +10627,7 @@ async def export_inventory(request: Request, exclude_hold: bool = False, custome
     # En las cajas el sku es el COMPUESTO (ej. CORE-BLACK-L) y el upc es el
     # codigo con el que se recibio ese carton — la llave para rastrear contra
     # la lista del cliente.
-    box_headers = ["Box / LPN", "Customer", "Style", "SKU", "UPC", "Part Number", "Color", "Size", "Location",
+    box_headers = ["Box / LPN", "Customer", "Style", "SKU", "UPC", "IMMEX ID", "Color", "Size", "Location",
                    "Units", "Status", "Country of Origin", "Fabric Content", "Description",
                    "Última transferencia", "Transferido por", "Orden"]
     for i, h in enumerate(box_headers):
