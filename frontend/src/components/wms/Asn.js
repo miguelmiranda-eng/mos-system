@@ -228,12 +228,22 @@ export const AsnModule = ({ currentUser, initialDetail }) => {
   // Opciones del desplegable de composición: el catálogo + el valor actual si
   // no está en él (entradas viejas, texto pegado que el servidor no pudo
   // canonizar), marcado, para que nunca se pierda lo capturado.
-  const compositionInCatalog = (v) => !v || (pnCfg?.compositions || []).includes(v);
-  const compositionOptions = (current) => {
-    const opts = [{ value: '', label: '—' }, ...(pnCfg?.compositions || []).map(c => ({ value: c, label: c }))];
-    if (current && !compositionInCatalog(current)) opts.push({ value: current, label: `${current} ⚠ ${t('wms_asn_fabric_not_in_catalog')}` });
+  const inCatalog = (listKey, v) => !v || (pnCfg?.[listKey] || []).includes(v);
+  const catalogOptions = (listKey, current) => {
+    const opts = [{ value: '', label: '—' }, ...(pnCfg?.[listKey] || []).map(c => ({ value: c, label: c }))];
+    if (current && !inCatalog(listKey, current)) opts.push({ value: current, label: `${current} ⚠ ${t('wms_asn_not_in_catalog')}` });
     return opts;
   };
+  // Texto pegado que coincide con una entrada del catálogo salvo acentos,
+  // mayúsculas o espacios se sustituye por la del catálogo (así cae en el
+  // desplegable sin marca).
+  const foldKey = (s) => String(s || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ').trim().toUpperCase();
+  const snapToCatalog = (listKey, v) => {
+    if (!v) return v;
+    const k = foldKey(v);
+    return (pnCfg?.[listKey] || []).find(c => foldKey(c) === k) || v;
+  };
+  const CATALOG_OF = { description: 'descriptions', fabric: 'compositions' };
   const rmCLine = (i) => setCreateDraft(d => ({ ...d, items: d.items.filter((_, j) => j !== i) }));
   const setCLineExtra = (i, key, v) => setCreateDraft(d => ({ ...d, items: d.items.map((it, j) => j === i ? { ...it, extra: { ...(it.extra || {}), [key]: v } } : it) }));
 
@@ -246,12 +256,15 @@ export const AsnModule = ({ currentUser, initialDetail }) => {
     { key: 'bundles', label: t('wms_asn_bundles'), num: true }, { key: 'package_type', label: t('wms_asn_package_type'), upper: true },
   ];
   const GRID_FIXED = [
-    { key: 'description', label: t('description'), upper: true, required: true },
+    // Descripción y composición salen de catálogos (pnCfg.descriptions /
+    // compositions), no de texto libre. Lo pegado del Excel se conserva y se
+    // marca si no está en el catálogo; la composición además se canoniza.
+    { key: 'description', label: t('description'), list: 'descriptions', required: true },
     { key: 'garment', label: t('wms_asn_garment'), select: 'garments' },
     { key: 'gender', label: t('wms_asn_gender'), select: 'genders' },
     // Composición: desplegable del catálogo (pnCfg.compositions, canónico), no
     // texto libre. Lo pegado del Excel se canoniza vía la propuesta del servidor.
-    { key: 'fabric', label: t('wms_asn_composition'), select: 'compositions', required: true },
+    { key: 'fabric', label: t('wms_asn_composition'), list: 'compositions', required: true },
     { key: 'country', label: t('wms_country'), upper: true, required: true, datalist: 'asn-countries' },
     { key: 'qty_expected', label: t('quantity'), num: true, required: true },
     { key: 'unit', label: t('wms_asn_unit'), upper: true },
@@ -396,6 +409,7 @@ export const AsnModule = ({ currentUser, initialDetail }) => {
             const key = PL_RAW_LAYOUT[ci]; if (!key) return;
             const v = String(raw).trim();
             it[key] = ['description', 'country', 'unit', 'package_type', 'style', 'color'].includes(key) ? v.toUpperCase() : v;
+            if (CATALOG_OF[key]) it[key] = snapToCatalog(CATALOG_OF[key], it[key]);
           });
         } else {
           cells.forEach((raw, ci) => {
@@ -409,7 +423,7 @@ export const AsnModule = ({ currentUser, initialDetail }) => {
             } else if (col.checkbox) {
               it[col.key] = truthy(v);
             } else {
-              it[col.key] = col.upper ? v.toUpperCase() : v;
+              it[col.key] = col.list ? snapToCatalog(col.list, v.toUpperCase()) : (col.upper ? v.toUpperCase() : v);
               if (PROPOSED_FIELDS.includes(col.key)) it._touched = { ...(it._touched || {}), [col.key]: !!v };
             }
           });
@@ -878,12 +892,12 @@ export const AsnModule = ({ currentUser, initialDetail }) => {
                           </div>
                         ) : col.checkbox ? (
                           <input type="checkbox" checked={!!it[col.key]} onChange={e => setCLine(i, col.key, e.target.checked)} className="w-4 h-4 accent-primary block mx-auto my-2.5" />
-                        ) : col.select === 'compositions' ? (
-                          <select value={it.fabric ?? ''} onChange={e => setCLine(i, 'fabric', e.target.value)}
-                            className={`${GRID_CLS} ${it.fabric && !compositionInCatalog(it.fabric) ? '!text-amber-600 dark:!text-amber-400' : ''}`}
-                            title={it.fabric && !compositionInCatalog(it.fabric) ? t('wms_asn_fabric_not_in_catalog') : undefined}
-                            data-testid={`asn-cell-fabric-${i}`}>
-                            {compositionOptions(it.fabric).map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                        ) : col.list ? (
+                          <select value={it[col.key] ?? ''} onChange={e => setCLine(i, col.key, e.target.value)}
+                            className={`${GRID_CLS} ${it[col.key] && !inCatalog(col.list, it[col.key]) ? '!text-amber-600 dark:!text-amber-400' : ''}`}
+                            title={it[col.key] && !inCatalog(col.list, it[col.key]) ? t('wms_asn_not_in_catalog') : (it[col.key] || undefined)}
+                            data-testid={`asn-cell-${col.key}-${i}`}>
+                            {catalogOptions(col.list, it[col.key]).map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
                           </select>
                         ) : col.select ? (
                           <select value={it[col.key] ?? ''} onChange={e => setCLine(i, col.key, e.target.value)} className={GRID_CLS} data-testid={`asn-cell-${col.key}-${i}`}>
@@ -1469,7 +1483,13 @@ export const AsnModule = ({ currentUser, initialDetail }) => {
                               <tr key={i} className="hover:bg-muted/40">
                                 <td className="p-2 text-xs font-mono text-muted-foreground">{i + 1}</td>
                                 <td className="p-2"><input value={it.part_number} onChange={e => setItem(i, 'part_number', e.target.value.toUpperCase())} className="w-full min-w-[150px] h-8 px-2 bg-card border border-input rounded-md text-xs font-mono focus:outline-none focus:border-primary" /></td>
-                                <td className="p-2"><input value={it.description} onChange={e => setItem(i, 'description', e.target.value)} className="w-full min-w-[160px] h-8 px-2 bg-card border border-input rounded-md text-xs focus:outline-none focus:border-primary" /></td>
+                                <td className="p-2">
+                                  <select value={it.description || ''} onChange={e => setItem(i, 'description', e.target.value)}
+                                    className={`w-full min-w-[220px] max-w-[320px] h-8 px-1 bg-card border border-input rounded-md text-xs ${it.description && !inCatalog('descriptions', it.description) ? '!text-amber-600 dark:!text-amber-400' : ''}`}
+                                    title={it.description && !inCatalog('descriptions', it.description) ? t('wms_asn_not_in_catalog') : (it.description || undefined)}>
+                                    {catalogOptions('descriptions', it.description).map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                                  </select>
+                                </td>
                                 <td className="p-2">
                                   <div className="flex gap-1">
                                     <select value={it.gender || ''} onChange={e => setItem(i, 'gender', e.target.value)} className="h-8 px-1 bg-card border border-input rounded-md text-xs" title={t('wms_asn_gender')}>
@@ -1484,9 +1504,9 @@ export const AsnModule = ({ currentUser, initialDetail }) => {
                                 </td>
                                 <td className="p-2">
                                   <select value={it.fabric || ''} onChange={e => setItem(i, 'fabric', e.target.value)}
-                                    className={`w-full min-w-[150px] h-8 px-1 bg-card border border-input rounded-md text-xs ${it.fabric && !compositionInCatalog(it.fabric) ? '!text-amber-600 dark:!text-amber-400' : ''}`}
-                                    title={it.fabric && !compositionInCatalog(it.fabric) ? t('wms_asn_fabric_not_in_catalog') : undefined}>
-                                    {compositionOptions(it.fabric).map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                                    className={`w-full min-w-[150px] h-8 px-1 bg-card border border-input rounded-md text-xs ${it.fabric && !inCatalog('compositions', it.fabric) ? '!text-amber-600 dark:!text-amber-400' : ''}`}
+                                    title={it.fabric && !inCatalog('compositions', it.fabric) ? t('wms_asn_not_in_catalog') : undefined}>
+                                    {catalogOptions('compositions', it.fabric).map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
                                   </select>
                                 </td>
                                 <td className="p-2 text-center"><input type="checkbox" checked={!!it.sample} onChange={e => setItem(i, 'sample', e.target.checked)} className="w-4 h-4 accent-primary" /></td>

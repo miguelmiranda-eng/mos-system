@@ -11,6 +11,8 @@ import { fetcher, putter, logLoadError, useWmsCatalogs } from "./lib";
 //   Prendas   → código, etiqueta y palabras que la delatan en la descripción.
 //   Fibras    → letra y palabras (ALGODON/COTTON → C).
 //   Países    → nombre o ISO3 capturado → ISO2 del código (CHINA/CHN → CN).
+//   Descripciones → catálogo del desplegable "Descripción" de la hoja: la
+//               frase aduanal completa del packing list (con composición).
 //   Composiciones → catálogo del desplegable "Composición" de la hoja
 //               (60% ALGODON 40% POLIESTER…). El servidor las canoniza y
 //               rechaza las que no suman 100 o traen fibra desconocida.
@@ -18,9 +20,11 @@ import { fetcher, putter, logLoadError, useWmsCatalogs } from "./lib";
 // Guardar manda SOLO la pestaña activa; el backend fusiona diccionarios por
 // llave y reemplaza listas completas. Un cliente/país de fábrica se "quita"
 // guardándolo con valor vacío (el backend lo descarta al fusionar).
-const TABS = ["customers", "garments", "fibers", "compositions", "countries", "import_types"];
+const TABS = ["customers", "descriptions", "garments", "fibers", "compositions", "countries", "import_types"];
 // Listas de texto plano (una fila = un string): comparten editor.
-const LIST_TABS = new Set(["import_types", "compositions"]);
+const LIST_TABS = new Set(["import_types", "compositions", "descriptions"]);
+// Listas que se capturan en MAYÚSCULAS (van a la hoja tal cual).
+const UPPER_TABS = new Set(["compositions", "descriptions"]);
 
 // Vista previa del código de composición (58% ALGODON 42% POLIESTER → 58C42P)
 // con las fibras de la config. Solo orientativa: el servidor es quien valida.
@@ -186,8 +190,9 @@ export function AsnConfigModal({ open, onClose, onSaved }) {
                 const pv = tab === "compositions" && v.trim() ? previewComposition(v, cfg.fibers) : null;
                 return (
                   <div key={i} className="flex items-center gap-2">
-                    <input value={v} onChange={e => { const v = e.target.value; setTypes(p => p.map((x, j) => j === i ? (tab === "compositions" ? v.toUpperCase() : v) : x)); }}
-                      className={`${cls.input} flex-1 ${tab === "compositions" ? "font-mono" : ""}`} placeholder={tab === "compositions" ? "60% ALGODON 40% POLIESTER" : undefined}
+                    <input value={v} onChange={e => { const v = e.target.value; setTypes(p => p.map((x, j) => j === i ? (UPPER_TABS.has(tab) ? v.toUpperCase() : v) : x)); }}
+                      className={`${cls.input} flex-1 ${tab === "compositions" ? "font-mono" : ""}`}
+                      placeholder={tab === "compositions" ? "60% ALGODON 40% POLIESTER" : tab === "descriptions" ? "CAMISETA MANGA CORTA PARA HOMBRE DE PUNTO 100% ALGODÓN" : undefined}
                       data-testid={`asn-cfg-list-${i}`} />
                     {pv && (
                       <span className={`w-28 text-[11px] font-mono truncate ${pv.ok ? "text-muted-foreground" : "text-amber-600 dark:text-amber-400"}`}

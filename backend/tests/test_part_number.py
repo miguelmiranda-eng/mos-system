@@ -147,6 +147,21 @@ def run():
     m = merge_config({"compositions": ["100% ALGODON"]})
     check("merge_config reemplaza la lista completa", m["compositions"] == ["100% ALGODON"] and composition_text(parse_fibers("100% ALGODON", m)[0], m) == "100% ALGODON")
 
+    print("\n== 7. Catálogo de descripciones (cada una debe componer)")
+    bad = []
+    for d in C["descriptions"]:
+        p = parse_description(d, C)
+        comp = normalize_composition(d, C)
+        if not p["garment"] or not comp["ok"]:
+            bad.append((d, p["garment"], comp["errors"]))
+    check("todas las descripciones de fábrica proponen prenda y composición válida", not bad, bad)
+    p = parse_description("CAMISETA MANGA CORTA PARA MUJER DE PUNTO 94% MODAL, 6% SPANDEX", C)
+    check("mujer + modal/spandex", p["gender"] == "W" and composition_code(p["fibers"]) == "94M06S", p)
+    p = parse_description("SUDADERA SIN DISPOSITIVO DE CIERRE CON CAPUCHA PARA JOVEN DE PUNTO 60% ALGODÓN, 40% POLIESTER", C)
+    check("joven → niño (B), capucha → HO", p["gender"] == "B" and p["garment"] == "HO", p)
+    keys = [d.upper() for d in C["descriptions"]]
+    check("sin duplicados", len(keys) == len(set(keys)))
+
     print(f"\n===== {ok} PASS / {fail} FAIL =====")
     return fail
 
