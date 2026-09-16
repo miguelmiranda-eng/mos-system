@@ -151,6 +151,42 @@ async def main():
         it = r.json()["items"][0]
         check("cliente sin prefijo: no compone, conserva el manual", it["part_number"] == "MANUAL-1" and it["part_number_auto"] is False, it)
 
+        print("\n== 5. Modo estricto: composición y país fuera de catálogo → 400 ==")
+        r = await c.post("/api/wms/asn", json={"asn_id": "STRICT-1", "customer": "GOODIE TWO SLEEVES", "items": [
+            {"garment": "SS", "fabric": "100% ALGODON", "country": "CHN", "qty_expected": 5},
+            {"garment": "SS", "fabric": "61% ALGODON 39% POLIESTER", "country": "CHN", "qty_expected": 5},
+            {"garment": "SS", "fabric": "100% ALGODON", "country": "XX", "qty_expected": 5},
+            {"garment": "SS", "fabric": "100% BAMBU", "country": "MARTE", "qty_expected": 5},
+        ]})
+        check("cliente con prefijo + valores fuera de catálogo → 400", r.status_code == 400, r.text[:200])
+        det = r.json().get("detail", "") if r.status_code == 400 else ""
+        check("el 400 nombra línea, valor y pestaña de Configuración",
+              "Línea 2" in det and "61% ALGODON 39% POLIESTER" in det and "Composiciones" in det
+              and "Línea 3" in det and "'XX'" in det and "Países" in det
+              and "Línea 4" in det and "BAMBU" in det and "MARTE" in det and "Línea 1" not in det, det)
+        check("el 400 no guardó nada", sdb.wms_asn.count_documents({"asn_id": "STRICT-1"}) == 0)
+        r = await c.post("/api/wms/asn", json={"asn_id": "STRICT-2", "customer": "GOODIE TWO SLEEVES", "items": [
+            {"garment": "SS", "fabric": "42% poliéster 58% algodón", "country": "china", "qty_expected": 5},
+            {"part_number": "5000", "qty_expected": 10, "country": "NIC"},
+        ]})
+        check("catálogo por código/sin acentos + línea sin composición → 200", r.status_code == 200 and r.json()["items"][0]["part_number"] == "GTS-SS58C42PCN", r.text[:200])
+        r = await c.post("/api/wms/asn", json={"asn_id": "STRICT-3", "customer": "SIN PREFIJO SA", "items": [
+            {"fabric": "100% BAMBU", "country": "MARTE", "qty_expected": 5, "part_number": "MANUAL-2"}]})
+        check("cliente sin prefijo sigue permisivo", r.status_code == 200, r.text[:200])
+        r = await c.put("/api/wms/asn/STRICT-2", json={"items": [
+            {"line_no": 1, "garment": "SS", "fabric": "61% ALGODON 39% POLIESTER", "country": "CHN", "qty_expected": 5}]})
+        check("PUT en entrada formateada también valida → 400", r.status_code == 400 and "61% ALGODON" in r.text, r.text[:200])
+        sdb.wms_asn.insert_one({"asn_id": "LEGACY-1", "customer": "GOODIE TWO SLEEVES", "status": "pending", "items": [
+            {"line_no": 1, "part_number": "5000", "description": "MENS SS", "fabric": "100% BAMBU", "country": "MARTE", "qty_expected": 10, "qty_received": 0}]})
+        r = await c.put("/api/wms/asn/LEGACY-1", json={"po_number": "PO-9", "items": [
+            {"line_no": 1, "part_number": "5000", "description": "MENS SS", "fabric": "100% BAMBU", "country": "MARTE", "qty_expected": 12}]})
+        check("PUT en entrada VIEJA (sin número compuesto) sigue permisivo", r.status_code == 200, r.text[:200])
+        r = await c.put("/api/wms/asn/part-number/config", json={"compositions": ["61% ALGODON 39% POLIESTER"]})
+        check("agregar la composición al catálogo…", r.status_code == 200)
+        r = await c.put("/api/wms/asn/STRICT-2", json={"items": [
+            {"line_no": 1, "garment": "SS", "fabric": "61% ALGODON 39% POLIESTER", "country": "CHN", "qty_expected": 5}]})
+        check("…y la misma línea ya entra (GTS-SS61C39PCN)", r.status_code == 200 and r.json()["items"][0]["part_number"] == "GTS-SS61C39PCN", r.text[:200])
+
     print(f"\n===== {ok} PASS / {fail} FAIL =====")
     raw.drop_database(SMOKE_DB)
     print(f"base {SMOKE_DB} eliminada")

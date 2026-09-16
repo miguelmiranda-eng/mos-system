@@ -11164,6 +11164,32 @@ async def put_asn_columns(request: Request):
 
 
 # ── Casar un cartón con la línea de la entrada (fase 2) ─────────────────────
+def _asn_strict_errors(items: list, customer: str, cfg: dict) -> list:
+    """Modo estricto de captura (decisión 2026-09-16): en una entrada de un
+    cliente CON prefijo, composición y país de cada línea deben estar en el
+    catálogo — son los dos datos que forman el número de parte y un valor
+    inventado deja la línea sin código hasta que el camión ya está en piso.
+    Solo se validan valores presentes (una línea sin formato sigue pasando) y
+    la descripción no se valida. Devuelve un mensaje por línea con el valor y
+    la pestaña donde se arregla."""
+    if not (cfg.get("customers") or {}).get(pn.norm(customer), ""):
+        return []
+    errors = []
+    for it in items:
+        problems = []
+        fabric = str(it.get("fabric") or "")
+        r = pn.composition_in_catalog(fabric, cfg)
+        if not r["ok"]:
+            problems.append(f"composición '{pn.norm(fabric)}' {r['why']}")
+        country = str(it.get("country") or "")
+        r = pn.country_in_catalog(country, cfg)
+        if not r["ok"]:
+            problems.append(f"país '{pn.norm(country)}' {r['why']}")
+        if problems:
+            errors.append(f"Línea {it.get('line_no')}: " + " · ".join(problems))
+    return errors
+
+
 def _asn_is_formatted(asn: dict) -> bool:
     """True si la entrada se capturó con el formato único (alguna línea con
     número de parte compuesto). Las entradas viejas siguen con el casado por
@@ -11297,6 +11323,9 @@ async def create_asn(request: Request):
             "extra": _normalize_asn_extra(it.get("extra"), custom_cols),
             **_normalize_asn_line_format(it, customer, pn_cfg),
         })
+    strict = _asn_strict_errors(normalized_items, customer, pn_cfg)
+    if strict:
+        raise HTTPException(400, " | ".join(strict))
 
     doc = {
         "asn_id": asn_id,
@@ -11664,6 +11693,12 @@ async def update_asn(asn_id: str, request: Request):
                 "extra": _normalize_asn_extra(it.get("extra"), custom_cols),
                 **_normalize_asn_line_format(it, line_customer, pn_cfg),
             })
+        # Entradas viejas (sin número de parte compuesto) siguen permisivas:
+        # su vocabulario es el legado y no se van a recibir con match-line.
+        if _asn_is_formatted(asn):
+            strict = _asn_strict_errors(normalized, line_customer, pn_cfg)
+            if strict:
+                raise HTTPException(400, " | ".join(strict))
         update["items"] = normalized
 
         total_exp = sum(i["qty_expected"] for i in normalized)

@@ -11,6 +11,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 from services.part_number import (  # noqa: E402
     DEFAULT_CONFIG, compose, parse_description, parse_fibers, composition_code,
     parse_part_number, merge_config, country_code, normalize_composition, composition_text,
+    composition_in_catalog, country_in_catalog,
 )
 
 ok = fail = 0
@@ -161,6 +162,22 @@ def run():
     check("joven → niño (B), capucha → HO", p["gender"] == "B" and p["garment"] == "HO", p)
     keys = [d.upper() for d in C["descriptions"]]
     check("sin duplicados", len(keys) == len(set(keys)))
+
+    print("\n== 8. Modo estricto: composición y país contra el catálogo")
+    check("composición del catálogo (texto canónico) → ok", composition_in_catalog("58% ALGODON 42% POLIESTER", C)["ok"])
+    check("misma composición con acentos/orden distinto → ok (se compara por código)", composition_in_catalog("42% poliéster, 58% algodón", C)["ok"])
+    r = composition_in_catalog("100% BAMBU", C)
+    check("fibra desconocida → no ok, nombra la fibra", not r["ok"] and "BAMBU" in r["why"], r)
+    r = composition_in_catalog("60% ALGODON 50% POLIESTER", C)
+    check("suma ≠ 100 → no ok", not r["ok"] and "100%" in r["why"], r)
+    r = composition_in_catalog("61% ALGODON 39% POLIESTER", C)
+    check("fibras válidas pero fuera del catálogo → no ok, apunta a Configuración", not r["ok"] and "Composiciones" in r["why"], r)
+    check("vacía → ok (la obligatoriedad no es de este predicado)", composition_in_catalog("", C)["ok"])
+    C2 = merge_config({"compositions": ["61% ALGODON 39% POLIESTER"]})
+    check("catálogo editado manda", composition_in_catalog("61% ALGODON 39% POLIESTER", C2)["ok"] and not composition_in_catalog("58% ALGODON 42% POLIESTER", C2)["ok"])
+    check("país por nombre / ISO3 / ISO2 del catálogo → ok", all(country_in_catalog(x, C)["ok"] for x in ("China", "CHN", "cn", "REPÚBLICA DOMINICANA")))
+    check("ISO2 suelto que no es del catálogo → no ok (country_code lo aceptaría)", not country_in_catalog("XX", C)["ok"] and country_code("XX", C) == "XX")
+    check("país vacío → ok", country_in_catalog("", C)["ok"])
 
     print(f"\n===== {ok} PASS / {fail} FAIL =====")
     return fail

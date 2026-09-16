@@ -244,6 +244,25 @@ export const AsnModule = ({ currentUser, initialDetail }) => {
     return (pnCfg?.[listKey] || []).find(c => foldKey(c) === k) || v;
   };
   const CATALOG_OF = { description: 'descriptions', fabric: 'compositions' };
+  // Modo estricto (espejo de _asn_strict_errors del backend): composición y país
+  // FORMAN el número de parte; fuera del catálogo el servidor contesta 400, así
+  // que aquí se ataja antes de mandar, nombrando la línea. La descripción no se
+  // valida (texto aduanal, no entra al código). Aplica a clientes con prefijo.
+  const countryInCatalog = (v) => {
+    if (!v) return true;
+    const k = foldKey(v);
+    const table = pnCfg?.countries || {};
+    return Object.prototype.hasOwnProperty.call(table, k) || Object.values(table).some(c => String(c).toUpperCase() === k);
+  };
+  const strictLineError = (items, customer, numOf = (i) => i + 1) => {
+    if (!customer || !pnCfg?.customers?.[customer]) return null;
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i];
+      if (it.fabric && !inCatalog('compositions', it.fabric)) return t('wms_asn_line_comp_off_catalog', { n: numOf(i), v: it.fabric });
+      if (it.country && !countryInCatalog(it.country)) return t('wms_asn_line_country_off_catalog', { n: numOf(i), v: it.country });
+    }
+    return null;
+  };
   const rmCLine = (i) => setCreateDraft(d => ({ ...d, items: d.items.filter((_, j) => j !== i) }));
   const setCLineExtra = (i, key, v) => setCreateDraft(d => ({ ...d, items: d.items.map((it, j) => j === i ? { ...it, extra: { ...(it.extra || {}), [key]: v } } : it) }));
 
@@ -450,6 +469,8 @@ export const AsnModule = ({ currentUser, initialDetail }) => {
     if (bad >= 0) { toast.error(t('wms_asn_line_incomplete', { n: d.items.indexOf(live[bad]) + 1 })); return; }
     const noPn = live.findIndex(it => !it.part_number);
     if (noPn >= 0) { toast.error(t('wms_asn_line_no_pn', { n: d.items.indexOf(live[noPn]) + 1, why: (live[noPn]._pn?.errors || [])[0] || '' })); return; }
+    const offCatalog = strictLineError(live, d.customer, i => d.items.indexOf(live[i]) + 1);
+    if (offCatalog) { toast.error(offCatalog); return; }
     const items = live.map(it => ({ ...lineToPayload(it), brand: d.vendor }));
     setSavingCreate(true);
     try {
@@ -579,6 +600,11 @@ export const AsnModule = ({ currentUser, initialDetail }) => {
         gross_weight: it.gross_weight, bundles: it.bundles, package_type: it.package_type || '',
       }));
     if (items.length === 0) { toast.error(t('wms_asn_min_line_pn')); return; }
+    // Entradas viejas (sin número compuesto) siguen permisivas, igual que el servidor.
+    if ((detailData?.asn?.items || []).some(it => it.part_number_auto)) {
+      const offCatalog = strictLineError(items, editDraft.customer);
+      if (offCatalog) { toast.error(offCatalog); return; }
+    }
     setSavingEdit(true);
     try {
       const res = await putter(`/asn/${encodeURIComponent(detailFor)}`, {
@@ -755,6 +781,8 @@ export const AsnModule = ({ currentUser, initialDetail }) => {
 
   return (
     <div className="space-y-6">
+      {/* Países del catálogo: sugerencias para el campo País de la hoja y de la edición del detalle. */}
+      <datalist id="asn-countries">{pnCountries.map(c => <option key={c} value={c} />)}</datalist>
       <ModuleToolbar
         right={
           <>
@@ -916,7 +944,9 @@ export const AsnModule = ({ currentUser, initialDetail }) => {
                         ) : (
                           <input type={col.num ? 'number' : 'text'} min={col.num ? '0' : undefined} list={col.datalist} value={it[col.key] ?? ''}
                             onChange={e => setCLine(i, col.key, col.upper ? e.target.value.toUpperCase() : e.target.value)}
-                            className={`${GRID_CLS} ${col.num ? 'text-right tabular-nums' : ''} ${col.key === 'description' ? '' : ''}`} data-testid={`asn-cell-${col.key}-${i}`} />
+                            className={`${GRID_CLS} ${col.num ? 'text-right tabular-nums' : ''} ${col.key === 'country' && it.country && !countryInCatalog(it.country) ? '!text-amber-600 dark:!text-amber-400' : ''}`}
+                            title={col.key === 'country' && it.country && !countryInCatalog(it.country) ? t('wms_asn_not_in_catalog') : undefined}
+                            data-testid={`asn-cell-${col.key}-${i}`} />
                         )}
                       </td>
                     ))}
@@ -927,7 +957,6 @@ export const AsnModule = ({ currentUser, initialDetail }) => {
               </tbody>
             </table>
           </div>
-          <datalist id="asn-countries">{pnCountries.map(c => <option key={c} value={c} />)}</datalist>
           <div className="flex items-center justify-between px-4 py-2 border-t border-border text-xs text-muted-foreground">
             <span>{createDraft.items.length} {t('wms_lines_lc')}</span>
             <span>{t('wms_asn_sheet_hint')}</span>
@@ -1518,7 +1547,9 @@ export const AsnModule = ({ currentUser, initialDetail }) => {
                                   </select>
                                 </td>
                                 <td className="p-2 text-center"><input type="checkbox" checked={!!it.sample} onChange={e => setItem(i, 'sample', e.target.checked)} className="w-4 h-4 accent-primary" /></td>
-                                <td className="p-2"><input value={it.country} onChange={e => setItem(i, 'country', e.target.value.toUpperCase())} className="w-20 h-8 px-2 bg-card border border-input rounded-md text-xs font-mono focus:outline-none focus:border-primary" /></td>
+                                <td className="p-2"><input value={it.country} onChange={e => setItem(i, 'country', e.target.value.toUpperCase())} list="asn-countries"
+                                  className={`w-20 h-8 px-2 bg-card border border-input rounded-md text-xs font-mono focus:outline-none focus:border-primary ${it.country && !countryInCatalog(it.country) ? '!text-amber-600 dark:!text-amber-400' : ''}`}
+                                  title={it.country && !countryInCatalog(it.country) ? t('wms_asn_not_in_catalog') : undefined} /></td>
                                 <td className="p-2"><input value={it.brand} onChange={e => setItem(i, 'brand', e.target.value.toUpperCase())} className="w-24 h-8 px-2 bg-card border border-input rounded-md text-xs focus:outline-none focus:border-primary" /></td>
                                 {asnCols.map(c => <td key={c.key} className="p-2"><ExtraCell col={c} line={it} cols={allLineCols} onChange={v => setItemExtra(i, c.key, v)} /></td>)}
                                 <td className="p-2"><input type="number" min="0" value={it.qty_expected} onChange={e => setItem(i, 'qty_expected', e.target.value)} className="w-24 h-8 px-2 bg-card border border-input rounded-md text-xs text-right tabular-nums focus:outline-none focus:border-primary" /></td>

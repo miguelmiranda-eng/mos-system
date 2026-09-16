@@ -3366,6 +3366,8 @@ const en = {
   wms_asn_line_needs_desc: "Enter at least one line with a description",
   wms_asn_line_incomplete: "Line {n}: quantity, country or composition missing",
   wms_asn_line_no_pn: "Line {n}: the part number could not be composed. {why}",
+  wms_asn_line_comp_off_catalog: "Line {n}: composition '{v}' is not in the catalog. Pick one from the dropdown or add it under Settings → Compositions.",
+  wms_asn_line_country_off_catalog: "Line {n}: country '{v}' is not in the catalog. Pick one from the list or add it under Settings → Countries.",
   wms_scan_duplicate: "Box {box} already scanned",
   wms_scan_duplicate_ask: "Remove it? If not, do nothing: it stays in the list.",
   wms_remove: "Remove",

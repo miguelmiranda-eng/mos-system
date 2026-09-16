@@ -338,6 +338,39 @@ def compose(customer, garment, gender, composition, country, sample=False, cfg: 
             "composition_code": comp, "country_code": ccode, "prefix": prefix}
 
 
+# ── modo estricto de captura ─────────────────────────────────────────────────
+# Composición y país FORMAN el número de parte: si entran fuera del catálogo la
+# línea queda sin código y el error aparece hasta el recibo (match-line none →
+# nadie recibe). Estos predicados se evalúan al capturar para atajarlo ahí. La
+# descripción NO se valida (es texto aduanal, no entra al código).
+def composition_in_catalog(text, cfg: dict) -> dict:
+    """{'ok', 'why'}: la composición parsea (fibras conocidas, suma 100) Y su
+    código está entre las del catálogo `compositions`. Vacía → ok (la
+    obligatoriedad la decide quien captura, no este predicado)."""
+    if not str(text or "").strip():
+        return {"ok": True, "why": ""}
+    r = normalize_composition(text, cfg)
+    if not r["ok"]:
+        return {"ok": False, "why": "; ".join(r["errors"])}
+    known = {normalize_composition(c, cfg)["code"] for c in cfg.get("compositions") or []}
+    if r["code"] not in known:
+        return {"ok": False, "why": "no está en el catálogo (Configuración → Composiciones)"}
+    return {"ok": True, "why": ""}
+
+
+def country_in_catalog(country, cfg: dict) -> dict:
+    """{'ok', 'why'}: el país está en la tabla `countries` (nombre o ISO3) o es
+    uno de sus códigos de 2 letras. `country_code` acepta cualquier ISO2 con
+    tal de componer; aquí un 'XX' suelto se rechaza. Vacío → ok."""
+    c = norm(country)
+    if not c:
+        return {"ok": True, "why": ""}
+    table = cfg.get("countries") or {}
+    if c in table or c in {str(v).upper() for v in table.values()}:
+        return {"ok": True, "why": ""}
+    return {"ok": False, "why": "no está en el catálogo (Configuración → Países)"}
+
+
 _PARSE_RE = re.compile(r"^([A-Z]{2,4})-([A-Z]*?)(\d[\dA-Z]*?[A-Z])([A-Z]{2})(MS)?$")
 
 

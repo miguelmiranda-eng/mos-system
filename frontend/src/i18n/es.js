@@ -3180,6 +3180,8 @@ const es = {
   wms_asn_line_needs_desc: "Captura al menos una línea con descripción",
   wms_asn_line_incomplete: "Línea {n}: faltan cantidad, país o composición",
   wms_asn_line_no_pn: "Línea {n}: no se pudo componer el número de parte. {why}",
+  wms_asn_line_comp_off_catalog: "Línea {n}: la composición '{v}' no está en el catálogo. Elige una del desplegable o agrégala en Configuración → Composiciones.",
+  wms_asn_line_country_off_catalog: "Línea {n}: el país '{v}' no está en el catálogo. Elige uno de la lista o agrégalo en Configuración → Países.",
   wms_scan_duplicate: "Caja {box} ya escaneada",
   wms_scan_duplicate_ask: "¿Seguro que quieres removerla? Si no, no hagas nada: sigue en la lista.",
   wms_remove: "Quitar",
