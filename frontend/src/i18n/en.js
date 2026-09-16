@@ -3580,6 +3580,7 @@ const en = {
   wms_rcv_export_all: "Export all receipts",
   wms_rcv_results_for: "{n} result(s) for \"{q}\"",
   wms_rcv_asn_ph: "ASN no. (required)",
+  wms_rcv_asn_pick_ph: "Pick the ASN ({n} open) or type a new one…",
   wms_rcv_create_asn_title: "Create ASN {asn} if it does not exist yet",
   wms_rcv_create_asn: "Create ASN",
   wms_rcv_asn_not_loaded_a: "ASN",

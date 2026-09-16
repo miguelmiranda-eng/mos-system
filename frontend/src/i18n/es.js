@@ -3394,6 +3394,7 @@ const es = {
   wms_rcv_export_all: "Exportar todos los recibos",
   wms_rcv_results_for: "{n} resultado(s) para \"{q}\"",
   wms_rcv_asn_ph: "N° de ASN (obligatorio)",
+  wms_rcv_asn_pick_ph: "Elige la entrada ({n} abiertas) o escribe una nueva…",
   wms_rcv_create_asn_title: "Crear ASN {asn} si aún no existe",
   wms_rcv_create_asn: "Crear ASN",
   wms_rcv_asn_not_loaded_a: "El ASN",

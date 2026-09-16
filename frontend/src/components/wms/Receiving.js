@@ -49,6 +49,11 @@ const COUNTRY_ISO3 = Object.freeze({
 // -> exact case-insensitive -> haystack item contains needle ->
 // needle contains haystack item (with min length safeguard).
 // Returns the original-cased haystack item, or empty string when no match.
+// Entradas contra las que se puede recibir: ni completadas ni terminadas
+// ("Terminar recibo" cierra la entrada aunque falte material). Más recientes
+// primero, como las manda /asn.
+const receivableAsns = (list) => (list || []).filter(a => a.status !== AsnStatus.RECEIVED && !a.closed);
+
 const findInOptions = (needle, haystack = [], opts = {}) => {
   if (!needle || !Array.isArray(haystack) || haystack.length === 0) return '';
   const n = String(needle).trim().toUpperCase();
@@ -199,6 +204,25 @@ export const ReceivingModule = () => {
   // doesn't match any known open ASN — we only show the line picker when we
   // can resolve the ASN against what we already loaded).
   const selectedAsnDoc = openAsns.find(a => a.asn_id === form.asn_reference) || null;
+  // Desplegable de entradas: una opción por entrada abierta, con lo que el
+  // operador necesita para elegir sin abrir Entradas (proveedor, PO, avance,
+  // estado). El texto de la opción es la "llave" que SearchableSelect devuelve;
+  // se mapea de regreso al asn_id. Lo tecleado que no es una entrada se
+  // conserva tal cual para ofrecer "Crear ASN".
+  const asnLabel = (a) => {
+    const exp = (a.items || []).reduce((s, it) => s + (parseInt(it.qty_expected, 10) || 0), 0);
+    const rcv = (a.items || []).reduce((s, it) => s + (parseInt(it.qty_received, 10) || 0), 0);
+    const st = a.status === AsnStatus.PARTIAL ? t('wms_asn_st_partial') : t('wms_asn_st_pending');
+    return `${a.asn_id} — ${a.vendor || a.customer || '—'}${a.po_number ? ` · PO ${a.po_number}` : ''} · ${rcv.toLocaleString()}/${exp.toLocaleString()} · ${st}`;
+  };
+  const asnOptions = openAsns.map(asnLabel);
+  const asnFieldValue = selectedAsnDoc ? asnLabel(selectedAsnDoc) : form.asn_reference;
+  const onAsnPick = (v) => {
+    const found = openAsns.find(a => asnLabel(a) === v);
+    const id = found ? found.asn_id : String(v || '').trim();
+    setForm(p => ({ ...p, asn_reference: id }));
+    setSelectedAsnLine(null);
+  };
   // Show every ASN line while the ASN is still open (not closed) — even lines
   // already fully received — so the operator can keep matching against them and
   // capture discrepancies in BOTH directions (faltante y sobrante). Lines only
@@ -416,9 +440,7 @@ export const ReceivingModule = () => {
     fetcher('/inventory/field-options').then(data => {
       setFieldOptions({ descriptions: data.descriptions || [], countries: data.countries || [], fabrics: data.fabrics || [] });
     }).catch(logLoadError('data'));
-    fetcher('/asn').then(data => {
-      setOpenAsns((data || []).filter(a => a.status !== AsnStatus.RECEIVED));
-    }).catch(logLoadError('ASNs'));
+    fetcher('/asn').then(data => setOpenAsns(receivableAsns(data))).catch(logLoadError('ASNs'));
     fetcher('/transit/info').then(data => {
       setTransitCarts(Array.isArray(data?.carts) ? data.carts : []);
     }).catch(logLoadError('transit info'));
@@ -650,7 +672,7 @@ export const ReceivingModule = () => {
       toast.success(t('wms_rcv_asn_created', { id: newAsn.asn_id, n: cleanItems.length }));
       // Refresh openAsns + auto-seleccionar el nuevo.
       const all = await fetcher('/asn');
-      setOpenAsns((all || []).filter(a => a.status !== AsnStatus.RECEIVED));
+      setOpenAsns(receivableAsns(all));
       setForm(p => ({ ...p, asn_reference: newAsn.asn_id }));
       setCreateAsnOpen(false);
     } catch (err) {
@@ -796,7 +818,7 @@ export const ReceivingModule = () => {
           setForm({ customer: '', manufacturer: '', style: '', color: '', size: '', description: '', country_of_origin: '', fabric_content: '', boxes: '', pieces: '', units: '', loose: '', lot_number: '', sku: '', inv_location: '', is_bpo: false, asn_reference: '' });
           setUnitsPerBox(STANDARD_UNITS_PER_BOX); setSelectedAsnLine(null);
           setUpc(''); setUpcDoc(null);
-          fetcher('/asn').then(d => setOpenAsns((d || []).filter(a => a.status !== AsnStatus.RECEIVED))).catch(() => {});
+          fetcher('/asn').then(d => setOpenAsns(receivableAsns(d))).catch(() => {});
           load();
           // El siguiente cartón se escanea de inmediato: refresca la matriz del
           // ASN y regresa el foco a la barra de escaneo.
@@ -1013,15 +1035,16 @@ export const ReceivingModule = () => {
                 ASN (Packing List) <span className="text-red-600 dark:text-red-400">*</span>
               </label>
               <div className="flex gap-2">
-                <input
-                  list="rcv-asn-list"
-                  placeholder={t('wms_rcv_asn_ph')}
-                  value={form.asn_reference}
-                  onChange={e => { setForm(p => ({ ...p, asn_reference: e.target.value.trim() })); setSelectedAsnLine(null); }}
-                  className={`flex-1 px-3 py-2 bg-background border rounded text-sm text-foreground font-mono ${form.asn_reference && !selectedAsnDoc && !editingId ? 'border-red-500/60' : selectedAsnDoc ? 'border-emerald-500/40' : 'border-border'}`}
-                  data-testid="rcv-asn"
-                  disabled={!!editingId}
-                />
+                <div className={`flex-1 rounded ${form.asn_reference && !selectedAsnDoc && !editingId ? 'ring-1 ring-red-500/60' : selectedAsnDoc ? 'ring-1 ring-emerald-500/40' : ''}`}>
+                  <SearchableSelect
+                    options={asnOptions}
+                    value={asnFieldValue}
+                    onChange={onAsnPick}
+                    placeholder={openAsns.length ? t('wms_rcv_asn_pick_ph', { n: openAsns.length }) : t('wms_rcv_asn_ph')}
+                    testId="rcv-asn"
+                    disabled={!!editingId}
+                  />
+                </div>
                 {!editingId && form.asn_reference && !selectedAsnDoc && (
                   <Btn
                     type="button"
@@ -1041,11 +1064,6 @@ export const ReceivingModule = () => {
                   {t('wms_rcv_asn_not_loaded_a')} <span className="font-mono font-semibold">{form.asn_reference}</span> {t('wms_rcv_asn_not_loaded_b')}
                 </p>
               )}
-              <datalist id="rcv-asn-list">
-                {openAsns.map(a => (
-                  <option key={a.asn_id} value={a.asn_id}>{t('wms_rcv_asn_option', { vendor: a.vendor || '', n: a.items?.length || 0, status: a.status })}</option>
-                ))}
-              </datalist>
               {/* Line picker — opcional. Si el operador ignora esto, sigue funcionando tecleando el style manualmente. */}
               {selectedAsnDoc && !editingId && (
                 <div className="mt-2 border border-border bg-card rounded-lg overflow-hidden">
