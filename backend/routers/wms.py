@@ -11371,6 +11371,17 @@ async def get_asn_detail(asn_id: str, request: Request):
         a = attrib.get(b["box_id"]) or {}
         key = str(a.get("part_number") or "").strip().upper()
         p = by_part.get(key) if key else None
+        if p is None and key:
+            # La caja trae número de parte pero la entrada ya no tiene esa
+            # línea (el líder la eliminó para capturar la correcta): se agrupa
+            # bajo SU número de parte, marcada, no como "sin número de parte".
+            p = by_part[key] = {
+                "part_number": a.get("part_number"), "orphan": True, "description": "", "garment": "", "gender": "",
+                "fabric": b.get("fabric_content") or "", "country": b.get("country_of_origin") or "", "sample": False,
+                "line_nos": [], "qty_expected": 0, "qty_received": 0,
+                "units_arrived": 0, "units_in_stock": 0, "boxes": 0, "boxes_in_stock": 0,
+                "boxes_exact": 0, "boxes_best_effort": 0, "skus": {}, "box_ids": [],
+            }
         if p is None:
             if unmatched is None:
                 unmatched = {

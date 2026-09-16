@@ -188,6 +188,25 @@ async def main():
         r = await c.get("/api/wms/labels/boxes?box_ids=" + ",".join(p1["box_ids"][:2]))
         check("etiquetas en lote también traen el número de parte", r.status_code == 200 and r.text.count("GTS-SS100CCN") >= 2, r.status_code)
 
+        print("\n== 5c. Línea eliminada de la entrada: sus cajas van bajo SU número de parte, marcadas ==")
+        a = sdb.wms_asn.find_one({"asn_id": ASN}, {"_id": 0})
+        items = [it for it in a["items"] if it["line_no"] != 3]  # el líder quita la línea 3 (GTS-SS50C50PCN) que ya tiene 1 caja
+        r = await c.put(f"/api/wms/asn/{ASN}", json={"items": items})
+        check("PUT sin la línea 3", r.status_code == 200, r.text[:150])
+        r = await c.get(f"/api/wms/asn/{ASN}")
+        s3 = r.json()["summary"]
+        po = part(s3, "GTS-SS50C50PCN")
+        check("grupo GTS-SS50C50PCN sigue, marcado orphan, sin líneas, con su caja", po and po.get("orphan") is True and po["line_nos"] == [] and po["boxes"] == 1 and po["units_in_stock"] == 10, po)
+        check("no se fue a 'sin número de parte'", not any(p.get("unmatched") for p in s3["by_part"]))
+        # Volver a capturar la línea NO la resucita: entra como línea nueva (5),
+        # con 0 recibido — lo mal recibido se da de baja aparte (proceso acordado).
+        r = await c.put(f"/api/wms/asn/{ASN}", json={"items": a["items"]})
+        recap = next((it for it in r.json()["items"] if it["part_number"] == "GTS-SS50C50PCN"), None)
+        check("recapturar la línea = línea nueva (5) con 0 recibido", r.status_code == 200 and recap and recap["line_no"] == 5 and recap["qty_received"] == 0, recap)
+        r = await c.get(f"/api/wms/asn/{ASN}")
+        po = part(r.json()["summary"], "GTS-SS50C50PCN")
+        check("la caja vieja se agrupa con la línea nueva por número de parte (ya no es orphan)", po and not po.get("orphan") and po["boxes"] == 1 and po["line_nos"] == [5], po)
+
         print("\n== 6. Entrada borrada: la caja conserva lo heredado ==")
         sdb.wms_asn.delete_one({"asn_id": ASN})
         r = await c.get(f"/api/wms/boxes/{bx['box_id']}/history")

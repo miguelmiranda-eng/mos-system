@@ -191,6 +191,11 @@ export const ReceivingModule = () => {
   // become read-only because the catalog is the source of truth.
   const [upc, setUpc] = useState('');
   const [upcDoc, setUpcDoc] = useState(null);
+  // Cada escaneo cuenta, aunque sea el MISMO código: tras cancelar el formulario
+  // o editar un recibo, el siguiente cartón suele ser el mismo producto; con el
+  // valor sin cambiar el lookup no volvía a correr y el formulario (ya en
+  // blanco) se quedaba sin estilo/color/talla con el UPC "en catálogo".
+  const [scanNonce, setScanNonce] = useState(0);
   const [upcLooking, setUpcLooking] = useState(false);
   // Nota: el ALTA/edición de UPC ya no vive aquí — se movió al Catálogo de UPC
   // del módulo de Configuración (menú del supervisor). Receiving solo RESUELVE
@@ -276,6 +281,7 @@ export const ReceivingModule = () => {
       setShowForm(true);
     }
     setUpc(code);
+    setScanNonce(n => n + 1);
   };
 
   // ── Progreso del ASN (semáforo por línea + matriz color×talla) ─────────────
@@ -365,11 +371,12 @@ export const ReceivingModule = () => {
     if (country) { updates.country_of_origin = country; matched.push(t('wms_country')); }
     else if (line.country) skipped.push(t('wms_country'));
 
-    // Descripción: en una entrada del formato único es la frase aduanal
-    // ("CAMISETA MANGA CORTA PARA HOMBRE DE PUNTO…"), que por diseño no está
-    // en el catálogo del recibo; la descripción del producto la trae el UPC.
-    // Solo las entradas viejas traen una descripción comparable.
-    if (!line.part_number_auto) {
+    // Descripción: la entrada manda. En una entrada con número de parte la
+    // caja hereda la descripción de la línea tal cual (la frase aduanal); en
+    // entradas viejas se busca en el catálogo del recibo como siempre.
+    if (line.part_number_auto) {
+      if (line.description) { updates.description = line.description; matched.push(t('description')); }
+    } else {
       const description = findInOptions(line.description, descOptions);
       if (description) { updates.description = description; matched.push(t('description')); }
       else if (line.description) skipped.push(t('description'));
@@ -629,7 +636,7 @@ export const ReceivingModule = () => {
       } finally { setUpcLooking(false); }
     }, 300);
     return () => clearTimeout(handle);
-  }, [upc]);
+  }, [upc, scanNonce]);
 
   // Open the "Crear UPC" mini-modal. Prefills with whatever the operator has
   // already captured in the receiving form so they don't retype it.
@@ -806,6 +813,7 @@ export const ReceivingModule = () => {
         setEditingId(null);
         setForm({ customer: '', manufacturer: '', style: '', color: '', size: '', description: '', country_of_origin: '', fabric_content: '', boxes: '', pieces: '', units: '', loose: '', lot_number: '', sku: '', inv_location: '', is_bpo: false, asn_reference: '' });
         setUnitsPerBox(STANDARD_UNITS_PER_BOX); setSelectedAsnLine(null);
+        setUpc(''); setUpcDoc(null);
         load();
       } else {
         // Create Mode. Modelo simple: N cajas completas de `upb` piezas + (opcional)
@@ -1379,9 +1387,9 @@ export const ReceivingModule = () => {
           <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
             <div>
               <label className="text-xs font-medium text-muted-foreground block mb-1">
-                {t('description')} {!editingId && <span className="text-red-600 dark:text-red-400">*</span>}
+                {t('description')} {!editingId && <span className="text-red-600 dark:text-red-400">*</span>} {!!lockedLine && <span className="text-emerald-600 dark:text-emerald-400 text-[9px]" title={t('wms_rcv_locked_by_line', { n: lockedLine.line_no })}>🔒</span>}
               </label>
-              <SearchableSelect options={descOptions} value={form.description} onChange={val => setForm(p => ({ ...p, description: val }))} placeholder={t('wms_search_desc')} testId="rcv-description" allowCreate={false} />
+              <SearchableSelect options={descOptions} value={form.description} onChange={val => setForm(p => ({ ...p, description: val }))} placeholder={t('wms_search_desc')} testId="rcv-description" allowCreate={false} disabled={!!lockedLine} />
             </div>
             <div>
               <label className="text-xs font-medium text-muted-foreground block mb-1">
@@ -1529,7 +1537,7 @@ export const ReceivingModule = () => {
                 )}
               </div>
             )}
-            <Btn onClick={() => setShowForm(false)}>{t('cancel')}</Btn>
+            <Btn onClick={() => { setShowForm(false); setUpc(''); setUpcDoc(null); }}>{t('cancel')}</Btn>
           </div>
         </div>
       )}

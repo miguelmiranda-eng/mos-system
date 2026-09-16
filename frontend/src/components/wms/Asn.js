@@ -548,8 +548,15 @@ export const AsnModule = ({ currentUser, initialDetail }) => {
     setEditDraft(d => ({ ...d, items: d.items.map((it, j) => j === i ? { ...it, extra: { ...(it.extra || {}), [key]: v } } : it) }));
   const addItem = () =>
     setEditDraft(d => ({ ...d, items: [...d.items, { part_number: '', description: '', country: '', brand: '', color: '', size: '', fabric: '', qty_expected: 0, qty_received: 0, extra: {}, garment: '', gender: '', sample: false, unit: 'PZA', import_type: 'Temporal', po: '', style: '' }] }));
-  const removeItem = (i) =>
+  // Borrar una línea que ya tiene piezas recibidas deja sus cajas sin línea:
+  // el proceso correcto es dar de baja esos recibos primero (detalle →
+  // eliminar recibo) y luego quitar la línea y capturar la correcta.
+  const removeItem = (i) => {
+    const it = editDraft?.items?.[i];
+    const rcv = parseInt(it?.qty_received, 10) || 0;
+    if (rcv > 0 && !window.confirm(t('wms_asn_remove_line_received_confirm', { n: rcv, pn: it.part_number || `#${it.line_no}` }))) return;
     setEditDraft(d => ({ ...d, items: d.items.filter((_, j) => j !== i) }));
+  };
 
   const saveEdit = async () => {
     if (!editDraft) return;
@@ -1204,6 +1211,7 @@ export const AsnModule = ({ currentUser, initialDetail }) => {
                                   <td className="px-3 py-2.5 text-xs font-mono font-semibold whitespace-nowrap">
                                     {p.unmatched ? <span className="text-amber-600 dark:text-amber-400">{t('wms_asn_no_part')}</span> : p.part_number}
                                     {p.sample && <span className="ml-1.5 text-[10px] font-semibold px-1 py-0.5 rounded bg-muted text-muted-foreground">{t('wms_asn_sample')}</span>}
+                                    {p.orphan && <span className="ml-1.5 text-[10px] font-semibold px-1 py-0.5 rounded bg-amber-500/15 text-amber-600 dark:text-amber-400" title={t('wms_asn_orphan_part_hint')}>{t('wms_asn_orphan_part')}</span>}
                                     {p.boxes_best_effort > 0 && (
                                       <span className="ml-1.5 text-[10px] font-semibold px-1 py-0.5 rounded bg-amber-500/15 text-amber-600 dark:text-amber-400" title={t('wms_asn_best_effort_hint', { n: p.boxes_best_effort })}>≈</span>
                                     )}
