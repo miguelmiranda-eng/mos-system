@@ -177,6 +177,21 @@ async def main():
         r = await c.get("/api/wms/boxes/OLD-2/history")
         al = r.json().get("asn_link")
         check("caja sin línea: asn_link con la entrada pero sin parte", al and al["asn_id"] == "VIEJA-2" and al["line_no"] is None and al["part_number"] == "" and al["match"] is None, al)
+        # IMMEX ID INFERIDO (backfill del inventario viejo): no es atribución
+        # exacta; la caja sigue casando con su línea legado por estilo, y el
+        # buscador muestra el código de la caja.
+        sdb.wms_boxes.insert_one({"box_id": "OLD-4", "asn_reference": "VIEJA-2", "style": "5000", "sku": "5000", "color": "WHITE", "size": "M", "units": 8,
+                                  "status": "received", "location": "A-03", "created_at": "2026-01-02T00:00:00Z",
+                                  "part_number": "AP-SS100CNI", "part_number_source": "inferred", "part_number_batch": "immex_test"})
+        r = await c.get("/api/wms/asn/VIEJA-2")
+        d = r.json()
+        p5 = part(d["summary"], "5000")
+        check("caja con IMMEX ID inferido: sigue en la línea legado '5000' (best_effort), no en un grupo aparte",
+              p5 and p5["boxes"] == 2 and p5["boxes_best_effort"] == 2 and not any(x.get("orphan") for x in d["summary"]["by_part"]), p5)
+        check("by_line legado: línea 1 = 20 en stock / 2 cajas", next(l for l in d["summary"]["by_line"] if l["line_no"] == 1)["qty_in_stock"] == 20)
+        r = await c.get("/api/wms/boxes/OLD-4/history")
+        al = r.json().get("asn_link")
+        check("asn_link: línea legado 1 pero código de la caja (inferido)", al and al["line_no"] == 1 and al["part_number"] == "AP-SS100CNI" and al["part_number_source"] == "inferred" and al["match"] == "best_effort", al)
 
         print("\n== 5a. Export de inventario: columna IMMEX ID en las dos hojas ==")
         r = await c.get("/api/wms/export/inventory", params={"customer": "GOODIE TWO SLEEVES"})

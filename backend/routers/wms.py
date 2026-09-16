@@ -3887,7 +3887,10 @@ async def buscar_historial_caja(box_id: str, limit: int = 300) -> dict:
             "status": (asn_doc or {}).get("status", ""),
             "closed": bool((asn_doc or {}).get("closed")),
             "line_no": a.get("line_no"),
-            "part_number": a.get("part_number") or box.get("part_number") or "",
+            # La caja manda si trae su propio código (heredado o inferido); si
+            # no, el de la línea con la que casó.
+            "part_number": box.get("part_number") or a.get("part_number") or "",
+            "part_number_source": box.get("part_number_source") or ("asn_line" if box.get("asn_line_no") is not None else ""),
             "match": a.get("match"),
             "line": {k: line.get(k) for k in ("line_no", "part_number", "description", "garment", "gender",
                                               "fabric", "country", "qty_expected", "qty_received")} if line else None,
@@ -10890,7 +10893,10 @@ def _asn_attribute_boxes(asn: dict, boxes: list) -> dict:
                 "match": "exact",
             }
             continue
-        if b.get("part_number"):
+        # Un IMMEX ID INFERIDO (backfill del inventario previo a fase 2,
+        # scripts/immex_backfill_preview.py) no viene de ninguna línea: la caja
+        # sigue casando con su entrada legado por upc/sku/style como siempre.
+        if b.get("part_number") and b.get("part_number_source") != "inferred":
             out[b["box_id"]] = {"line_no": None, "part_number": b["part_number"], "match": "exact"}
             continue
         keys = _box_keys(b)
