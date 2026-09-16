@@ -317,19 +317,29 @@ export const ReceivingModule = () => {
     const matched = [];
     const skipped = [];
 
-    const manufacturer = findInOptions(line.brand, manufacturerOptions);
+    // Se busca en las MISMAS listas que muestran los dropdowns (curadas +
+    // inventario), no solo en el distinct del inventario.
+    // Fabricante: la lista curada es por cliente; sin cliente todavía (línea
+    // elegida antes de escanear) no se intenta ni se reporta — lo trae el UPC.
+    const manufacturer = form.customer ? findInOptions(line.brand, manufacturerOptions) : '';
     if (manufacturer) { updates.manufacturer = manufacturer; matched.push(t('wms_label_manufacturer')); }
-    else if (line.brand) skipped.push(t('wms_label_manufacturer'));
+    else if (line.brand && form.customer) skipped.push(t('wms_label_manufacturer'));
 
-    const country = findInOptions(line.country, fieldOptions.countries, { iso3: COUNTRY_ISO3 });
+    const country = findInOptions(line.country, countryOptions, { iso3: COUNTRY_ISO3 });
     if (country) { updates.country_of_origin = country; matched.push(t('wms_country')); }
     else if (line.country) skipped.push(t('wms_country'));
 
-    const description = findInOptions(line.description, fieldOptions.descriptions);
-    if (description) { updates.description = description; matched.push(t('description')); }
-    else if (line.description) skipped.push(t('description'));
+    // Descripción: en una entrada del formato único es la frase aduanal
+    // ("CAMISETA MANGA CORTA PARA HOMBRE DE PUNTO…"), que por diseño no está
+    // en el catálogo del recibo; la descripción del producto la trae el UPC.
+    // Solo las entradas viejas traen una descripción comparable.
+    if (!line.part_number_auto) {
+      const description = findInOptions(line.description, descOptions);
+      if (description) { updates.description = description; matched.push(t('description')); }
+      else if (line.description) skipped.push(t('description'));
+    }
 
-    const fabric = findInOptions(line.fabric || line.fabric_content, fieldOptions.fabrics);
+    const fabric = findInOptions(line.fabric || line.fabric_content, fabricOptions);
     if (fabric) { updates.fabric_content = fabric; matched.push(t('wms_rcv_fabric_short')); }
     else if (line.fabric || line.fabric_content) skipped.push(t('wms_rcv_fabric_short'));
 

@@ -9965,9 +9965,15 @@ async def _enrich_box_for_label(box):
         if rcv:
             for f in ("description", "country_of_origin", "fabric_content",
                       "lot_number", "po", "upc", "received_by_name",
-                      "manufacturer", "customer"):
+                      "manufacturer", "customer", "part_number"):
                 if not r.get(f):
                     r[f] = rcv.get(f, "")
+    # PO: si la caja/recibo no traen uno, vale el de la entrada contra la que
+    # se recibió (la celda PO de la etiqueta salía vacía en todo recibo por ASN).
+    if not r.get("po") and r.get("asn_reference"):
+        asn_doc = await db.wms_asn.find_one({"asn_id": r["asn_reference"]}, {"_id": 0, "po_number": 1})
+        if asn_doc and asn_doc.get("po_number"):
+            r["po"] = asn_doc["po_number"]
     # Material de RETORNO: no viene de un recibo de proveedor, así que los
     # campos que la etiqueta espera del doc de recepción hay que sacarlos de la
     # propia caja. Sin esto la etiqueta salía sin quién la recibió y sin
@@ -10031,6 +10037,15 @@ def _build_box_labels_html(items, printed_by="", printed_at=""):
         carro_m = re.match(r"(?i)^CARRO\s*(\S+)$", raw_loc)
         loc_disp = f"C.{carro_m.group(1)}" if carro_m else raw_loc
         loc_size = "52px" if carro_m else "40px"
+        # La celda que era "Lote" imprime el NÚMERO DE PARTE aduanal que la
+        # caja heredó de la línea de la entrada: en el piso la gente ya lo
+        # escribía a mano en el lote (2026-09-16: 901 cajas con lote de 70k,
+        # casi todas con un GTS-…). Una caja vieja sin número de parte pero
+        # con lote sigue mostrando "Lote" para no perder lo que traía.
+        if r.get("part_number"):
+            pn_label, pn_value = "N.º parte", r.get("part_number")
+        else:
+            pn_label, pn_value = "Lote", r.get("lot_number")
         # El banner NO es decorativo: el material que vuelve de producción puede
         # venir mermado o sucio y no debe confundirse en el rack con material
         # que nunca salió.
@@ -10049,7 +10064,7 @@ def _build_box_labels_html(items, printed_by="", printed_at=""):
             <td class="cell" style="width:40%"><span class="label">PO</span><span class="value">{esc(r.get("po"))}</span></td>
           </tr>
           <tr class="row">
-            <td class="cell" style="width:40%"><span class="label">Lote</span><span class="value">{esc(r.get("lot_number"))}</span></td>
+            <td class="cell" style="width:40%"><span class="label">{pn_label}</span><span class="value" style="font-family:monospace">{esc(pn_value)}</span></td>
             <td class="cell" style="width:60%;text-align:center;position:relative"><span style="position:absolute;top:2px;left:4px;font-size:9px;color:#666;font-weight:bold">L</span><span class="value" style="font-size:{loc_size};letter-spacing:1px;line-height:1;display:block">{esc(loc_disp)}</span></td>
           </tr>
           <tr class="row"><td class="cell" colspan="2"><span class="label">Fabricante</span><span class="value">{esc(r.get("manufacturer"))}</span></td></tr>

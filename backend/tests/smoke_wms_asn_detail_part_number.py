@@ -178,6 +178,16 @@ async def main():
         al = r.json().get("asn_link")
         check("caja sin línea: asn_link con la entrada pero sin parte", al and al["asn_id"] == "VIEJA-2" and al["line_no"] is None and al["part_number"] == "" and al["match"] is None, al)
 
+        print("\n== 5b. Etiqueta de caja: la celda Lote imprime el número de parte ==")
+        r = await c.get(f"/api/wms/labels/box/{bx['box_id']}")
+        check("caja nueva: 'N.º parte' + GTS-SS100CCN en la etiqueta", r.status_code == 200 and "N.º parte" in r.text and "GTS-SS100CCN" in r.text, r.status_code)
+        check("la etiqueta hereda el PO de la entrada (PO-77)", "PO-77" in r.text)
+        sdb.wms_boxes.update_one({"box_id": "OLD-1"}, {"$set": {"lot_number": "LOTE-77"}})
+        r = await c.get("/api/wms/labels/box/OLD-1")
+        check("caja vieja sin parte: sigue 'Lote' con su valor", r.status_code == 200 and "LOTE-77" in r.text and ">Lote<" in r.text and "N.º parte" not in r.text, r.status_code)
+        r = await c.get("/api/wms/labels/boxes?box_ids=" + ",".join(p1["box_ids"][:2]))
+        check("etiquetas en lote también traen el número de parte", r.status_code == 200 and r.text.count("GTS-SS100CCN") >= 2, r.status_code)
+
         print("\n== 6. Entrada borrada: la caja conserva lo heredado ==")
         sdb.wms_asn.delete_one({"asn_id": ASN})
         r = await c.get(f"/api/wms/boxes/{bx['box_id']}/history")
