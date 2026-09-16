@@ -42,6 +42,14 @@ const localHourKey = (iso) => {
 };
 // "YYYY-MM-DD HH" → "dd/mm HH:00" para mostrar.
 const fmtHourKey = (k) => `${k.slice(8, 10)}/${k.slice(5, 7)} ${k.slice(11, 13)}:00`;
+// Instante ISO (UTC, como lo guarda now_iso()) → "YYYY-MM-DD HH:MM" en hora
+// LOCAL. Recortar el string crudo mostraba la hora UTC (23:15 por 17:15).
+const fmtLocalWhen = (iso) => {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d)) return String(iso).slice(0, 16).replace('T', ' ');
+  return `${localHourKey(iso)}:${String(d.getMinutes()).padStart(2, '0')}`;
+};
 
 export const CycleCountModule = () => {
   const { t } = useLang();
@@ -1999,10 +2007,10 @@ export const CycleCountModule = () => {
                           </div>
                         </td>
                         <td className="px-3 py-2 text-xs text-muted-foreground">
-                          <div>{(it.created_at || '').slice(0, 16).replace('T', ' ')} · {it.reported_by_name}</div>
+                          <div>{fmtLocalWhen(it.created_at)} · {it.reported_by_name}</div>
                           {(it.reports || 1) > 1 && <div className="text-amber-600 dark:text-amber-400 font-semibold">{t('wms_lc_reports_n', { n: it.reports })}</div>}
                           {it.note && <div className="italic truncate max-w-[220px]" title={it.note}>“{it.note}”</div>}
-                          {!open && <div>{t('wms_lc_resolved_by', { who: it.resolved_by_name || '—', when: (it.resolved_at || '').slice(0, 16).replace('T', ' ') })}</div>}
+                          {!open && <div>{t('wms_lc_resolved_by', { who: it.resolved_by_name || '—', when: fmtLocalWhen(it.resolved_at) })}</div>}
                         </td>
                         <td className="px-3 py-2">
                           {open ? (
@@ -2098,7 +2106,7 @@ export const CycleCountModule = () => {
                         {(it.unidades_import || 0).toLocaleString()}
                       </td>
                       <td className="px-3 py-2 text-xs text-muted-foreground">
-                        {(it.ultimo_encuentro_at || '').slice(0, 16).replace('T', ' ')}
+                        {fmtLocalWhen(it.ultimo_encuentro_at)}
                         {it.ultimo_encuentro_por && <> · {it.ultimo_encuentro_por}</>}
                       </td>
                       <td className="px-3 py-2">
