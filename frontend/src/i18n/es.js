@@ -3322,7 +3322,6 @@ const es = {
   wms_asn_remaining_by_loc: "Inventario restante por ubicación",
   // Fase 3: detalle por número de parte
   wms_asn_by_part: "Por número de parte",
-  wms_asn_part_number: "N.º de parte",
   wms_asn_lines_n: "Líneas",
   wms_asn_arrived: "Llegó",
   wms_asn_no_part: "Sin número de parte",
@@ -3428,6 +3427,8 @@ const es = {
   wms_rcv_loose: "Piezas sueltas",
   wms_rcv_loose_hint: "Caja incompleta (menos de {n}).",
   wms_rcv_total_auto: "Total a recibir (auto)",
+  wms_rcv_pn_pending: "Se asigna al casar la línea de la entrada",
+  wms_rcv_pn_from_line: "Heredado de la línea {n} de la entrada {asn}; se imprime en la etiqueta de la caja.",
   wms_rcv_boxes_formula: "{boxes} caja(s) × {upb}{loose}",
   wms_rcv_plus_loose: " + {n} sueltas",
   wms_rcv_n_pcs: "{n} pzs",

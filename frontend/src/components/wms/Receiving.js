@@ -1381,6 +1381,21 @@ export const ReceivingModule = () => {
               <label className="text-xs text-muted-foreground mb-1 block">{t('sku')} (auto)</label>
               <input value={form.sku} readOnly className="w-full px-3 py-2 bg-secondary/50 border border-border rounded text-sm text-foreground font-mono cursor-not-allowed" />
             </div>
+            {/* Número de parte aduanal que heredará la caja: viene de la línea
+                de la entrada (elegida o casada), nunca se teclea. Solo en
+                entradas del formato único; en entradas viejas no aplica. */}
+            {lineMatch?.formatted && (() => {
+              const line = selectedAsnLine != null ? (selectedAsnDoc?.items || []).find(l => l.line_no === selectedAsnLine) : null;
+              return (
+                <div className="col-span-2">
+                  <label className="text-xs text-muted-foreground mb-1 block">{t('wms_asn_part_number')} (auto)</label>
+                  <input value={line?.part_number || ''} readOnly placeholder={t('wms_rcv_pn_pending')}
+                    className={`w-full px-3 py-2 border border-border rounded text-sm font-mono cursor-not-allowed ${line ? 'bg-secondary/50 text-foreground font-semibold' : 'bg-muted/30 text-muted-foreground'}`}
+                    data-testid="rcv-part-number" />
+                  {line && <p className="text-xs text-muted-foreground mt-1">{t('wms_rcv_pn_from_line', { n: line.line_no, asn: form.asn_reference })}</p>}
+                </div>
+              );
+            })()}
           </div>
           {/* Ubicación de recibo eliminada a propósito: el destino se decide con
               "Recibir a Carro" (abajo). "Recibir" normal deja el material en

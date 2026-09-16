@@ -3508,7 +3508,6 @@ const en = {
   wms_asn_remaining_by_loc: "Remaining inventory by location",
   // Phase 3: detail by part number
   wms_asn_by_part: "By part number",
-  wms_asn_part_number: "Part number",
   wms_asn_lines_n: "Lines",
   wms_asn_arrived: "Arrived",
   wms_asn_no_part: "No part number",
@@ -3614,6 +3613,8 @@ const en = {
   wms_rcv_loose: "Loose pieces",
   wms_rcv_loose_hint: "Incomplete box (fewer than {n}).",
   wms_rcv_total_auto: "Total to receive (auto)",
+  wms_rcv_pn_pending: "Assigned once the ASN line is matched",
+  wms_rcv_pn_from_line: "Inherited from line {n} of ASN {asn}; printed on the box label.",
   wms_rcv_boxes_formula: "{boxes} box(es) × {upb}{loose}",
   wms_rcv_plus_loose: " + {n} loose",
   wms_rcv_n_pcs: "{n} pcs",
