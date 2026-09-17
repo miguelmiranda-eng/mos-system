@@ -30,7 +30,7 @@ const DISC_TYPE_KEY = { SOBRANTE: 'wms_asn_disc_surplus', FALTANTE: 'wms_asn_dis
 // ── Columnas personalizadas de las líneas (igual que el CRM) ─────────────────
 // Los campos fijos se declaran como columnas para que una fórmula pueda
 // referenciarlos: `[Cantidad] * 2`, `IF([Recibido] >= [Cantidad], "OK", "")`.
-const ASN_FIXED_LINE_COLS = [
+export const ASN_FIXED_LINE_COLS = [
   { key: 'part_number', label: 'N.º parte', type: 'text' },
   { key: 'style', label: 'Estilo', type: 'text' },
   { key: 'garment', label: 'Prenda', type: 'text' },
@@ -54,7 +54,7 @@ const GRID_CLS = "w-full h-9 px-2 bg-transparent border-0 rounded-none text-xs f
 
 // Clave estable para la definición: sin acentos ni símbolos, para que el backend
 // la acepte (^[a-z0-9_]+$) y una fórmula la pueda escribir sin corchetes.
-const slugKey = (name) => String(name || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
+export const slugKey = (name) => String(name || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
   .toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 40) || 'col';
 
 // Anchos de la hoja de captura: TODAS las columnas arrancan iguales (como una

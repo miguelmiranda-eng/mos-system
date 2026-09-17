@@ -153,7 +153,7 @@ export default function WMS() {
     return Uint8Array.from([...raw].map(c => c.charCodeAt(0)));
   };
 
-  const togglePush = async () => {
+  const togglePush = useCallback(async () => {
     if (pushBusy) return;
     setPushBusy(true);
     try {
@@ -186,7 +186,7 @@ export default function WMS() {
     } finally {
       setPushBusy(false);
     }
-  };
+  }, [pushBusy, t]);
   const isDark = theme === 'dark';
   const [badges, setBadges] = useState({ putaway: 0, picking: 0, cycle_count: 0, neck_cutting: 0 });
   // Pickers see a simple 2-option launcher (Picking / Putaway) on entry.
@@ -286,8 +286,18 @@ export default function WMS() {
     setAsnToOpen({ id: asnId, n: Date.now() });
     setActiveModule('asn');
   }, []);
-  const wmsCtx = useMemo(() => ({ badges, refreshBadges: loadBadges, openAsn, can, permissions, refreshPermissions }),
-    [badges, loadBadges, openAsn, can, permissions, refreshPermissions]);
+  // Notificaciones push de ESTE dispositivo: la campana de la barra y la
+  // pestaña Configuración → Notificaciones comparten estado y acciones.
+  const testPush = useCallback(async () => {
+    try { const r = await poster('/push/test', {}); if (!r.ok) throw new Error(); toast.success(t('wms_push_test_sent')); }
+    catch { toast.error(t('wms_push_err')); }
+  }, [t]);
+  const push = useMemo(() => ({
+    can: canPush, supported: ('serviceWorker' in navigator) && ('PushManager' in window),
+    on: pushOn, busy: pushBusy, toggle: togglePush, test: testPush,
+  }), [canPush, pushOn, pushBusy, togglePush, testPush]);
+  const wmsCtx = useMemo(() => ({ badges, refreshBadges: loadBadges, openAsn, can, permissions, refreshPermissions, push }),
+    [badges, loadBadges, openAsn, can, permissions, refreshPermissions, push]);
 
   // Forzar módulo inicial según rol (customer=dashboard, picker=directed)
   useEffect(() => {

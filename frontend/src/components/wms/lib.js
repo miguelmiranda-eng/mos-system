@@ -258,5 +258,5 @@ export const mergeUnique = (...lists) => {
 // `can(actionId)` = permisos por ACCIÓN calculados por el backend
 // (GET /permissions/me) — un solo origen de verdad; ningún componente vuelve a
 // deducir niveles de admin/inventarios a mano. Fuera del WMS (PDA) es false.
-export const WmsContext = createContext({ badges: {}, refreshBadges: () => {}, openAsn: null, can: () => false, permissions: null, refreshPermissions: () => {} });
+export const WmsContext = createContext({ badges: {}, refreshBadges: () => {}, openAsn: null, can: () => false, permissions: null, refreshPermissions: () => {}, push: null });
 export const useWms = () => useContext(WmsContext);

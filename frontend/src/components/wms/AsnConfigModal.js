@@ -34,7 +34,10 @@ const cls = {
   iconBtn: "p-1.5 rounded text-muted-foreground hover:text-destructive hover:bg-destructive/10",
 };
 
-export function AsnConfigModal({ open, onClose, onSaved }) {
+/* Panel de configuración del número de parte / IMMEX. Vive en Sistema →
+   Configuración → Número de parte (embebido) y, como atajo, en el modal del
+   botón "Configuración" de Entradas. Una sola implementación. */
+export function AsnConfigPanel({ open = true, onClose, onSaved, embedded = false }) {
   const { t } = useLang();
   const catalogs = useWmsCatalogs();
   const [cfg, setCfg] = useState(null);
@@ -47,11 +50,11 @@ export function AsnConfigModal({ open, onClose, onSaved }) {
   const [types, setTypes] = useState([]);        // import_types | compositions
 
   useEffect(() => {
-    if (!open) return undefined;
+    if (!open && !embedded) return undefined;
     let alive = true;
     fetcher("/asn/part-number/config").then(c => { if (alive) setCfg(c); }).catch(logLoadError("part-number config"));
     return () => { alive = false; };
-  }, [open]);
+  }, [open, embedded]);
 
   // Al cambiar de pestaña (o al cargar) se arma el borrador desde la config.
   useEffect(() => {
@@ -65,7 +68,7 @@ export function AsnConfigModal({ open, onClose, onSaved }) {
     }
   }, [cfg, tab]);
 
-  if (!open) return null;
+  if (!open && !embedded) return null;
 
   const save = async () => {
     let body;
@@ -105,14 +108,9 @@ export function AsnConfigModal({ open, onClose, onSaved }) {
   // uno nuevo sea elegirlo, no teclearlo.
   const missingCustomers = (catalogs.customers || []).filter(c => !pairs.some(([k]) => k.toUpperCase() === String(c).toUpperCase()));
 
-  return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" onClick={() => !saving && onClose()}>
-      <div className="w-full max-w-3xl max-h-[90vh] flex flex-col bg-card border border-border rounded-xl shadow-2xl" onClick={e => e.stopPropagation()} data-testid="asn-config-modal">
-        <div className="flex items-center justify-between px-5 py-3 border-b border-border">
-          <h3 className="font-bold text-base flex items-center gap-2"><Settings2 className="w-5 h-5" /> {t("wms_asn_cfg_title")}</h3>
-          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-secondary text-muted-foreground hover:text-foreground"><X className="w-5 h-5" /></button>
-        </div>
-        <div className="flex gap-1 px-5 pt-3">
+  const body = (
+    <>
+        <div className="flex flex-wrap gap-1 px-5 pt-3">
           {TABS.map(k => (
             <button key={k} onClick={() => setTab(k)} data-testid={`asn-cfg-tab-${k}`}
               className={`px-3 py-1.5 text-xs font-medium rounded-md ${tab === k ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"}`}>
@@ -206,16 +204,42 @@ export function AsnConfigModal({ open, onClose, onSaved }) {
           )}
         </div>
 
-        <div className="flex items-center justify-between px-5 py-3 border-t border-border">
+        <div className="flex items-center justify-between gap-3 px-5 py-3 border-t border-border">
           <span className="text-xs text-muted-foreground">{t("wms_asn_cfg_footer")}</span>
-          <div className="flex gap-2">
-            <button onClick={onClose} className="px-3 py-1.5 text-sm rounded-md text-muted-foreground hover:text-foreground">{t("cancel")}</button>
+          <div className="flex gap-2 shrink-0">
+            {!embedded && <button onClick={onClose} className="px-3 py-1.5 text-sm rounded-md text-muted-foreground hover:text-foreground">{t("cancel")}</button>}
             <button onClick={save} disabled={saving || !cfg} className="px-4 py-1.5 text-sm font-semibold rounded-md bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-50 flex items-center gap-1.5" data-testid="asn-cfg-save">
               {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} {t("wms_asn_cfg_save_tab")}
             </button>
           </div>
         </div>
+    </>
+  );
+  if (embedded) {
+    return (
+      <div className="bg-card border border-border rounded-lg overflow-hidden" data-testid="asn-config-panel">
+        <div className="px-5 py-4 border-b border-border">
+          <h2 className="text-sm font-semibold text-foreground flex items-center gap-2"><Settings2 className="w-4 h-4 text-primary" /> {t("wms_asn_cfg_title")}</h2>
+        </div>
+        {body}
+      </div>
+    );
+  }
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" onClick={() => !saving && onClose()}>
+      <div className="w-full max-w-3xl max-h-[90vh] flex flex-col bg-card border border-border rounded-xl shadow-2xl" onClick={e => e.stopPropagation()} data-testid="asn-config-modal">
+        <div className="flex items-center justify-between px-5 py-3 border-b border-border">
+          <h3 className="font-bold text-base flex items-center gap-2"><Settings2 className="w-5 h-5" /> {t("wms_asn_cfg_title")}</h3>
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-secondary text-muted-foreground hover:text-foreground"><X className="w-5 h-5" /></button>
+        </div>
+        {body}
       </div>
     </div>
   );
+}
+
+/* Atajo desde Entradas: el mismo panel dentro de un modal. */
+export function AsnConfigModal({ open, onClose, onSaved }) {
+  if (!open) return null;
+  return <AsnConfigPanel open={open} onClose={onClose} onSaved={onSaved} />;
 }
