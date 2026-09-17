@@ -9,7 +9,7 @@
    filtrado por `filterModules`. Aquí no se decide quién ve qué. */
 
 import { useEffect, useRef, useState } from "react";
-import { ArrowLeft, X, Languages } from "lucide-react";
+import { ArrowLeft, X, Languages, LogOut } from "lucide-react";
 import { badgeOf, groupBadge } from "./modules";
 import { ProsperMark } from "../ProsperMark";
 import { useLang } from "../../contexts/LanguageContext";
@@ -43,6 +43,51 @@ export const LangToggle = ({ className = "" }) => {
 
 /* Insignia de contador. `soft` la usa el grupo, para que el número del módulo
    dentro del menú sea el que resalte. */
+/* Quién está en la sesión. Antes la barra no lo decía y en una PDA compartida
+   nadie sabía con qué usuario se estaba recibiendo / surtiendo (y la bitácora
+   lo estampa a él). Iniciales + nombre + rol; el tooltip trae el correo. */
+const roleKeyOf = (u) => {
+  if (!u) return '';
+  if (u.role === 'admin') return 'wms_role_admin';
+  if (u.role === 'inventory') return 'wms_role_inventory';
+  return { supersu: 'wms_role_supersu', ceo: 'wms_role_ceo', general: 'wms_role_general', operator: 'wms_role_operator',
+           picker: 'wms_role_picker', customer: 'wms_role_customer' }[u.role] || '';
+};
+export const roleLabelOf = (u, t) => {
+  const k = roleKeyOf(u);
+  if (!k) return u?.role || '';
+  const lvl = u.role === 'admin' ? (parseInt(u.admin_level, 10) || 1) : u.role === 'inventory' ? (parseInt(u.inventory_level, 10) || 0) : 0;
+  return lvl ? `${t(k)} ${lvl}` : t(k);
+};
+const initialsOf = (u) => {
+  const n = String(u?.name || u?.email || '').trim();
+  const parts = n.split(/\s+/).filter(Boolean);
+  return ((parts[0]?.[0] || '') + (parts.length > 1 ? parts[parts.length - 1][0] : '')).toUpperCase() || '?';
+};
+export const UserChip = ({ user, onLogout, compact = false }) => {
+  const { t } = useLang();
+  if (!user) return null;
+  const name = user.name || user.email || user.user_id || '';
+  const role = roleLabelOf(user, t);
+  return (
+    <div className="flex items-center gap-1.5" data-testid="wms-user-chip" title={`${name}${user.email ? ` · ${user.email}` : ''}${role ? ` · ${role}` : ''}`}>
+      <span className="w-7 h-7 rounded-full bg-primary/20 text-primary text-[11px] font-bold flex items-center justify-center shrink-0" aria-hidden="true">
+        {initialsOf(user)}
+      </span>
+      <span className={`${compact ? 'flex' : 'hidden sm:flex'} flex-col leading-tight min-w-0 max-w-[160px]`}>
+        <span className="text-xs font-semibold text-foreground truncate" data-testid="wms-user-name">{name}</span>
+        {role && <span className="text-[10px] text-muted-foreground truncate" data-testid="wms-user-role">{role}</span>}
+      </span>
+      {onLogout && (
+        <button onClick={onLogout} title={t('logout')} data-testid="wms-logout"
+          className="w-8 h-8 rounded-md border border-border text-muted-foreground hover:text-destructive hover:border-destructive/40 hover:bg-destructive/10 flex items-center justify-center transition-colors">
+          <LogOut className="w-4 h-4" />
+        </button>
+      )}
+    </div>
+  );
+};
+
 const Badge = ({ n, soft = false }) => n > 0 ? (
   <span className={`text-[10px] font-semibold tabular-nums rounded-full min-w-[18px] h-[18px] px-1.5
     inline-flex items-center justify-center
@@ -92,6 +137,8 @@ export function TopNav({
   mobileOpen,
   onMobileClose,
   right,
+  user,
+  onLogout,
 }) {
   const { t } = useLang();
   const [open, setOpen] = useState(null);   // id del grupo abierto
@@ -180,7 +227,11 @@ export function TopNav({
           })}
         </nav>
 
-        <div className="ml-auto flex items-center gap-2">{right}<LangToggle /></div>
+        <div className="ml-auto flex items-center gap-2">
+          {right}
+          <LangToggle />
+          {user && <span className="pl-2 ml-0.5 border-l border-border"><UserChip user={user} onLogout={onLogout} /></span>}
+        </div>
       </header>
 
       {/* Hoja de módulos — tabletas angostas y PDAs. Los grupos se vuelven
@@ -195,6 +246,16 @@ export function TopNav({
               <X className="w-5 h-5" />
             </button>
           </div>
+          {/* Quién está en la PDA: fila propia para no pelear el ancho con el cierre. */}
+          {user && (
+            <div className="flex items-center justify-between py-2 px-1 border-b border-border">
+              <UserChip user={user} compact />
+              <button onClick={onLogout} data-testid="wms-logout-sheet"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-destructive/30 text-destructive text-xs font-medium active:bg-destructive/10">
+                <LogOut className="w-4 h-4" /> {t('logout')}
+              </button>
+            </div>
+          )}
           {groups.map(g => (
             <div key={g.id}>
               <div className="text-xs font-bold uppercase tracking-widest text-primary pt-5 pb-1.5 px-1 border-b border-border mb-1">

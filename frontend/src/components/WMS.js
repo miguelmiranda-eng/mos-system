@@ -468,6 +468,8 @@ export default function WMS() {
           backTitle={currentUser?.role === 'picker' ? t('wms_home_title') : t('wms_back_main')}
           mobileOpen={mobileNav}
           onMobileClose={() => setMobileNav(false)}
+          user={currentUser}
+          onLogout={handleLogout}
           right={canPush && pushOn !== null ? (
             <button
               onClick={togglePush}
