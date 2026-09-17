@@ -5,7 +5,7 @@ import * as XLSX from "xlsx";
 import SearchableSelect from "../SearchableSelect";
 import { useLang } from "../../contexts/LanguageContext";
 import { useAuth } from "../../App";
-import { fetcher, poster, putter, deleter, logLoadError, useWmsCatalogs, mergeUnique, scanFeedback, duplicateScan } from "./lib";
+import { fetcher, poster, putter, deleter, logLoadError, useWmsCatalogs, mergeUnique, scanFeedback, duplicateScan, useWms } from "./lib";
 import { PrefixLocationInput } from "./PrefixLocationInput";
 import { Btn, Chip, cls, EmptyState, StatCard, Th } from "./ui";
 
@@ -59,14 +59,13 @@ export const CycleCountModule = () => {
   useEffect(() => { tRef.current = t; }, [t]);
   const { user } = useAuth();
   const isAdmin = ['admin', 'supersu', 'inspector_qc', 'qc'].includes(user?.role);
-  // Nivel de inventario efectivo (mismo criterio que WMS.js / deps.get_inventory_level):
-  // admin/supersu = 3; el resto, su inventory_level numérico. Gatea el 3er conteo.
-  const invLevel = (user?.role === 'supersu' || user?.role === 'admin')
-    ? 3 : (parseInt(user?.inventory_level, 10) || 0);
-  // Quién puede generar/exportar reportes: mismo criterio que la pestaña
-  // Eficiencia y que el backend (/cycle-counts/{id}/report exige inventory_level 3).
-  const canExportReport = user?.access_level >= 5 || user?.role === 'supersu'
-    || user?.role === 'admin' || invLevel >= 3;
+  // Supervisión (3er conteo, reportes, KPIs, eficiencia) = acción
+  // cycle_count.supervise, la misma que exige el backend. `invLevel` se
+  // conserva como escalar para el código que compara contra 3.
+  const { can } = useWms();
+  const canSupervise = can('cycle_count.supervise');
+  const invLevel = canSupervise ? 3 : (parseInt(user?.inventory_level, 10) || 0);
+  const canExportReport = canSupervise;
   const [counts, setCounts] = useState([]);
   const [showForm, setShowForm] = useState(false);
   const [selectedCount, setSelectedCount] = useState(null);
@@ -1302,7 +1301,7 @@ export const CycleCountModule = () => {
               KPIs
             </button>
           )}
-          {(user?.access_level >= 5 || user?.role === 'supersu' || user?.role === 'admin' || (parseInt(user?.inventory_level, 10) || 0) >= 3) && (
+          {canSupervise && (
             <button
               onClick={() => { setActiveTab('efficiency'); if (effEvents === null && !loadingEff) loadEfficiency(); }}
               className={`flex items-center gap-2 px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${activeTab === 'efficiency' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}

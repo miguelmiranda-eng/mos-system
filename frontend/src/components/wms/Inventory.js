@@ -3,7 +3,7 @@ import { toast } from "sonner";
 import { Package, Loader2, Download, Tag, Link2, CheckCircle, MapPin, Search, ScanLine, BarChart3, History, X, Plus, Minus, ListFilter, ChevronRight } from "lucide-react";
 import { Popover, PopoverTrigger, PopoverContent } from "../ui/popover";
 import { useLang } from "../../contexts/LanguageContext";
-import { API, fetcher, logLoadError, ALL_SIZES } from "./lib";
+import { API, fetcher, logLoadError, ALL_SIZES, useWms } from "./lib";
 import { EmptyState, StatCard, SoftAlert, Btn, cls, tableCls, ModuleToolbar } from "./ui";
 
 // Stable empty array — used as fallback for Typeahead `options` so memo() can
@@ -162,12 +162,10 @@ const Typeahead = memo(function Typeahead({ value, onChange, options, placeholde
 
 export const InventoryModule = ({ initialCustomer = '', currentUser = null }) => {
   const { t } = useLang();
-  // "Agregar Manual" es un ajuste de inventario: solo nivel 2+. El backend ya
-  // exige require_inventory_level(2) en POST /inventory — esto solo evita
-  // ofrecer un botón que terminaría en 403.
-  const canAddManual = ['admin', 'supersu'].includes(currentUser?.role)
-    ? true
-    : (parseInt(currentUser?.inventory_level, 10) || 0) >= 2;
+  // "Agregar Manual" = acción inventory.add_manual (POST /inventory la exige):
+  // esto solo evita ofrecer un botón que terminaría en 403.
+  const { can } = useWms();
+  const canAddManual = can('inventory.add_manual');
   const [inventory, setInventory] = useState([]);
   const [summary, setSummary] = useState({});
   const [filters, setFilters] = useState({ customers: [], categories: [], manufacturers: [], styles: [], countries: [], fabrics: [] });

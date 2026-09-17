@@ -2,9 +2,8 @@ import React, { useState, useEffect, useCallback, useRef, useTransition } from "
 import { toast } from "sonner";
 import { Printer, Plus, X, MapPin, Loader2, Edit3, Trash2, Search, ArrowRightLeft, Package, Tag, Globe, Layers, Box, User, FileText, Hash, ChevronRight, Lock, Unlock } from "lucide-react";
 import { useLang } from "../../contexts/LanguageContext";
-import { API, fetcher, poster, deleter, logLoadError } from "./lib";
+import { API, fetcher, poster, deleter, logLoadError, useWms } from "./lib";
 import { Btn, cls, EmptyState, ModuleToolbar } from "./ui";
-import { adminLevelOf } from "./modules";
 
 // System-protected slots managed by Putaway 2.0 — mirrors backend
 // SYSTEM_TRANSIT_LOCATIONS. Can't be edited / deleted from the UI.
@@ -15,19 +14,18 @@ const SYSTEM_TRANSIT_NAMES = new Set([
 
 export const LocationsModule = ({ currentUser }) => {
   const { t } = useLang();
-  // Managing a location's contents — empty it, delete a line/box, HOLD/SAT —
-  // requires admin level 2+. Se usa el MISMO cálculo canónico que el menú
-  // (adminLevelOf: supersu=5, admin=su nivel, ceo=3, inventory≥3=3), así que el
-  // botón se muestra a cualquier usuario que el backend ya autoriza con
-  // require_admin_level(2) — no solo a supersu/admin.
-  const adminLevel = adminLevelOf(currentUser);
-  const canManageLocations = adminLevel >= 2;
-  // Renombrar ubicaciones: control de inventario (inventory_level 3 → nivel 3),
-  // admin 3+ y supersu — espejo de require_location_manager. Crear y eliminar
-  // cambian el mapa físico: solo admin nivel 5 y supersu (require_location_admin,
-  // decisión 2026-09-17). El resto no ve los botones.
-  const canEditLocations = adminLevel >= 3;
-  const canCreateDeleteLocations = adminLevel >= 5;
+  // Permisos por acción (Sistema → Configuración → Permisos); el backend
+  // valida las mismas acciones, así que un botón visible nunca termina en 403.
+  // Contenido de una ubicación (vaciar, borrar renglón/caja) = acciones de
+  // inventario; HOLD/SAT, crear, renombrar y eliminar = acciones de ubicaciones.
+  const { can } = useWms();
+  const canDeleteRow = can('inventory.delete_row');
+  const canDeleteBox = can('inventory.delete_box');
+  const canManageLocations = canDeleteRow || canDeleteBox;
+  const canHold = can('locations.hold');
+  const canEditLocations = can('locations.rename');
+  const canCreateLocations = can('locations.create');
+  const canDeleteLocations = can('locations.delete');
   const [clearingLoc, setClearingLoc] = useState(false);
   const [locations, setLocations] = useState([]);
   const [editingId, setEditingId] = useState(null);
@@ -598,7 +596,7 @@ export const LocationsModule = ({ currentUser }) => {
       />
               {t('wms_print_labels_btn')}
             </Btn>
-            {canCreateDeleteLocations && (
+            {canCreateLocations && (
               <Btn variant="primary" onClick={() => setShowNewLoc(!showNewLoc)} data-testid="loc-new-btn">
                 {showNewLoc ? <X className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
                 {showNewLoc ? t('cancel') : t('wms_new_loc')}
@@ -853,7 +851,7 @@ export const LocationsModule = ({ currentUser }) => {
                         >
                           <Printer className="w-3.5 h-3.5" />
                         </button>
-                        {canManageLocations && (
+                        {canHold && (
                           <button
                             onClick={() => toggleHold(l)}
                             className={`p-1.5 rounded-md transition-colors ${l.on_hold ? 'text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10' : 'text-muted-foreground hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10'}`}
@@ -871,7 +869,7 @@ export const LocationsModule = ({ currentUser }) => {
                             >
                               <Edit3 className="w-3.5 h-3.5" />
                             </button>
-                            {canCreateDeleteLocations && (
+                            {canDeleteLocations && (
                               <button
                                 onClick={() => handleDelete(l.location_id, l.name)}
                                 className="p-1.5 text-muted-foreground hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-md transition-colors"
@@ -1071,7 +1069,7 @@ export const LocationsModule = ({ currentUser }) => {
                                           <ArrowRightLeft className="w-3.5 h-3.5" />
                                         </button>
                                       )}
-                                      {canManageLocations && (
+                                      {canDeleteRow && (
                                         <button
                                           type="button"
                                           onClick={(e) => { e.stopPropagation(); deleteInvLine(it); }}
@@ -1275,7 +1273,7 @@ export const LocationsModule = ({ currentUser }) => {
                                           >
                                             <ArrowRightLeft className="w-2.5 h-2.5" /> {t('wms_move')}
                                           </button>
-                                          {canManageLocations && (
+                                          {canDeleteBox && (
                                             <button
                                               type="button"
                                               onClick={() => deleteBox(b)}
@@ -1357,7 +1355,7 @@ export const LocationsModule = ({ currentUser }) => {
                     <Printer className="w-3.5 h-3.5" /> {t('wms_print_labels_btn')}
                   </Btn>
                 )}
-                {canManageLocations && detailItems.length > 0 && (
+                {canDeleteRow && detailItems.length > 0 && (
                   <Btn
                     variant="danger"
                     onClick={clearLocation}

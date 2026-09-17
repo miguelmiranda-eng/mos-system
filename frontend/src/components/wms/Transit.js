@@ -4,9 +4,8 @@ import {
   Loader2, Search, X, MapPin, ChevronRight, CheckSquare, Square, ArrowRightLeft, Truck, Edit3, Save,
   ScanLine, AlertTriangle, ClipboardCheck, CheckCircle2, Plus,
 } from "lucide-react";
-import { fetcher, poster, putter, logLoadError, cleanScan, scanFeedback, duplicateScan, useLocationSummary } from "./lib";
+import { fetcher, poster, putter, logLoadError, cleanScan, scanFeedback, duplicateScan, useLocationSummary, useWms } from "./lib";
 import { useAuth } from "../../App";
-import { adminLevelOf } from "./modules";
 import { useLang } from "../../contexts/LanguageContext";
 import { PutawayWizard } from "./PutawayWizard";
 import { SoftAlert, Btn, ModuleToolbar } from "./ui";
@@ -28,9 +27,9 @@ const TRANSIT_LEGACY = "UBICACION TEMPORAL";
 export const TransitModule = () => {
   const { t } = useLang();
   const { user } = useAuth();
-  // Crear carros = crear ubicaciones: mismo umbral que el backend
-  // (require_location_admin, nivel 5: admin 5 y supersu).
-  const isAdmin = adminLevelOf(user) >= 5;
+  // Crear carros = crear ubicaciones: misma acción que el backend.
+  const { can } = useWms();
+  const isAdmin = can('locations.create');
 
   // PDA / tablet get the guided cart-first wizard; desktop keeps the power-user
   // table below. Breakpoint at 1024px so phones AND tablets get the touch flow.

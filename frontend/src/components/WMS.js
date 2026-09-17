@@ -22,7 +22,7 @@ import { BoxStatus, TicketStatus, CycleCountStatus } from "./wms/constants";
 // Los que exportan con nombre se adaptan a `default` en el import().
 const named = (loader, name) => lazy(() => loader().then(m => ({ default: m[name] })));
 const InventoryDashboard  = lazy(() => import("./InventoryDashboard"));
-const HomeModule          = named(() => import("./wms/Home"), "HomeModule");
+const SettingsModule      = named(() => import("./wms/Settings"), "SettingsModule");
 const ReceivingModule     = named(() => import("./wms/Receiving"), "ReceivingModule");
 const PutawayModule       = named(() => import("./wms/Putaway"), "PutawayModule");
 const InventoryModule     = named(() => import("./wms/Inventory"), "InventoryModule");
@@ -50,7 +50,7 @@ export { useWms };
 
 const renderActiveModule = (moduleId, ctx) => {
   switch (moduleId) {
-    case 'home':         return <HomeModule onNavigate={ctx.setActiveModule} />;
+    case 'home':         return <SettingsModule />;
     case 'directed':     return <DirectedWorkModule />;
     case 'dashboard':    return <InventoryDashboard customer={ctx.associatedCustomer} apiBase={API} />;
     case 'receiving':    return <ReceivingModule />;
@@ -128,8 +128,15 @@ export default function WMS() {
   // ── Alertas push al celular (Web Push) ──────────────────────────────────
   // Campana del sidebar, solo administración: descuadres ROJOS y el resumen
   // del job nocturno llegan como notificación nativa (Android/desktop).
-  const canPush = ['admin', 'supersu', 'ceo'].includes(currentUser?.role)
-    || (parseInt(currentUser?.admin_level, 10) || 0) >= 2;
+  // Permisos por acción del usuario (GET /permissions/me). `can()` es lo que
+  // consumen los módulos para mostrar/ocultar; el backend valida lo mismo.
+  const [permissions, setPermissions] = useState(null);
+  const refreshPermissions = useCallback(() => {
+    fetcher('/permissions/me').then(setPermissions).catch(logLoadError('permissions'));
+  }, []);
+  useEffect(() => { if (currentUser) refreshPermissions(); }, [currentUser, refreshPermissions]);
+  const can = useCallback((id) => !!permissions?.allowed?.includes(id), [permissions]);
+  const canPush = can('notifications.push');
   const [pushOn, setPushOn] = useState(null);   // null = sin soporte / aún no se sabe
   const [pushBusy, setPushBusy] = useState(false);
   useEffect(() => {
@@ -279,7 +286,8 @@ export default function WMS() {
     setAsnToOpen({ id: asnId, n: Date.now() });
     setActiveModule('asn');
   }, []);
-  const wmsCtx = useMemo(() => ({ badges, refreshBadges: loadBadges, openAsn }), [badges, loadBadges, openAsn]);
+  const wmsCtx = useMemo(() => ({ badges, refreshBadges: loadBadges, openAsn, can, permissions, refreshPermissions }),
+    [badges, loadBadges, openAsn, can, permissions, refreshPermissions]);
 
   // Forzar módulo inicial según rol (customer=dashboard, picker=directed)
   useEffect(() => {
