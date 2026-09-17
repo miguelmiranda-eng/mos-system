@@ -1,9 +1,11 @@
 """Smoke — tarea #29: quién puede crear / renombrar / eliminar ubicaciones.
 
-Contrato (require_location_manager, nivel 3):
-  · PERMITIDO: supersu, admin nivel 3+, usuario con inventory_level 3 (control
-    de inventario, sea rol inventory o general).
-  · BLOQUEADO (403): general/operator/picker sin nivel, admin nivel 1-2,
+Contrato:
+  · RENOMBRAR (require_location_manager, nivel 3): supersu, admin nivel 3+,
+    usuario con inventory_level 3 (control de inventario, rol inventory o general).
+  · CREAR / ELIMINAR (require_location_admin, nivel 5, decisión 2026-09-17):
+    solo supersu y admin nivel 5.
+  · BLOQUEADO (403) en todo: general/operator/picker sin nivel, admin nivel 1-2,
     inventory con inventory_level 2.
   · Leer ubicaciones sigue abierto a cualquier usuario autenticado.
   · Un AsyncClient POR usuario: la cookie manda sobre el header.
@@ -51,24 +53,25 @@ def check(nombre, cond, detalle=""):
 
 
 USERS = {
-    # nombre: (role, admin_level, inventory_level, debe_poder)
-    "supersu": ("supersu", None, None, True),
-    "admin5": ("admin", 5, None, True),
-    "admin3": ("admin", 3, None, True),
-    "inventarios3": ("inventory", None, 3, True),
-    "general_inv3": ("general", None, 3, True),
-    "admin1": ("admin", None, None, False),
-    "admin2": ("admin", 2, None, False),
-    "inventory2": ("inventory", None, 2, False),
-    "general": ("general", None, None, False),
-    "operator": ("operator", None, None, False),
-    "picker2": ("picker", None, 2, False),
+    # nombre: (role, admin_level, inventory_level, puede_renombrar, puede_crear_eliminar)
+    "supersu": ("supersu", None, None, True, True),
+    "admin5": ("admin", 5, None, True, True),
+    "admin4": ("admin", 4, None, True, False),
+    "admin3": ("admin", 3, None, True, False),
+    "inventarios3": ("inventory", None, 3, True, False),
+    "general_inv3": ("general", None, 3, True, False),
+    "admin1": ("admin", None, None, False, False),
+    "admin2": ("admin", 2, None, False, False),
+    "inventory2": ("inventory", None, 2, False, False),
+    "general": ("general", None, None, False, False),
+    "operator": ("operator", None, None, False, False),
+    "picker2": ("picker", None, 2, False, False),
 }
 
 
 def sembrar():
     raw.drop_database(SMOKE_DB)
-    for name, (role, al, il, _) in USERS.items():
+    for name, (role, al, il, _, _cd) in USERS.items():
         doc = {"user_id": f"u_{name}", "email": f"{name}@test.local", "name": name, "role": role,
                "password_hash": bcrypt.hash("smoke123"), "active": True}
         if al is not None:
@@ -84,7 +87,8 @@ async def main():
     from httpx import ASGITransport, AsyncClient
     from server import app
     transport = ASGITransport(app=app)
-    for name, (role, al, il, allowed) in USERS.items():
+    last_403_create = ""
+    for name, (role, al, il, can_rename, can_cd) in USERS.items():
         async with AsyncClient(transport=transport, base_url="http://smoke") as c:
             r = await c.post("/api/auth/login", json={"email": f"{name}@test.local", "password": "smoke123"})
             if r.status_code != 200:
@@ -94,18 +98,21 @@ async def main():
             r = await c.get("/api/wms/locations")
             check(f"{tag}: leer ubicaciones → 200", r.status_code == 200, r.status_code)
             r = await c.post("/api/wms/locations", json={"name": f"T-{name}", "zone": "T", "type": "rack"})
-            exp = 200 if allowed else 403
-            check(f"{tag}: crear → {exp}", r.status_code == exp, f"{r.status_code} {r.text[:100]}")
+            exp_cd = 200 if can_cd else 403
+            check(f"{tag}: crear → {exp_cd}", r.status_code == exp_cd, f"{r.status_code} {r.text[:100]}")
+            if r.status_code == 403:
+                last_403_create = r.text
             r = await c.put("/api/wms/locations/loc_seed", json={"name": "SEED-01", "zone": "SEED-Z"})
-            check(f"{tag}: renombrar → {exp}", r.status_code == exp, f"{r.status_code} {r.text[:100]}")
-            if allowed:
+            exp_rn = 200 if can_rename else 403
+            check(f"{tag}: renombrar → {exp_rn}", r.status_code == exp_rn, f"{r.status_code} {r.text[:100]}")
+            if can_cd:
                 loc = sdb.wms_locations.find_one({"name": f"T-{name}".upper()})
                 r = await c.delete(f"/api/wms/locations/{loc['location_id']}")
                 check(f"{tag}: eliminar la suya → 200", r.status_code == 200, f"{r.status_code} {r.text[:100]}")
             else:
                 r = await c.delete("/api/wms/locations/loc_seed")
                 check(f"{tag}: eliminar → 403 y la ubicación sigue", r.status_code == 403 and sdb.wms_locations.count_documents({"location_id": "loc_seed"}) == 1, r.status_code)
-    check("mensaje del 403 explica quién puede", "control de inventario" in (r.text or ""), r.text[:120])
+    check("403 de crear/eliminar explica que es nivel 5", "nivel 5" in last_403_create, last_403_create[:120])
 
     print(f"\n===== {ok} PASS / {fail} FAIL =====")
     raw.drop_database(SMOKE_DB)

@@ -1927,19 +1927,30 @@ async def release_location_hold(name: str, request: Request):
 # cubre a la persona de inventarios y a los administradores; el resto (general,
 # operator, picker, admin 1-2) queda bloqueado. El frontend espeja el mismo
 # cálculo con adminLevelOf(); esta es la guarda real.
-LOCATION_MANAGER_LEVEL = 3
+LOCATION_MANAGER_LEVEL = 3   # renombrar
+# Crear y eliminar ubicaciones cambian el mapa físico del almacén (una
+# eliminación con force deja cajas huérfanas): decisión del usuario 2026-09-17,
+# solo admin nivel 5 y supersu. Renombrar se queda en 3.
+LOCATION_ADMIN_LEVEL = 5     # crear / eliminar
 
 
 async def require_location_manager(request: Request) -> dict:
     user = await require_auth(request)
     if get_admin_level(user) < LOCATION_MANAGER_LEVEL:
-        raise HTTPException(403, "Solo control de inventario (nivel 3) o administradores pueden crear, renombrar o eliminar ubicaciones")
+        raise HTTPException(403, "Solo control de inventario (nivel 3) o administradores pueden renombrar ubicaciones")
+    return user
+
+
+async def require_location_admin(request: Request) -> dict:
+    user = await require_auth(request)
+    if get_admin_level(user) < LOCATION_ADMIN_LEVEL:
+        raise HTTPException(403, "Solo un administrador nivel 5 puede crear o eliminar ubicaciones")
     return user
 
 
 @router.post("/locations")
 async def create_location(request: Request):
-    user = await require_location_manager(request)
+    user = await require_location_admin(request)
     body = await request.json()
     name = body.get("name", "").strip().upper()
     zone = body.get("zone", "").strip().upper()
@@ -2637,7 +2648,7 @@ async def delete_location(location_id: str, request: Request, force: bool = Fals
          rows pointing to it — otherwise the operator orphans stock that
          can't be surfaced anywhere in the UI. Pass `?force=true` to
          override this second guard (advanced; doesn't bypass #1)."""
-    user = await require_location_manager(request)
+    user = await require_location_admin(request)
     loc = await db.wms_locations.find_one({"location_id": location_id})
     if not loc:
         raise HTTPException(404, "Ubicacion no encontrada")

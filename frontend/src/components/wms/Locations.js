@@ -22,10 +22,12 @@ export const LocationsModule = ({ currentUser }) => {
   // require_admin_level(2) — no solo a supersu/admin.
   const adminLevel = adminLevelOf(currentUser);
   const canManageLocations = adminLevel >= 2;
-  // Crear / renombrar / eliminar ubicaciones: solo control de inventario
-  // (inventory_level 3 → nivel 3), admin 3+ y supersu — espejo de
-  // require_location_manager (backend). El resto no ve los botones.
+  // Renombrar ubicaciones: control de inventario (inventory_level 3 → nivel 3),
+  // admin 3+ y supersu — espejo de require_location_manager. Crear y eliminar
+  // cambian el mapa físico: solo admin nivel 5 y supersu (require_location_admin,
+  // decisión 2026-09-17). El resto no ve los botones.
   const canEditLocations = adminLevel >= 3;
+  const canCreateDeleteLocations = adminLevel >= 5;
   const [clearingLoc, setClearingLoc] = useState(false);
   const [locations, setLocations] = useState([]);
   const [editingId, setEditingId] = useState(null);
@@ -596,7 +598,7 @@ export const LocationsModule = ({ currentUser }) => {
       />
               {t('wms_print_labels_btn')}
             </Btn>
-            {canEditLocations && (
+            {canCreateDeleteLocations && (
               <Btn variant="primary" onClick={() => setShowNewLoc(!showNewLoc)} data-testid="loc-new-btn">
                 {showNewLoc ? <X className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
                 {showNewLoc ? t('cancel') : t('wms_new_loc')}
@@ -869,13 +871,15 @@ export const LocationsModule = ({ currentUser }) => {
                             >
                               <Edit3 className="w-3.5 h-3.5" />
                             </button>
-                            <button
-                              onClick={() => handleDelete(l.location_id, l.name)}
-                              className="p-1.5 text-muted-foreground hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-md transition-colors"
-                              title={t('wms_delete_loc')}
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
+                            {canCreateDeleteLocations && (
+                              <button
+                                onClick={() => handleDelete(l.location_id, l.name)}
+                                className="p-1.5 text-muted-foreground hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-md transition-colors"
+                                title={t('wms_delete_loc')}
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            )}
                           </>
                         )}
                         {SYSTEM_TRANSIT_NAMES.has((l.name || '').toUpperCase()) && (

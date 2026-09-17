@@ -29,8 +29,8 @@ export const TransitModule = () => {
   const { t } = useLang();
   const { user } = useAuth();
   // Crear carros = crear ubicaciones: mismo umbral que el backend
-  // (require_location_manager, nivel 3: control de inventario, admin 3+, supersu).
-  const isAdmin = adminLevelOf(user) >= 3;
+  // (require_location_admin, nivel 5: admin 5 y supersu).
+  const isAdmin = adminLevelOf(user) >= 5;
 
   // PDA / tablet get the guided cart-first wizard; desktop keeps the power-user
   // table below. Breakpoint at 1024px so phones AND tablets get the touch flow.
