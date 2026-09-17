@@ -4070,6 +4070,7 @@ const es = {
   wms_audit_mv_all_users: "Todos los usuarios",
   wms_audit_col_type_code: "Tipo (código)",
   wms_audit_col_product: "Producto",
+  wms_audit_col_box_n: "Caja n/N",
   wms_audit_col_from: "De",
   wms_audit_col_to: "A",
   wms_audit_col_before: "Antes",

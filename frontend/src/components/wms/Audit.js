@@ -609,6 +609,7 @@ const MovementsTab = () => {
       [t("wms_audit_col_type_code")]: r.type,
       [t("user")]: r.user_name,
       [t("wms_box")]: r.box_id,
+      [t("wms_audit_col_box_n")]: r.box_n || "",
       [t("client")]: r.customer,
       [t("wms_label_style")]: r.style,
       [t("wms_label_color")]: r.color,
@@ -706,11 +707,11 @@ const MovementsTab = () => {
                   const open = openRow === r.movement_id;
                   const hasBA = r.before !== "" || r.after !== "";
                   return [
-                    <tr key={r.movement_id} className="hover:bg-muted/30" data-testid="audit-mv-row">
+                    <tr key={`${r.movement_id}-${r.box_n || ""}`} className="hover:bg-muted/30" data-testid="audit-mv-row">
                       <td className={`${td} font-mono text-muted-foreground whitespace-nowrap`}>{fmtDate(r.created_at)}</td>
                       <td className={`${td} whitespace-nowrap`}><span className="font-medium">{mvTypeLabel(r.type, t)}</span></td>
                       <td className={`${td} whitespace-nowrap text-muted-foreground`}>{r.user_name || "—"}</td>
-                      <td className={`${td} font-mono whitespace-nowrap max-w-[180px] truncate`} title={r.box_id}>{r.box_id || "—"}</td>
+                      <td className={`${td} font-mono whitespace-nowrap max-w-[180px] truncate`} title={r.box_id}>{r.box_id || "—"}{r.box_n && <span className="ml-1 text-[10px] text-muted-foreground">{r.box_n}</span>}</td>
                       <td className={td}>
                         <div className="font-medium whitespace-nowrap">{product || "—"}</div>
                         {r.sku && r.sku !== r.style && <div className="font-mono text-muted-foreground">{r.sku}</div>}

@@ -4256,6 +4256,7 @@ const en = {
   wms_audit_mv_all_users: "All users",
   wms_audit_col_type_code: "Type (code)",
   wms_audit_col_product: "Product",
+  wms_audit_col_box_n: "Box n/N",
   wms_audit_col_from: "From",
   wms_audit_col_to: "To",
   wms_audit_col_before: "Before",

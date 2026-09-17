@@ -8972,6 +8972,37 @@ def _flatten_movement(m: dict) -> dict:
     return row
 
 
+def _explode_movement_rows(m: dict) -> list:
+    """Una fila POR CAJA cuando el movimiento tocó varias (relocate, putaway,
+    surtido por lote): antes iban todas en una celda ("7: BOX-1, BOX-2…") y
+    el Excel no servía para rastrear una caja. `units` es el de ESA caja cuando
+    el movimiento lo sabe (details.box_units o boxes[].taken); si no, queda
+    vacío y el total del lote va al detalle ("lote: 168 u"), para que una suma
+    en Excel no multiplique el total por el número de cajas."""
+    base = _flatten_movement(m)
+    d = m.get("details") or {}
+    per_box: dict = {}
+    if isinstance(d.get("box_units"), dict):
+        per_box = {str(k): v for k, v in d["box_units"].items()}
+    elif isinstance(d.get("boxes"), list) and d["boxes"] and all(isinstance(b, dict) for b in d["boxes"]):
+        per_box = {str(b.get("box_id")): b.get("taken") for b in d["boxes"] if b.get("box_id")}
+    ids = [str(x) for x in d["box_ids"]] if isinstance(d.get("box_ids"), list) else list(per_box.keys())
+    if len(ids) < 2:
+        return [base]
+    batch = base.get("units") or ""
+    rows = []
+    for i, bid in enumerate(ids, 1):
+        r = dict(base)
+        r["box_id"] = bid
+        r["box_n"] = f"{i}/{len(ids)}"
+        u = per_box.get(bid)
+        r["units"] = str(int(u)) if isinstance(u, (int, float)) else ""
+        if not r["units"] and batch:
+            r["detail"] = " · ".join(x for x in (f"lote: {batch} u", base.get("detail") or "") if x)
+        rows.append(r)
+    return rows
+
+
 _MV_FACETS_CACHE: dict = {"at": 0.0, "data": None}
 
 
@@ -9031,7 +9062,7 @@ async def audit_movements(request: Request, q: str = "", movement_type: str = ""
     movements = await db.wms_movements.find(query, {"_id": 0}).sort("created_at", -1).to_list(limit)
     total = await db.wms_movements.count_documents(query)
     return {"total": total, "count": len(movements), "movements": movements,
-            "rows": [_flatten_movement(m) for m in movements]}
+            "rows": [r for m in movements for r in _explode_movement_rows(m)]}
 
 
 # ── Self-test: simula el flujo completo con datos marcados y auto-limpieza ──

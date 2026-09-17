@@ -87,15 +87,19 @@ async def main():
         print("\n== 2. rows aplanados ==")
         r = await c.get("/api/wms/audit/movements", params={"limit": 50})
         d = r.json()
-        check("rows y movements del mismo tamaño", r.status_code == 200 and len(d["rows"]) == len(d["movements"]) == 7)
+        # 7 movimientos → 8 filas: el putaway de 2 cajas se parte en una fila por caja.
+        # 7 movimientos → 15 filas: reubicación de 8 cajas y putaway de 2 se parten en una fila por caja.
+        check("rows = movimientos con multi-caja partidos (7 movimientos, 15 filas)", r.status_code == 200 and len(d["movements"]) == 7 and len(d["rows"]) == 15, (len(d.get("movements", [])), len(d.get("rows", []))))
         rows = {x["movement_id"]: x for x in d["rows"]}
         a = rows["mv_1"]
         check("ajuste por caja: caja/sku/ubicación/antes/después/delta/motivo", a["box_id"] == "BOX-040386" and a["sku"] == "CK002-BLACK-ACID-3X" and a["location"] == "CARRO 260" and a["before"] == "48" and a["after"] == "0" and a["delta"] == "-48" and a["reason"] == "Número de caja obsoleta", a)
         check("lo que sobra va a detail legible (sin JSON)", a["detail"] == "box_deleted: sí", a["detail"])
         p = rows["mv_2"]
         check("surtido: caja, producto, unidades, orden y ticket", p["box_id"] == "BOX-1" and p["style"] == "6101" and p["units"] == "3" and p["order_number"] == "2507" and p["ticket_id"] == "pick_1", p)
-        b = rows["mv_3"]
-        check("reubicación en lote: de → a, unidades del lote, 8 cajas resumidas", b["from"] == "PS04-A04" and b["to"] == "NA03-A19" and b["units"] == "648" and b["box_id"].startswith("8: B1, B2") and "box_units" not in b["detail"], b)
+        bs = [x for x in d["rows"] if x["movement_id"] == "mv_3"]
+        check("reubicación de 8 cajas: 8 filas B1..B8 con n/N; B1 con sus 72 u (box_units), el resto sin unidades y el lote en el detalle",
+              [x["box_id"] for x in bs] == [f"B{i}" for i in range(1, 9)] and bs[0]["units"] == "72" and bs[0]["box_n"] == "1/8"
+              and bs[1]["units"] == "" and "lote: 648 u" in bs[1]["detail"] and all(x["from"] == "PS04-A04" and x["to"] == "NA03-A19" and "box_units" not in x["detail"] for x in bs), bs[:2])
         rc = rows["mv_4"]
         check("recibo: unidades y receiving_id; bool en palabras", rc["units"] == "1800" and rc["receiving_id"] == "rcv_9" and rc["detail"] == "is_bpo: no", rc)
         ia = rows["mv_5"]
@@ -114,8 +118,17 @@ async def main():
         r = await c.get("/api/wms/audit/movements", params={"movement_type": "transit_relocation,putaway,putaway_bulk"})
         d = r.json()
         check("familia Putaway (tipos separados por coma): trae la PDA y el flujo viejo", d["count"] == 2 and {x["type"] for x in d["rows"]} == {"transit_relocation", "putaway"}, d.get("count"))
-        row = next(x for x in d["rows"] if x["type"] == "transit_relocation")
-        check("putaway de la PDA aplanado: carro → ubicación, unidades y cajas", row["from"] == "CARRO 260" and row["to"] == "NA07-A31" and str(row["units"]) == "48" and "BOX-7" in row["box_id"], row)
+        rows = [x for x in d["rows"] if x["type"] == "transit_relocation"]
+        check("putaway de 2 cajas: UNA FILA POR CAJA, con n/N, mismo origen/destino", len(rows) == 2 and [x["box_id"] for x in rows] == ["BOX-7", "BOX-8"] and [x["box_n"] for x in rows] == ["1/2", "2/2"] and all(x["from"] == "CARRO 260" and x["to"] == "NA07-A31" for x in rows), rows)
+        check("sin unidades por caja: units vacío y el lote va al detalle (no se duplica el total)", all(x["units"] == "" and "lote: 48 u" in x["detail"] for x in rows), rows)
+        r = await c.get("/api/wms/audit/movements", params={"movement_type": "pick_deduction"})
+        pk = r.json()["rows"]
+        check("surtido con 1 caja: una sola fila, sin n/N", len(pk) == 1 and "box_n" not in pk[0] and pk[0]["box_id"] == "BOX-1")
+        sdb.wms_movements.insert_one({"movement_id": "mov_pick2", "type": "pick_boxes", "user_name": "Christian Santa Cruz", "created_at": "2026-09-14T10:00:00+00:00",
+                                      "details": {"ticket_id": "pick_2", "order_number": "2508", "box_ids": ["BOX-A", "BOX-B", "BOX-C"], "boxes": [{"box_id": "BOX-A", "taken": 10}, {"box_id": "BOX-B", "taken": 5}, {"box_id": "BOX-C", "taken": 1}], "qty": 16}})
+        r = await c.get("/api/wms/audit/movements", params={"movement_type": "pick_boxes"})
+        pk = r.json()["rows"]
+        check("surtido por lote con boxes[].taken: fila por caja con SUS unidades", [(x["box_id"], x["units"], x["box_n"]) for x in pk] == [("BOX-A", "10", "1/3"), ("BOX-B", "5", "2/3"), ("BOX-C", "1", "3/3")], pk)
 
     print(f"\n===== {ok} PASS / {fail} FAIL =====")
     raw.drop_database(SMOKE_DB)
