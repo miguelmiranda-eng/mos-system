@@ -212,6 +212,22 @@ async def main():
         bcol = bh.index("IMMEX ID"); idcol = bh.index("Box / LPN")
         by_box = {row[idcol]: row[bcol] for row in bx_rows[1:]}
         check("cada caja trae su número de parte", by_box.get(bx["box_id"]) == "GTS-SS100CCN" and all(v for v in by_box.values()), by_box)
+        # Columna ASN (número de entrada, asn_reference de la caja) junto al IMMEX ID.
+        check("Inventory: 'ASN' justo después de IMMEX ID", "ASN" in hdr and hdr.index("ASN") == hdr.index("IMMEX ID") + 1, hdr[:8])
+        acol = hdr.index("ASN")
+        asns = {row[acol] for row in inv[1:]}
+        check("Inventory: todas las celdas del cliente traen su entrada", asns == {ASN}, asns)
+        check("Cajas - LPNs: 'ASN' junto al IMMEX ID", "ASN" in bh and bh.index("ASN") == bh.index("IMMEX ID") + 1, bh[:8])
+        bacol = bh.index("ASN")
+        asn_by_box = {row[idcol]: row[bacol] for row in bx_rows[1:]}
+        check("cada caja trae su número de entrada", asn_by_box.get(bx["box_id"]) == ASN and all(v == ASN for v in asn_by_box.values()), asn_by_box)
+        sdb.wms_boxes.insert_one({"box_id": "NOASN-1", "style": "5000", "sku": "5000", "color": "GREEN", "size": "M", "units": 3, "status": "received", "location": "A-09", "customer": "GOODIE TWO SLEEVES", "created_at": "2026-01-01T00:00:00Z"})
+        r = await c.get("/api/wms/export/inventory", params={"customer": "GOODIE TWO SLEEVES"})
+        wb2 = openpyxl.load_workbook(_io.BytesIO(r.content), read_only=True)
+        rows2 = list(wb2["Cajas - LPNs"].iter_rows(values_only=True))
+        noasn = next((row for row in rows2[1:] if row[idcol] == "NOASN-1"), None)
+        check("caja sin entrada (import/alta manual): ASN vacío, no truena", noasn is not None and not noasn[bacol], noasn)
+        sdb.wms_boxes.delete_one({"box_id": "NOASN-1"})
 
         print("\n== 5b. Etiqueta de caja: la celda Lote imprime el número de parte ==")
         r = await c.get(f"/api/wms/labels/box/{bx['box_id']}")
