@@ -8,7 +8,7 @@ import * as XLSX from "xlsx";
 import { saveAs } from "file-saver";
 import { useLang } from "../../contexts/LanguageContext";
 import { fetcher, poster, logLoadError } from "./lib";
-import { mvTypeLabel } from "./movementTypes";
+import { mvTypeLabel, MV_TYPE_FAMILIES } from "./movementTypes";
 import { Btn, Th, Chip, tableCls } from "./ui";
 
 // Módulo de Auditoría — admin nivel 5 y supersu (el backend valida con
@@ -658,6 +658,10 @@ const MovementsTab = () => {
         <select value={filters.movement_type} onChange={e => setFilters({ ...filters, movement_type: e.target.value })}
           className={`w-64 ${sel}`} data-testid="audit-mv-type">
           <option value="">{t("wms_audit_mv_all_types")}</option>
+          {MV_TYPE_FAMILIES.map(f => {
+            const n = facets.types.filter(x => f.types.includes(x.type)).reduce((a, x) => a + x.n, 0);
+            return n > 0 ? <option key={`fam-${f.id}`} value={f.types.join(",")}>★ {t(f.labelKey)} ({n.toLocaleString()})</option> : null;
+          })}
           {facets.types.map(x => <option key={x.type} value={x.type}>{mvTypeLabel(x.type, t)} ({x.n.toLocaleString()})</option>)}
         </select>
         <select value={filters.user} onChange={e => setFilters({ ...filters, user: e.target.value })}

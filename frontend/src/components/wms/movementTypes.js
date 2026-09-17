@@ -70,3 +70,12 @@ export const MV_TYPE_KEYS = {
 // ~100 en la bitácora, muchos de scripts de limpieza) salen con el código
 // en palabras ("lif cart cleanup").
 export const mvTypeLabel = (type, t) => (MV_TYPE_KEYS[type] ? t(MV_TYPE_KEYS[type]) : String(type || "").replace(/_/g, " "));
+
+// Familias para el desplegable de Auditoría → Movimientos: un clic filtra
+// todas las variantes de un mismo hecho físico. El putaway de la PDA se
+// registra como `transit_relocation` (carro → ubicación) y el tipo `putaway`
+// es el flujo viejo (último registro may-2026); buscar "putaway" debe traer
+// los dos. El valor es la lista separada por comas que acepta el backend.
+export const MV_TYPE_FAMILIES = [
+  { id: "putaway", labelKey: "wms_mvf_putaway", types: ["transit_relocation", "putaway", "putaway_bulk"] },
+];

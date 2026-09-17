@@ -9005,7 +9005,10 @@ async def audit_movements(request: Request, q: str = "", movement_type: str = ""
     await require_wms_module_access(request, "audit")
     query = {}
     if movement_type.strip():
-        query["type"] = movement_type.strip()
+        # Varios tipos separados por coma = una "familia" (el desplegable ofrece
+        # "Putaway (todas las variantes)" = putaway,putaway_bulk,transit_relocation).
+        types = [x.strip() for x in movement_type.split(",") if x.strip()]
+        query["type"] = types[0] if len(types) == 1 else {"$in": types}
     if user.strip():
         query["user_name"] = {"$regex": re.escape(user.strip()), "$options": "i"}
     if since.strip() or until.strip():

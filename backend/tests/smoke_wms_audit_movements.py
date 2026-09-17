@@ -63,6 +63,9 @@ def sembrar():
         mv(2, "pick_deduction", "Christian Santa Cruz", {"ticket_id": "pick_1", "order_number": "2507", "style": "6101", "color": "NATURAL", "size": "YS", "location": "PS06-A29", "qty": 3, "box_ids": ["BOX-1"], "boxes": [{"box_id": "BOX-1", "taken": 3}], "no_box_units": 0, "scanned": True}),
         mv(3, "bulk_relocation", "Cesar Lopez de Jesus", {"trigger": "box_scan", "from": "PS04-A04", "to": "NA03-A19", "box_ids": ["B1", "B2", "B3", "B4", "B5", "B6", "B7", "B8"], "units_batch": 648, "box_units": {"B1": 72}, "boxes_moved": 8}),
         mv(4, "receiving", "Aaron Herrera", {"receiving_id": "rcv_9", "total_units": 1800, "is_bpo": False}, day="2026-09-12"),
+        # Putaway de la PDA (transit_relocation) y el flujo viejo (putaway): la familia "Putaway" junta ambos.
+        mv(6, "transit_relocation", "Cesar Lopez de Jesus", {"trigger": "transit", "from_sources": ["CARRO 260"], "origins": ["CARRO 260"], "to": "NA07-A31", "destination": "NA07-A31", "boxes_moved": 2, "units_moved": 48, "box_ids": ["BOX-7", "BOX-8"]}, day="2026-09-13"),
+        mv(7, "putaway", "Almacen", {"box_id": "BOX-000003", "from": "Locación Temporal", "to": "RCV-STG-01", "sku": "5000-CHARCOAL-M", "units": 72}, day="2026-05-28"),
         mv(5, "inventory_adjustment", "Aaron Herrera", {"inventory_id": "inv_1", "sku": "ZS9003-WHITE-XL", "location": "53286-02", "delta": -24, "new_on_hand": 0, "reason": "LIF/GLO Clean Up", "bulk": True}, day="2026-09-12"),
     ])
 
@@ -78,13 +81,13 @@ async def main():
         print("\n== 1. Facets ==")
         r = await c.get("/api/wms/audit/movements/facets")
         f = r.json()
-        check("tipos con conteo, el más frecuente primero", r.status_code == 200 and f["types"][0] == {"type": "inventory_adjust_box", "n": 1} or f["types"][0]["n"] == 1 and len(f["types"]) == 5, f.get("types"))
+        check("tipos con conteo, el más frecuente primero", r.status_code == 200 and f["types"][0] == {"type": "inventory_adjust_box", "n": 1} or f["types"][0]["n"] == 1 and len(f["types"]) == 7, f.get("types"))
         check("usuarios con conteo: Aaron 3", any(u["user"] == "Aaron Herrera" and u["n"] == 3 for u in f["users"]) and f["users"][0]["user"] == "Aaron Herrera", f.get("users"))
 
         print("\n== 2. rows aplanados ==")
         r = await c.get("/api/wms/audit/movements", params={"limit": 50})
         d = r.json()
-        check("rows y movements del mismo tamaño", r.status_code == 200 and len(d["rows"]) == len(d["movements"]) == 5)
+        check("rows y movements del mismo tamaño", r.status_code == 200 and len(d["rows"]) == len(d["movements"]) == 7)
         rows = {x["movement_id"]: x for x in d["rows"]}
         a = rows["mv_1"]
         check("ajuste por caja: caja/sku/ubicación/antes/después/delta/motivo", a["box_id"] == "BOX-040386" and a["sku"] == "CK002-BLACK-ACID-3X" and a["location"] == "CARRO 260" and a["before"] == "48" and a["after"] == "0" and a["delta"] == "-48" and a["reason"] == "Número de caja obsoleta", a)
@@ -108,6 +111,11 @@ async def main():
         check("por fecha", r.json()["count"] == 2)
         r = await c.get("/api/wms/audit/movements", params={"q": "PS04-A04"})
         check("texto libre (ubicación origen)", r.json()["count"] == 1 and r.json()["rows"][0]["type"] == "bulk_relocation")
+        r = await c.get("/api/wms/audit/movements", params={"movement_type": "transit_relocation,putaway,putaway_bulk"})
+        d = r.json()
+        check("familia Putaway (tipos separados por coma): trae la PDA y el flujo viejo", d["count"] == 2 and {x["type"] for x in d["rows"]} == {"transit_relocation", "putaway"}, d.get("count"))
+        row = next(x for x in d["rows"] if x["type"] == "transit_relocation")
+        check("putaway de la PDA aplanado: carro → ubicación, unidades y cajas", row["from"] == "CARRO 260" and row["to"] == "NA07-A31" and str(row["units"]) == "48" and "BOX-7" in row["box_id"], row)
 
     print(f"\n===== {ok} PASS / {fail} FAIL =====")
     raw.drop_database(SMOKE_DB)
