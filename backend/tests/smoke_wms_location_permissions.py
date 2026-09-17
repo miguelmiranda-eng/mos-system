@@ -112,7 +112,7 @@ async def main():
             else:
                 r = await c.delete("/api/wms/locations/loc_seed")
                 check(f"{tag}: eliminar → 403 y la ubicación sigue", r.status_code == 403 and sdb.wms_locations.count_documents({"location_id": "loc_seed"}) == 1, r.status_code)
-    check("403 de crear/eliminar explica que es nivel 5", "nivel 5" in last_403_create, last_403_create[:120])
+    check("403 de crear/eliminar nombra la acción y el nivel", "Crear ubicaciones" in last_403_create and "admin nivel 5" in last_403_create, last_403_create[:120])
 
     print(f"\n===== {ok} PASS / {fail} FAIL =====")
     raw.drop_database(SMOKE_DB)

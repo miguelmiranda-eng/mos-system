@@ -4,6 +4,7 @@ from typing import Optional
 from fastapi.responses import StreamingResponse, HTMLResponse
 from deps import db, get_current_user, require_auth, require_admin, require_admin_level, require_supersu, get_admin_level, require_inventory_level, get_inventory_level, log_activity, DEFAULT_OPTIONS, require_api_customer
 from ws_manager import ws_manager
+import wms_actions as wa
 from wms_constants import (
     BoxStatus, TicketStatus, PickingStatus, CycleCountStatus,
     TaskType, TaskStatus, PickDestination, MovementType, AsnStatus,
@@ -845,7 +846,7 @@ async def resolve_location_check(check_id: str, request: Request):
     · missing   → no apareció en ningún lado: solo veredicto; la baja sigue
                   siendo con motivo desde Inventario (queda en Auditoría).
     · other     → veredicto libre (API)."""
-    user = await require_inventory_level(request, 1)
+    user = await require_action(request, "location_check.resolve")
     body = await request.json() if await request.body() else {}
     resolution = str(body.get("resolution") or "").strip().lower()
     if resolution not in LOCATION_CHECK_RESOLUTIONS:
@@ -1873,7 +1874,7 @@ async def list_location_holds(request: Request):
 async def add_location_holds(request: Request):
     """Place one or more locations on HOLD (supersu only). Body:
     { locations: ["RP09-A03", ...] } or { location: "RP09-A03" }, optional reason."""
-    user = await require_admin_level(request, 2)
+    user = await require_action(request, "locations.hold")
     body = await request.json()
     raw = body.get("locations") or ([body.get("location")] if body.get("location") else [])
     names = sorted({(n or "").strip().upper() for n in raw if (n or "").strip()})
@@ -1907,7 +1908,7 @@ async def add_location_holds(request: Request):
 @router.delete("/location-holds/{name}")
 async def release_location_hold(name: str, request: Request):
     """Release a location from HOLD (supersu only)."""
-    user = await require_admin_level(request, 2)
+    user = await require_action(request, "locations.hold")
     clean = (name or "").strip()
     res = await db.wms_locations.update_one(
         {"name": {"$regex": f"^{re.escape(clean)}$", "$options": "i"}},
@@ -1934,23 +1935,15 @@ LOCATION_MANAGER_LEVEL = 3   # renombrar
 LOCATION_ADMIN_LEVEL = 5     # crear / eliminar
 
 
-async def require_location_manager(request: Request) -> dict:
-    user = await require_auth(request)
-    if get_admin_level(user) < LOCATION_MANAGER_LEVEL:
-        raise HTTPException(403, "Solo control de inventario (nivel 3) o administradores pueden renombrar ubicaciones")
-    return user
-
-
-async def require_location_admin(request: Request) -> dict:
-    user = await require_auth(request)
-    if get_admin_level(user) < LOCATION_ADMIN_LEVEL:
-        raise HTTPException(403, "Solo un administrador nivel 5 puede crear o eliminar ubicaciones")
-    return user
+# Desde 2026-09-17 estos umbrales son los DEFAULTS de las acciones
+# locations.rename / locations.create / locations.delete (wms_actions.py) y se
+# editan en Sistema → Configuración → Permisos. Los endpoints usan
+# require_action; las constantes quedan como documentación del origen.
 
 
 @router.post("/locations")
 async def create_location(request: Request):
-    user = await require_location_admin(request)
+    user = await require_action(request, "locations.create")
     body = await request.json()
     name = body.get("name", "").strip().upper()
     zone = body.get("zone", "").strip().upper()
@@ -2648,7 +2641,7 @@ async def delete_location(location_id: str, request: Request, force: bool = Fals
          rows pointing to it — otherwise the operator orphans stock that
          can't be surfaced anywhere in the UI. Pass `?force=true` to
          override this second guard (advanced; doesn't bypass #1)."""
-    user = await require_location_admin(request)
+    user = await require_action(request, "locations.delete")
     loc = await db.wms_locations.find_one({"location_id": location_id})
     if not loc:
         raise HTTPException(404, "Ubicacion no encontrada")
@@ -2699,7 +2692,7 @@ async def delete_location(location_id: str, request: Request, force: bool = Fals
 
 @router.put("/locations/{location_id}")
 async def update_location(location_id: str, request: Request):
-    user = await require_location_manager(request)
+    user = await require_action(request, "locations.rename")
     body = await request.json()
     new_name = body.get("name", "").strip().upper()
     new_zone = body.get("zone", "").strip().upper()
@@ -3661,7 +3654,7 @@ async def delete_box(box_id: str, request: Request):
     """Delete a box (LPN). Super-user only. Deducts the box's units from the
     location's inventory row (mirrors the rebalance in update_box) and removes
     the inventory row entirely if it empties out and no other box feeds it."""
-    user = await require_admin_level(request, 2)
+    user = await require_action(request, "inventory.delete_box")
 
     box = await db.wms_boxes.find_one({"box_id": box_id}, {"_id": 0})
     if not box:
@@ -3708,7 +3701,7 @@ async def adjust_box_count(box_id: str, request: Request):
       • If the new count is 0 the box is deleted (no zero-unit ghosts).
       • An empty inventory row (no units, no other boxes) is dropped.
     """
-    user = await require_inventory_level(request, 2)
+    user = await require_action(request, "inventory.adjust_box")
     body = await request.json()
 
     # Resolve by internal key first, then by the physical label (barcode/lpn_id)
@@ -6303,7 +6296,7 @@ async def list_operators(request: Request):
 @router.put("/pick-tickets/{ticket_id}/assign")
 async def assign_pick_ticket(ticket_id: str, request: Request):
     """Admin assigns a pick ticket to an operator."""
-    user = await require_admin(request)
+    user = await require_action(request, "picking.manage")
     body = await request.json()
     operator_id = body.get("operator_id", "").strip()
     operator_name = body.get("operator_name", "").strip()
@@ -6741,7 +6734,7 @@ async def quarantine_resolve(request: Request):
     No toca cajas: sacarlas de la cuarentena es trabajo del conteo (contar y
     reemplazarlas por cajas BOX- reales). Esto sólo la saca de la cola.
     """
-    user = await require_inventory_level(request, 2)
+    user = await require_action(request, "quarantine.resolve")
     body = await request.json()
     location = _RECON_NORM(body.get("location"))
     if not location:
@@ -6898,7 +6891,7 @@ async def bind_box(ticket_id: str, request: Request):
     está en el sistema el PDA se detiene con "avisa a tu supervisor" y nunca
     llega aquí; el supervisor identifica la caja antes de que se pueda surtir.
     """
-    user = await require_admin(request)
+    user = await require_action(request, "picking.manage")
     body = await request.json()
     lpn = _norm_lpn(body.get("lpn"))
     location = (body.get("location") or "").strip().upper()
@@ -8074,7 +8067,7 @@ async def list_finished_goods(request: Request, is_bpo: bool = None):
 
 @router.put("/finished-goods/{box_id}")
 async def edit_finished_good(box_id: str, request: Request):
-    user = await require_admin(request)
+    user = await require_action(request, "finished.edit")
     body = await request.json()
     update = {k: v for k, v in body.items() if k in ["units", "location", "po", "is_bpo", "sku", "color", "size"]}
     result = await db.wms_boxes.update_one({"box_id": box_id}, {"$set": update})
@@ -8248,8 +8241,8 @@ async def wms_module_access_get(request: Request):
 
 @router.put("/module-access")
 async def wms_module_access_put(request: Request):
-    """Guarda los niveles. Solo supersu — es quien reparte accesos."""
-    user = await require_supersu(request)
+    """Guarda los niveles. Solo quien reparte accesos (config.permissions = supersu)."""
+    user = await require_action(request, "config.permissions")
     body = await request.json()
     clean = {}
     for k, v in (body.get("levels") or {}).items():
@@ -8265,6 +8258,139 @@ async def wms_module_access_put(request: Request):
         upsert=True)
     await log_activity(user, "wms_module_access_update", {"levels": clean})
     return {"ok": True, "levels": await get_wms_module_levels()}
+
+
+# ==================== PERMISOS POR ACCIÓN ====================
+# Catálogo en wms_actions.py (doble escalera admin / inventarios, pisos,
+# defaults = umbrales que había en código). Aquí solo vive lo que necesita
+# base: leer/guardar la configuración y la guarda `require_action`.
+_ACTIONS_CACHE = {"at": 0.0, "levels": None}
+_ACTIONS_TTL = 15.0   # s — un cambio de permisos se siente en segundos, sin pegarle a Mongo por request
+
+
+async def get_action_levels(force: bool = False) -> dict:
+    import time as _t
+    if not force and _ACTIONS_CACHE["levels"] is not None and _t.monotonic() - _ACTIONS_CACHE["at"] < _ACTIONS_TTL:
+        return _ACTIONS_CACHE["levels"]
+    doc = await db.config_options.find_one({"config_id": "wms_actions"}, {"_id": 0, "levels": 1}) or {}
+    levels = wa.merge({_action_key_decode(k): v for k, v in (doc.get("levels") or {}).items()})
+    _ACTIONS_CACHE.update({"at": _t.monotonic(), "levels": levels})
+    return levels
+
+
+# Los ids de acción llevan punto (locations.create); Mongo interpreta el punto
+# como ruta en las consultas, así que se persisten con "__".
+def _action_key_encode(k: str) -> str:
+    return k.replace(".", "__")
+
+
+def _action_key_decode(k: str) -> str:
+    return k.replace("__", ".")
+
+
+async def require_action(request: Request, action_id: str) -> dict:
+    """Exige que el usuario cumpla la acción según la configuración vigente.
+    El 403 dice qué acción y qué escaleras la conceden, para que el usuario
+    sepa qué pedirle al supersu."""
+    user = await require_auth(request)
+    levels = await get_action_levels()
+    lv = levels.get(action_id) or wa.defaults().get(action_id)
+    if lv is None:
+        raise HTTPException(500, f"acción no catalogada: {action_id}")
+    if not wa.allows(lv, user):
+        raise HTTPException(403, f"Sin permiso: {wa.ACTIONS[action_id]['label']} ({_levels_text(lv)})")
+    return user
+
+
+def _levels_text(lv: dict) -> str:
+    parts = []
+    a, i = lv.get("admin"), lv.get("inventory")
+    if a is not None:
+        parts.append("solo supersu" if a >= wa.SUPERSU_LEVEL else ("cualquier usuario" if a <= 0 else f"admin nivel {a}+"))
+    if i is not None:
+        parts.append("cualquier usuario" if i <= 0 else f"inventarios nivel {i}+")
+    return " o ".join(parts) or "solo supersu"
+
+
+@router.get("/permissions")
+async def wms_permissions_get(request: Request):
+    """Catálogo de acciones + niveles vigentes. Cualquier autenticado lo lee."""
+    await require_auth(request)
+    return {"actions": wa.catalog(), "groups": [{"id": g, "label": l} for g, l in wa.GROUPS],
+            "levels": await get_action_levels(),
+            "max_admin": wa.MAX_ADMIN, "max_inventory": wa.MAX_INVENTORY,
+            "supersu_level": wa.SUPERSU_LEVEL, "all_level": wa.ALL_LEVEL}
+
+
+@router.get("/permissions/me")
+async def wms_permissions_me(request: Request):
+    """Acciones que el usuario actual puede ejecutar — el frontend oculta con
+    esto, en vez de recalcular niveles a mano (un solo origen de verdad)."""
+    user = await require_auth(request)
+    levels = await get_action_levels()
+    admin, inv = wa.user_ladders(user)
+    return {"allowed": wa.allowed_for(levels, user), "admin_level": admin, "inventory_level": inv}
+
+
+def _clean_levels_body(body: dict) -> tuple[dict, list]:
+    clean, errors = {}, []
+    for k, v in (body.get("levels") or {}).items():
+        try:
+            clean[k] = wa.normalize(k, v if isinstance(v, dict) else {})
+        except ValueError as e:
+            errors.append(str(e))
+    return clean, errors
+
+
+async def _permissions_impact(current: dict, proposed: dict) -> dict:
+    """Quién gana y quién pierde cada acción que cambia, con nombres. Es lo que
+    el supersu ve ANTES de guardar (mismo análisis que se hacía a mano)."""
+    users = await db.users.find({"active": {"$ne": False}}, {"_id": 0, "name": 1, "email": 1, "role": 1, "admin_level": 1, "inventory_level": 1}).to_list(2000)
+    out = {}
+    for k, lv in proposed.items():
+        if current.get(k) == lv:
+            continue
+        gain = [u.get("name") or u.get("email") for u in users if wa.allows(lv, u) and not wa.allows(current[k], u)]
+        lose = [u.get("name") or u.get("email") for u in users if not wa.allows(lv, u) and wa.allows(current[k], u)]
+        out[k] = {"from": current[k], "to": lv, "gain": sorted(gain), "lose": sorted(lose),
+                  "total": sum(1 for u in users if wa.allows(lv, u))}
+    return out
+
+
+@router.post("/permissions/preview")
+async def wms_permissions_preview(request: Request):
+    await require_action(request, "config.permissions")
+    body = await request.json()
+    clean, errors = _clean_levels_body(body)
+    if errors:
+        raise HTTPException(400, " | ".join(errors))
+    current = await get_action_levels(force=True)
+    return {"impact": await _permissions_impact(current, clean)}
+
+
+@router.put("/permissions")
+async def wms_permissions_put(request: Request):
+    """Guarda niveles por acción. Solo quien reparte permisos (config.permissions,
+    candado = supersu). Se guarda el mapa COMPLETO ya validado; el log lleva
+    antes/después de lo que cambió."""
+    user = await require_action(request, "config.permissions")
+    body = await request.json()
+    clean, errors = _clean_levels_body(body)
+    if errors:
+        raise HTTPException(400, " | ".join(errors))
+    current = await get_action_levels(force=True)
+    merged = {**current, **clean}
+    changed = {k: {"from": current.get(k), "to": v} for k, v in merged.items() if current.get(k) != v}
+    await db.config_options.update_one(
+        {"config_id": "wms_actions"},
+        {"$set": {"levels": {_action_key_encode(k): v for k, v in merged.items()},
+                  "updated_at": now_iso(), "updated_by": user.get("email")}},
+        upsert=True)
+    _ACTIONS_CACHE["levels"] = None
+    if changed:
+        await log_activity(user, "wms_actions_update", {
+            "changed": [{"action": k, "label": wa.ACTIONS[k]["label"], **v} for k, v in changed.items()]})
+    return {"ok": True, "levels": await get_action_levels(force=True), "changed": changed}
 
 
 # ==================== AUDITORIA ====================
@@ -8468,7 +8594,7 @@ async def audit_sku_catalogo_aplicar(request: Request):
     """Aplica el barrido: reescribe estilo/color/talla/SKU de cada caja
     divergente con la identidad del catalogo UPC y REPROYECTA el libro de todas
     las celdas tocadas (la caja manda). Solo supersu; queda auditado."""
-    user = await require_supersu(request)
+    user = await require_action(request, "audit.apply_sku_catalog")
     difs = await _sku_catalogo_diferencias()
     if not difs:
         return {"ok": True, "cajas": 0, "celdas_reproyectadas": 0}
@@ -9347,7 +9473,7 @@ async def recon_commit(request: Request):
 @router.get("/recon/pending")
 async def recon_pending(request: Request):
     """Conciliación: cajas faltantes (recon_pending) + creadas/desconocidas."""
-    await require_supersu(request)
+    await require_action(request, "recon.manage")
     faltantes = await db.wms_boxes.find(
         {"status": "recon_pending"},
         {"_id": 0, "box_id": 1, "style": 1, "color": 1, "size": 1, "units": 1,
@@ -9364,7 +9490,7 @@ async def recon_pending(request: Request):
 @router.get("/recon/log")
 async def recon_log(request: Request):
     """Conciliación: registro de ubicaciones conciliadas."""
-    await require_supersu(request)
+    await require_action(request, "recon.manage")
     locs = await db.wms_reconciled_locations.find({}, {"_id": 0}).sort("reconciled_at", -1).to_list(5000)
     return {"count": len(locs), "locations": locs}
 
@@ -9374,7 +9500,7 @@ async def recon_lpn_locations(request: Request):
     """Conciliación: ubicaciones que tienen cajas con LPN fisico y por lo tanto NO
     se pueden conciliar por el flujo PDA (para avisar a los contadores de antemano).
     El sistema ya lo sabe sin necesidad de escanear."""
-    await require_supersu(request)
+    await require_action(request, "recon.manage")
     rows = await db.wms_boxes.aggregate([
         {"$match": {"status": {"$nin": list(_BOX_OUT_STATUSES)}, "units": {"$gt": 0}, "$or": [
             {"box_id": {"$not": {"$regex": "^BOX", "$options": "i"}}},
@@ -9392,7 +9518,7 @@ async def recon_lpn_locations(request: Request):
 async def recon_adjustments(request: Request):
     """Conciliación: registro de ajustes de cajas (p. ej. restauracion de LPN
     marcadas faltantes por conciliacion). Visible en el modulo de Conciliacion."""
-    await require_supersu(request)
+    await require_action(request, "recon.manage")
     adj = await db.wms_recon_adjustments.find({}, {"_id": 0}).sort("created_at", -1).to_list(500)
     return {"count": len(adj), "adjustments": adj}
 
@@ -9401,7 +9527,7 @@ async def recon_adjustments(request: Request):
 async def recon_resolve(request: Request):
     """Conciliación: resuelve una caja pendiente/creada.
     body: { box_id, action: 'assign'|'delete', location? }"""
-    user = await require_supersu(request)
+    user = await require_action(request, "recon.manage")
     body = await request.json()
     bid = str(body.get("box_id", "")).strip().upper()
     action = body.get("action")
@@ -9428,7 +9554,7 @@ async def recon_resolve(request: Request):
 @router.post("/recon/reopen")
 async def recon_reopen(request: Request):
     """Conciliación: reabre una ubicacion bloqueada para volver a conciliarla."""
-    user = await require_supersu(request)
+    user = await require_action(request, "recon.manage")
     body = await request.json()
     location = _RECON_NORM(body.get("location"))
     r = await db.wms_reconciled_locations.delete_one({"location": location})
@@ -9444,7 +9570,7 @@ async def recon_second_count_start(request: Request):
     marcadas como faltantes (recon_pending), para que los operadores hagan un
     segundo conteo fisico de esas ubicaciones en el PDA. Deja un registro en
     Ajustes de cajas con el detalle de que ubicaciones se liberaron."""
-    user = await require_supersu(request)
+    user = await require_action(request, "recon.manage")
     pending = await db.wms_boxes.find(
         {"status": "recon_pending"},
         {"_id": 0, "units": 1, "recon_missing_from": 1}
@@ -9514,7 +9640,7 @@ async def recon_second_count_start(request: Request):
 @router.get("/recon/phantom")
 async def recon_phantom_list(request: Request, status: str = "pendiente", limit: int = 10000):
     """Conciliación: lista la cola de stock fantasma (por default lo pendiente)."""
-    await require_supersu(request)
+    await require_action(request, "recon.manage")
     q = {}
     if status and status != "todos":
         q["status"] = status
@@ -9603,7 +9729,7 @@ async def recon_phantom_scan(request: Request):
     stock fantasma. Los items que persisten conservan su `registro`; los que ya
     no aparecen (el conteo/ajuste posterior los cuadró) se cierran solos como
     'resuelta'. Deja rastro en Ajustes y una incidencia informativa."""
-    user = await require_supersu(request)
+    user = await require_action(request, "recon.manage")
     return await _run_phantom_scan(user)
 
 
@@ -9730,7 +9856,7 @@ async def nightly_phantom_scan_loop():
 async def recon_phantom_registro(request: Request):
     """Conciliación: guarda el registro (nota de caminata) de un fantasma.
     body: { phantom_id, registro }"""
-    user = await require_supersu(request)
+    user = await require_action(request, "recon.manage")
     body = await request.json()
     pid = str(body.get("phantom_id", "")).strip()
     registro = str(body.get("registro", "")).strip()
@@ -9748,7 +9874,7 @@ async def recon_phantom_atender(request: Request):
     """Conciliación: marca un fantasma como atendido (el conteo ya se hizo y la
     corrección quedó registrada). No borra: deja rastro, como las incidencias.
     body: { phantom_id, registro? }"""
-    user = await require_supersu(request)
+    user = await require_action(request, "recon.manage")
     body = await request.json()
     pid = str(body.get("phantom_id", "")).strip()
     upd = {"status": "atendida", "atendida_por": user.get("name", user.get("email", "?")),
@@ -10234,7 +10360,7 @@ async def photo_archive_delete(photo_id: str, request: Request):
 
 @router.get("/push/vapid-public-key")
 async def push_vapid_public_key(request: Request):
-    await require_admin_level(request, 2)
+    await require_action(request, "notifications.push")
     from services.push_notify import ensure_vapid_keys, push_disponible
     if not push_disponible():
         raise HTTPException(503, "pywebpush no está instalado en el servidor")
@@ -10245,7 +10371,7 @@ async def push_vapid_public_key(request: Request):
 @router.post("/push/subscribe")
 async def push_subscribe(request: Request):
     """body: { subscription: <PushSubscription.toJSON()> }"""
-    user = await require_admin_level(request, 2)
+    user = await require_action(request, "notifications.push")
     body = await request.json()
     sub = body.get("subscription") or {}
     endpoint = (sub.get("endpoint") or "").strip()
@@ -10263,7 +10389,7 @@ async def push_subscribe(request: Request):
 @router.post("/push/unsubscribe")
 async def push_unsubscribe(request: Request):
     """body: { endpoint }"""
-    await require_admin_level(request, 2)
+    await require_action(request, "notifications.push")
     body = await request.json()
     endpoint = (body.get("endpoint") or "").strip()
     r = await db.wms_push_subs.delete_many({"subscription.endpoint": endpoint})
@@ -10274,7 +10400,7 @@ async def push_unsubscribe(request: Request):
 async def push_test(request: Request):
     """Manda una notificación de prueba a TODOS los suscritos — para validar
     el canal de punta a punta desde el propio celular."""
-    user = await require_admin_level(request, 2)
+    user = await require_action(request, "notifications.push")
     from services.push_notify import send_push_to_all
     enviadas, muertas = await send_push_to_all(
         db, "✅ Prueba de alertas WMS",
@@ -11003,7 +11129,7 @@ async def get_part_number_config(request: Request):
 async def put_part_number_config(request: Request):
     """Sobrescribe SOLO lo que venga (diccionarios se fusionan por llave; las
     listas reemplazan completas). Admin nivel 3+."""
-    user = await require_admin(request)
+    user = await require_action(request, "asn.part_number_config")
     body = await request.json()
     allowed = {k: v for k, v in (body or {}).items() if k in pn.DEFAULT_CONFIG}
     if not allowed:
@@ -11172,7 +11298,7 @@ async def put_asn_columns(request: Request):
     """Reemplaza la definición completa. Admin/supersu: el mismo gate que crear
     o editar una entrada. Quitar una columna NO borra los valores ya guardados
     en items[].extra de entradas viejas; solo dejan de mostrarse."""
-    user = await require_admin(request)
+    user = await require_action(request, "asn.columns")
     body = await request.json()
     cols = body.get("columns")
     if not isinstance(cols, list):
@@ -11685,7 +11811,7 @@ async def update_asn(asn_id: str, request: Request):
     """Edit an ASN's header and packing-list lines. Admin / super-user.
     Received quantities are preserved (matched by line_no, then part_number),
     and status is recomputed from expected vs received."""
-    user = await require_admin(request)
+    user = await require_action(request, "asn.edit")
     asn = await db.wms_asn.find_one({"asn_id": asn_id}, {"_id": 0})
     if not asn:
         raise HTTPException(404, f"ASN {asn_id} no encontrado")
@@ -11834,7 +11960,7 @@ async def close_asn(asn_id: str, request: Request):
 @router.post("/asn/{asn_id}/reopen")
 async def reopen_asn(asn_id: str, request: Request):
     """Reopen a closed ASN so receiving can continue. Admin / super-user."""
-    user = await require_admin(request)
+    user = await require_action(request, "asn.edit")
     asn = await db.wms_asn.find_one({"asn_id": asn_id}, {"_id": 0})
     if not asn:
         raise HTTPException(404, f"ASN {asn_id} no encontrado")
@@ -11951,7 +12077,7 @@ async def _apply_receiving_to_asn(
 
 @router.put("/pick-tickets/{ticket_id}/prioritize")
 async def prioritize_ticket(ticket_id: str, request: Request):
-    user = await require_admin(request)
+    user = await require_action(request, "picking.manage")
     res = await db.wms_pick_tickets.update_one(
         {"ticket_id": ticket_id},
         {"$set": {"priority": "HOT", "updated_at": now_iso()}}
@@ -11977,7 +12103,7 @@ async def add_inventory_manual(request: Request):
     cases added by this call. Mirrors POST /import/inventory semantics for one
     line so the data shape stays consistent.
     """
-    user = await require_inventory_level(request, 2)
+    user = await require_action(request, "inventory.add_manual")
     body = await request.json()
 
     def s(field, default=""):
@@ -12304,7 +12430,7 @@ async def delete_inventory_row(inventory_id: str, request: Request):
     from a location. Used by the Locations detail modal (delete line / clear
     location). Matches strictly by inventory_id, so it never touches other
     locations or duplicate rows of the same SKU."""
-    user = await require_admin_level(request, 2)
+    user = await require_action(request, "inventory.delete_row")
     inv = await db.wms_inventory.find_one({"inventory_id": inventory_id})
     if not inv:
         raise HTTPException(404, "Inventario no encontrado")
@@ -12342,7 +12468,7 @@ async def delete_inventory_row(inventory_id: str, request: Request):
 @router.post("/import/inventory")
 async def import_inventory(request: Request, file: UploadFile = File(...), force: bool = False):
     # Admin-only: this endpoint REPLACES the entire warehouse (see wipe below).
-    user = await require_admin(request)
+    user = await require_action(request, "inventory.import")
     if not file.filename.endswith(('.xlsx', '.xls')):
         raise HTTPException(400, "Solo archivos Excel (.xlsx)")
 
@@ -12605,7 +12731,7 @@ async def generate_sku(request: Request, style: str = "", color: str = "", size:
 @router.post("/cycle-counts")
 async def create_cycle_count(request: Request):
     """Create a new cycle count task."""
-    user = await require_inventory_level(request, 1)
+    user = await require_action(request, "cycle_count.operate")
     body = await request.json()
     name = body.get("name", "").strip()
     location_filter = body.get("location_filter", "").strip()
@@ -13130,7 +13256,7 @@ async def cc_scan_location(count_id: str, request: Request):
     """Escanea el LPN de una caja para una ubicación del conteo. Agrega el box_id
     al set escaneado del pase actual (dedupe). Reporta si es esperado, ajeno o
     duplicado, sin cerrar todavía la ubicación."""
-    user = await require_inventory_level(request, 1)
+    user = await require_action(request, "cycle_count.operate")
     body = await request.json()
     count = await db.wms_cycle_counts.find_one({"count_id": count_id}, {"_id": 0})
     if not count:
@@ -13320,7 +13446,7 @@ async def cc_unscan_location(count_id: str, request: Request):
     """Quita un LPN escaneado por error del set del pase actual de una ubicación.
     Solo corrige la captura antes de cerrar — no cierra, no escala, no toca
     inventario. Mismas validaciones/gate de nivel 3 que scan-location."""
-    user = await require_inventory_level(request, 1)
+    user = await require_action(request, "cycle_count.operate")
     body = await request.json()
     count = await db.wms_cycle_counts.find_one({"count_id": count_id}, {"_id": 0})
     if not count:
@@ -13402,7 +13528,7 @@ async def cc_close_location(count_id: str, request: Request):
 
     La resolución de discrepancia confirmada SÍ muta inventario (a diferencia del
     comportamiento viejo, solo-auditoría); ver _cc_resolve_location."""
-    user = await require_inventory_level(request, 1)
+    user = await require_action(request, "cycle_count.operate")
     body = await request.json()
     count = await db.wms_cycle_counts.find_one({"count_id": count_id}, {"_id": 0})
     if not count:
@@ -13537,7 +13663,7 @@ async def cc_resolve_supervisor(count_id: str, request: Request):
         y sube el inventario;
       • action 'discard' -> la descarta (error de escaneo), sin tocar inventario.
     Al terminar cierra la ubicación como 'ok'. Todo queda en wms_movements."""
-    user = await require_inventory_level(request, 3)
+    user = await require_action(request, "cycle_count.supervise")
     body = await request.json()
     count = await db.wms_cycle_counts.find_one({"count_id": count_id}, {"_id": 0})
     if not count:
@@ -13676,7 +13802,7 @@ async def cc_resolve_supervisor(count_id: str, request: Request):
 @router.get("/cycle-counts")
 async def list_cycle_counts(request: Request):
     """List all cycle counts."""
-    await require_inventory_level(request, 1)
+    await require_action(request, "cycle_count.operate")
     counts = await db.wms_cycle_counts.find({}, {"_id": 0, "lines": 0}).sort("created_at", -1).to_list(200)
     return counts
 
@@ -13698,7 +13824,7 @@ async def cycle_counts_efficiency(
     local. Fuente: el history es lo que el contador realmente cerró — no los
     movimientos, que solo registran binds y excepciones.
     """
-    await require_inventory_level(request, 3)
+    await require_action(request, "cycle_count.supervise")
     if not from_utc or not to_utc:
         raise HTTPException(400, "from_utc y to_utc (ISO) son requeridos")
 
@@ -13734,7 +13860,7 @@ async def get_cycle_count(count_id: str, request: Request):
     snapshotting description/customer/country/fabric/manufacturer onto each
     line, enrich on the fly by joining against current wms_inventory so the
     counter always sees the full context."""
-    await require_inventory_level(request, 1)
+    await require_action(request, "cycle_count.operate")
     count = await db.wms_cycle_counts.find_one({"count_id": count_id}, {"_id": 0})
     if not count:
         raise HTTPException(404, "Conteo no encontrado")
@@ -13808,7 +13934,7 @@ def _is_extreme_variance(cur: int, qty: int) -> bool:
 @router.put("/cycle-counts/{count_id}/count")
 async def save_count_progress(count_id: str, request: Request):
     """Save counting progress - operator submits counted quantities."""
-    user = await require_inventory_level(request, 1)
+    user = await require_action(request, "cycle_count.operate")
     body = await request.json()
     counted_items = body.get("counted_items", {})  # { line_id: counted_qty }
 
@@ -13930,7 +14056,7 @@ async def save_count_progress(count_id: str, request: Request):
 @router.put("/cycle-counts/{count_id}/approve")
 async def approve_cycle_count(count_id: str, request: Request):
     """Admin approves cycle count and adjusts inventory."""
-    user = await require_inventory_level(request, 2)
+    user = await require_action(request, "cycle_count.approve")
     count = await db.wms_cycle_counts.find_one({"count_id": count_id}, {"_id": 0})
     if not count:
         raise HTTPException(404, "Conteo no encontrado")
@@ -13998,7 +14124,7 @@ async def approve_cycle_count(count_id: str, request: Request):
 @router.delete("/cycle-counts/{count_id}")
 async def delete_cycle_count(count_id: str, request: Request):
     """Admin deletes a cycle count."""
-    user = await require_inventory_level(request, 2)
+    user = await require_action(request, "cycle_count.approve")
     count = await db.wms_cycle_counts.find_one({"count_id": count_id})
     if not count:
         raise HTTPException(404, "Conteo no encontrado")
@@ -14022,7 +14148,7 @@ async def cycle_counts_report_summary(
     Historical summary of cycle counts, supports filters:
     date_from, date_to (ISO), status, created_by_name, approved_by_name.
     """
-    await require_inventory_level(request, 3)
+    await require_action(request, "cycle_count.supervise")
 
     query: dict = {}
     # Status filter: default to approved only if no status given
@@ -14165,7 +14291,7 @@ async def cycle_counts_report_timeline(
     Returns a chronological feed of cycle count activity.
     Supports date_from, date_to (ISO date string), user_id, count_id filters.
     """
-    await require_inventory_level(request, 3)
+    await require_action(request, "cycle_count.supervise")
 
     count_query: dict = {}
     if count_id:
@@ -14280,7 +14406,7 @@ async def get_cycle_count_report(count_id: str, request: Request):
     Detailed report for a single cycle count (any status, best for approved).
     Returns KPIs, discrepancy table sorted by magnitude, and per-location breakdown.
     """
-    await require_inventory_level(request, 3)
+    await require_action(request, "cycle_count.supervise")
     count = await db.wms_cycle_counts.find_one({"count_id": count_id}, {"_id": 0})
     if not count:
         raise HTTPException(404, "Conteo no encontrado")
@@ -14960,7 +15086,7 @@ async def correct_upc(upc: str, request: Request):
         receivings, catalog and the boxes' inventory lines.
     dry-run by default; apply=true commits. Refuses if any affected source line
     has allocated units, so open order allocations never desync."""
-    user = await require_admin(request)
+    user = await require_action(request, "upc.correct")
     code = _norm_upc(upc)
     body = await request.json()
     apply = bool(body.get("apply", False))
@@ -15158,7 +15284,7 @@ async def delete_upc(upc: str, request: Request):
     """Admin-only delete. Existing receiving records keep their data — they
     don't reference the catalog by FK, they just inherited values at capture
     time."""
-    user = await require_admin(request)
+    user = await require_action(request, "upc.correct")
     code = _norm_upc(upc)
     res = await db.wms_upc_catalog.delete_one({"upc": code})
     if res.deleted_count == 0:
