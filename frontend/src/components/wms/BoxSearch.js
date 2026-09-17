@@ -1,7 +1,7 @@
 import { useState, useRef } from "react";
 import { createPortal } from "react-dom";
 import { toast } from "sonner";
-import { ScanLine, X, Loader2, MapPin, Package, History, AlertTriangle, Printer, FileText, Boxes } from "lucide-react";
+import { ScanLine, X, Loader2, MapPin, Package, History, AlertTriangle, Printer, FileText, Boxes, ArrowLeft } from "lucide-react";
 import { useLang } from "../../contexts/LanguageContext";
 import { fetcher, cleanScan, API, useWms } from "./lib";
 import { Chip } from "./ui";
@@ -99,6 +99,9 @@ export function BoxSearchBar({ compact = false }) {
   // Ubicación escaneada (GET /locations/lookup): cajas y unidades en stock,
   // desglose por producto y lista de cajas. Excluyente con `data`.
   const [loc, setLoc] = useState(null);
+  // Ubicación desde la que se abrió la caja que se está viendo: permite
+  // "← Volver a NA06-B15" para revisar otra caja sin volver a escanear el rack.
+  const [parentLoc, setParentLoc] = useState(null);
   const [loading, setLoading] = useState(false);
   const inputRef = useRef(null);
   // Salto al detalle de la entrada (lo provee WMS.js; en otros hosts es null).
@@ -129,12 +132,18 @@ export function BoxSearchBar({ compact = false }) {
     e?.preventDefault();
     const q = cleanScan(code);
     if (!q) return;
+    setParentLoc(null);   // un escaneo nuevo empieza de cero
     await lookup(q);
   };
-  // Desde el panel de ubicación: abrir el historial de una de sus cajas.
-  const openBox = (id) => { setCode(id); lookup(id); };
+  // Desde el panel de ubicación: abrir el historial de una de sus cajas,
+  // recordando la ubicación para poder regresar sin reescanear.
+  const openBox = (id) => { if (loc) setParentLoc(loc); setCode(id); lookup(id); };
+  const backToLoc = () => {
+    if (!parentLoc) return;
+    setData(null); setLoc(parentLoc); setCode(parentLoc.location?.name || ""); setParentLoc(null);
+  };
 
-  const close = () => { setOpen(false); setData(null); setLoc(null); setCode(""); };
+  const close = () => { setOpen(false); setData(null); setLoc(null); setParentLoc(null); setCode(""); };
 
   return (
     <>
@@ -167,8 +176,14 @@ export function BoxSearchBar({ compact = false }) {
           <div onClick={(e) => e.stopPropagation()}
             className="bg-card border border-border rounded-lg w-full max-w-2xl max-h-[80vh] flex flex-col shadow-xl animate-in zoom-in-95 duration-150">
             <div className="flex items-center justify-between p-4 border-b border-border/20">
-              <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
-                {loc ? <MapPin className="w-4 h-4 text-muted-foreground" /> : <Package className="w-4 h-4 text-muted-foreground" />} {loc ? t("wms_bs_location") : t("wms_bs_box_lpn")}
+              <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground min-w-0">
+                {parentLoc && !loc && (
+                  <button type="button" onClick={backToLoc} data-testid="bs-back-to-location"
+                    className="flex items-center gap-1 px-2 py-1 -ml-1 rounded-md border border-border text-foreground hover:bg-muted/60 font-mono text-xs shrink-0">
+                    <ArrowLeft className="w-3.5 h-3.5" /> {parentLoc.location?.name}
+                  </button>
+                )}
+                {loc ? <MapPin className="w-4 h-4 text-muted-foreground shrink-0" /> : <Package className="w-4 h-4 text-muted-foreground shrink-0" />} {loc ? t("wms_bs_location") : t("wms_bs_box_lpn")}
               </div>
               <button onClick={close} className="p-1.5 hover:bg-secondary rounded-lg transition-all">
                 <X className="w-5 h-5 text-muted-foreground" />
