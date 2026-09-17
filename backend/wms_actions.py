@@ -66,8 +66,13 @@ ACTIONS: dict = {
     # ── Inventario ──────────────────────────────────────────────────────────
     "inventory.add_manual": _a("Alta manual de inventario", "inventory", 1, 2, floor_admin=1, floor_inventory=1,
                                desc="Agregar una línea de inventario a mano."),
-    "inventory.adjust_box": _a("Ajustar unidades de una caja", "inventory", 1, 2, floor_admin=1, floor_inventory=1,
-                               desc="Cambiar la cantidad de una caja (ajuste con motivo)."),
+    # Verdes del Mover (decisión 2026-09-08): rol inventarios o admin 5. El
+    # backend estaba más laxo (adjust: inv 2 / cualquier admin; generate: todos)
+    # y solo la UI escondía los botones; desde 2026-09-17 la acción manda.
+    "inventory.adjust_box": _a("Ajustar unidades de una caja (Mover)", "inventory", 5, 1, floor_admin=1, floor_inventory=1,
+                               desc="Cambiar la cantidad de una caja con motivo (pestaña Ajustar del Mover)."),
+    "inventory.generate_box": _a("Generar caja (Mover)", "inventory", 5, 1, floor_admin=1, floor_inventory=1,
+                                 desc="Crear una caja nueva con unidades en una ubicación (pestaña Generar del Mover)."),
     "inventory.delete_box": _a("Eliminar cajas", "inventory", 2, 3, floor_admin=2, floor_inventory=2,
                                desc="Borrar una caja del sistema."),
     "inventory.delete_row": _a("Eliminar renglones de inventario", "inventory", 2, 3, floor_admin=2, floor_inventory=2,

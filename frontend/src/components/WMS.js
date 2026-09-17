@@ -207,9 +207,10 @@ export default function WMS() {
   // filtro del nav los aplica encima de los flags hardcodeados; el backend
   // valida igual. {} hasta que carga → cae a los defaults del código.
   const [moduleLevels, setModuleLevels] = useState({});
+  const [moduleInvLevels, setModuleInvLevels] = useState(null);
   useEffect(() => {
     fetcher('/module-access')
-      .then(d => setModuleLevels(d?.levels || {}))
+      .then(d => { setModuleLevels(d?.levels || {}); if (d?.inventory_levels) setModuleInvLevels(d.inventory_levels); })
       .catch(logLoadError('module access'));
   }, []);
 
@@ -253,7 +254,7 @@ export default function WMS() {
   // La lista y su reparto en grupos viven en wms/modules.js — la barra
   // superior, el sidebar y (fase 2) la paleta ⌘K consumen la misma fuente.
   const MODULES = useMemo(() => buildModules(t), [t]);
-  const visibleModules = useMemo(() => filterModules(MODULES, currentUser, moduleLevels), [MODULES, currentUser, moduleLevels]);
+  const visibleModules = useMemo(() => filterModules(MODULES, currentUser, moduleLevels, moduleInvLevels), [MODULES, currentUser, moduleLevels, moduleInvLevels]);
   // `t` va en groupModules para que los 5 grupos del menú salgan en el idioma activo.
   const navGroups = useMemo(() => groupModules(visibleModules, t), [visibleModules, t]);
 

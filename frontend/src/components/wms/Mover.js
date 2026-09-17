@@ -5,9 +5,8 @@ import {
   CheckCircle2, RotateCcw, Search, X, Move, Tag, Scale, Printer,
 } from "lucide-react";
 import { useLang } from "../../contexts/LanguageContext";
-import { fetcher, poster, cleanScan, logLoadError, API, useWmsSizes, useWmsCatalogs, mergeUnique, scanFeedback, duplicateScan, useLocationSummary } from "./lib";
+import { fetcher, poster, cleanScan, logLoadError, API, useWmsSizes, useWmsCatalogs, mergeUnique, scanFeedback, duplicateScan, useLocationSummary, useWms } from "./lib";
 import SearchableSelect from "../SearchableSelect";
-import { adminLevelOf } from "./modules";
 import { ModuleToolbar, SoftAlert, Btn, Chip, EmptyState } from "./ui";
 
 // ─── Location input: scan (keyboard-wedge) OR type-to-search a known slot ─────
@@ -92,14 +91,16 @@ export function MoverModule({ currentUser }) {
   //  • ROJOS  — "Ajuste masivo" (tab) y los modos "Toda la ubicación" y
   //    "Reconciliar LPN/Etiqueta": SOLO admin 5+ / supersu. Son operaciones
   //    peligrosas (barrido de ubicación entera) o de migración (reconciliar LPN).
-  // adminLevelOf() es el espejo de get_admin_level() del backend (deps.py):
-  // supersu=5, admin=admin_level(1-5), inventory_level>=3 confiere 3.
-  const admin5 = adminLevelOf(currentUser) >= 5;
-  const canGreen = currentUser?.role === 'inventory' || admin5;  // Ajustar / Generar caja
+  // Verdes = acciones inventory.adjust_box / inventory.generate_box (default:
+  // rol inventarios o admin 5, decisión 2026-09-08); el backend exige lo mismo.
+  const { can } = useWms();
+  const canAdjust = can('inventory.adjust_box');
+  const canGenerate = can('inventory.generate_box');
+  const canGreen = canAdjust || canGenerate;
   // "Ajuste masivo", "Toda la ubicación" y "Reconciliar LPN" se eliminaron de
   // raíz (2026-09-14/15); ya no hay herramientas "rojas".
   // Tabs visibles: Mover (siempre) + Ajustar + Generar (verdes).
-  const topTabsGridClass = canGreen ? 'grid-cols-3' : 'grid-cols-1';
+  const topTabsGridClass = ['grid-cols-1', 'grid-cols-2', 'grid-cols-3'][(canAdjust ? 1 : 0) + (canGenerate ? 1 : 0)];
 
   // Flow: origin → mode → (per-mode selection) → destination → submit.
   const [origin, setOrigin] = useState("");
@@ -407,7 +408,7 @@ export function MoverModule({ currentUser }) {
             className={`flex items-center justify-center gap-2 py-2 rounded-md text-sm font-medium transition-colors ${topMode === "move" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}>
             <Move className="w-4 h-4" /> {t("wms_move")}
           </button>
-          {canGreen && (
+          {canAdjust && (
           <button
             onClick={() => { if (topMode !== "adjust") { resetAll(); setTopMode("adjust"); } }}
             data-testid="mover-top-adjust"
@@ -415,7 +416,7 @@ export function MoverModule({ currentUser }) {
             <Scale className="w-4 h-4" /> {t("wms_adjust_box")}
           </button>
           )}
-          {canGreen && (
+          {canGenerate && (
           <button
             onClick={() => { if (topMode !== "generate") { resetAll(); resetAdjust(); setTopMode("generate"); } }}
             data-testid="mover-top-generate"

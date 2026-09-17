@@ -4436,7 +4436,7 @@ async def generate_box(request: Request):
     """Mint a NEW box (LPN) for material the warehouse receives from production
     without a label, so it can be moved/adjusted and physically tagged. Creates a
     BOX-###### id + its inventory row and returns the id to print a label."""
-    user = await require_auth(request)
+    user = await require_action(request, "inventory.generate_box")
     body = await request.json()
     style = (body.get("style") or "").strip().upper()
     color = (body.get("color") or "").strip().upper()
@@ -8197,6 +8197,20 @@ WMS_MODULE_ACCESS_LABELS = {
 }
 # Modulos cuyo nivel ADEMAS lo valida el backend (no solo el menu).
 WMS_MODULE_ACCESS_ENFORCED = {"audit", "incidents"}
+# Segunda escalera (2026-09-17, fase 4): nivel de INVENTARIOS mínimo por módulo.
+# Gobierna lo que ve el rol `inventory` (antes lista blanca fija en el frontend:
+# ubicaciones, mover, conteo, inventario, antigüedad, movimientos desde nivel 1)
+# y suma acceso a cualquier otro rol con inventory_level. None = la escalera no
+# concede ese módulo. Editable en Configuración → Permisos.
+WMS_MODULE_INVENTORY_DEFAULTS = {
+    "asn": None, "receiving": None, "transit": None,
+    "inventory": 1, "locations": 1, "mover": 1, "aging": 1, "cycle_count": 1,
+    "reconciliation": None,
+    "directed": None, "picking": None, "neck_cutting": None, "finished": None,
+    "dashboard": None, "reports": None, "movements": 1,
+    "audit": None, "incidents": None, "home": None,
+}
+MAX_MODULE_INVENTORY_LEVEL = 3
 
 
 async def get_wms_module_levels() -> dict:
@@ -8213,13 +8227,36 @@ async def get_wms_module_levels() -> dict:
     return out
 
 
+async def get_wms_module_inventory_levels() -> dict:
+    """Escalera de inventarios por módulo = lo guardado (válido) sobre los defaults."""
+    doc = await db.config_options.find_one(
+        {"config_id": "wms_module_access"}, {"_id": 0, "inventory_levels": 1}) or {}
+    out = dict(WMS_MODULE_INVENTORY_DEFAULTS)
+    for k, v in (doc.get("inventory_levels") or {}).items():
+        if k not in WMS_MODULE_INVENTORY_DEFAULTS:
+            continue
+        if v is None or v == "":
+            out[k] = None
+        else:
+            try:
+                out[k] = max(1, min(MAX_MODULE_INVENTORY_LEVEL, int(v)))
+            except (TypeError, ValueError):
+                pass
+    return out
+
+
 async def require_wms_module_access(request: Request, module_id: str):
-    """Exige el nivel configurado para `module_id`. 0 = cualquier autenticado;
-    6 = solo supersu; 1..5 = nivel de admin minimo (supersu siempre pasa)."""
+    """Exige el nivel configurado para `module_id`. Escalera admin: 0 = cualquier
+    autenticado; 6 = solo supersu; 1..5 = nivel de admin minimo (supersu siempre
+    pasa). Escalera inventarios: inventory_level >= N también abre el módulo."""
+    user = await require_auth(request)
+    inv_lvl = (await get_wms_module_inventory_levels()).get(module_id)
+    if inv_lvl is not None and wa.user_ladders(user)[1] >= inv_lvl:
+        return user
     levels = await get_wms_module_levels()
     lvl = levels.get(module_id, WMS_MODULE_ACCESS_DEFAULTS.get(module_id, SUPERSU_ONLY_LEVEL))
     if lvl <= ALL_LEVEL:
-        return await require_auth(request)
+        return user
     if lvl >= SUPERSU_ONLY_LEVEL:
         return await require_supersu(request)
     return await require_admin_level(request, lvl)
@@ -8232,6 +8269,9 @@ async def wms_module_access_get(request: Request):
     await require_auth(request)
     return {"levels": await get_wms_module_levels(),
             "defaults": WMS_MODULE_ACCESS_DEFAULTS,
+            "inventory_levels": await get_wms_module_inventory_levels(),
+            "inventory_defaults": WMS_MODULE_INVENTORY_DEFAULTS,
+            "max_inventory_level": MAX_MODULE_INVENTORY_LEVEL,
             "labels": WMS_MODULE_ACCESS_LABELS,
             "order": list(WMS_MODULE_ACCESS_DEFAULTS.keys()),
             "enforced": sorted(WMS_MODULE_ACCESS_ENFORCED),
@@ -8244,20 +8284,36 @@ async def wms_module_access_put(request: Request):
     """Guarda los niveles. Solo quien reparte accesos (config.permissions = supersu)."""
     user = await require_action(request, "config.permissions")
     body = await request.json()
-    clean = {}
-    for k, v in (body.get("levels") or {}).items():
-        if k not in WMS_MODULE_ACCESS_DEFAULTS:
-            continue
-        try:
-            clean[k] = max(ALL_LEVEL, min(SUPERSU_ONLY_LEVEL, int(v)))
-        except (TypeError, ValueError):
-            continue
-    await db.config_options.update_one(
-        {"config_id": "wms_module_access"},
-        {"$set": {"levels": clean, "updated_at": now_iso(), "updated_by": user.get("email")}},
-        upsert=True)
-    await log_activity(user, "wms_module_access_update", {"levels": clean})
-    return {"ok": True, "levels": await get_wms_module_levels()}
+    sets = {"updated_at": now_iso(), "updated_by": user.get("email")}
+    # Cada escalera se guarda solo si viene en el body: el Centro de usuarios
+    # manda únicamente `levels` y no debe pisar la de inventarios.
+    if "levels" in body:
+        clean = {}
+        for k, v in (body.get("levels") or {}).items():
+            if k not in WMS_MODULE_ACCESS_DEFAULTS:
+                continue
+            try:
+                clean[k] = max(ALL_LEVEL, min(SUPERSU_ONLY_LEVEL, int(v)))
+            except (TypeError, ValueError):
+                continue
+        sets["levels"] = clean
+    if "inventory_levels" in body:
+        clean_inv = {}
+        for k, v in (body.get("inventory_levels") or {}).items():
+            if k not in WMS_MODULE_INVENTORY_DEFAULTS:
+                continue
+            if v is None or v == "":
+                clean_inv[k] = None
+                continue
+            try:
+                clean_inv[k] = max(1, min(MAX_MODULE_INVENTORY_LEVEL, int(v)))
+            except (TypeError, ValueError):
+                continue
+        sets["inventory_levels"] = clean_inv
+    await db.config_options.update_one({"config_id": "wms_module_access"}, {"$set": sets}, upsert=True)
+    await log_activity(user, "wms_module_access_update", {k: v for k, v in sets.items() if k in ("levels", "inventory_levels")})
+    return {"ok": True, "levels": await get_wms_module_levels(),
+            "inventory_levels": await get_wms_module_inventory_levels()}
 
 
 # ==================== PERMISOS POR ACCIÓN ====================

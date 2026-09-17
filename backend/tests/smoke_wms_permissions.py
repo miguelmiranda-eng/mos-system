@@ -161,6 +161,33 @@ async def main():
     check("admin 5 no reparte accesos por módulo → 403", r.status_code == 403)
     r = await su.put("/api/wms/module-access", json={"levels": {"audit": 3}})
     check("supersu sí", r.status_code == 200 and r.json()["levels"]["audit"] == 3)
+    r = await pa.get("/api/wms/module-access")
+    d = r.json()
+    check("GET trae inventory_levels con la lista blanca histórica como default",
+          d["inventory_levels"]["locations"] == 1 and d["inventory_levels"]["movements"] == 1 and d["inventory_levels"]["asn"] is None and d["inventory_defaults"]["audit"] is None, d.get("inventory_levels"))
+    r = await su.put("/api/wms/module-access", json={"levels": {"audit": 5}})
+    r = await pa.get("/api/wms/audit/health")
+    check("Paola (inv 3) NO entra a Auditoría (admin 5, inventarios —)", r.status_code == 403, r.status_code)
+    r = await su.put("/api/wms/module-access", json={"inventory_levels": {"audit": 3, "asn": 2}})
+    d = r.json()
+    check("PUT inventory_levels guarda sin pisar levels", r.status_code == 200 and d["inventory_levels"]["audit"] == 3 and d["inventory_levels"]["asn"] == 2 and d["levels"]["audit"] == 5, d)
+    r = await pa.get("/api/wms/audit/health")
+    check("ahora Paola entra a Auditoría por la escalera de inventarios", r.status_code == 200, r.status_code)
+    r = await su.put("/api/wms/module-access", json={"levels": {"audit": 6}})
+    d = r.json()
+    check("PUT solo levels (Centro de usuarios) conserva inventory_levels", d["inventory_levels"]["audit"] == 3 and d["levels"]["audit"] == 6, d)
+    r = await su.put("/api/wms/module-access", json={"inventory_levels": {"audit": None}})
+    r = await pa.get("/api/wms/audit/health")
+    check("apagar la escalera (None) → Paola 403 otra vez", r.status_code == 403)
+
+    print("\n== 6. Verdes del Mover: la acción manda también en el backend ==")
+    body = {"style": "5000", "color": "BLACK", "size": "M", "units": 5, "location": "SEED-01", "customer": "GOODIE TWO SLEEVES"}
+    r = await a3.post("/api/wms/boxes/generate", json=body)
+    check("admin 3 NO genera caja (403, antes require_auth)", r.status_code == 403 and "Generar caja" in r.text, r.text[:120])
+    r = await pa.post("/api/wms/boxes/generate", json=body)
+    check("Paola (rol inventarios) sí puede llamar generate (no 403)", r.status_code != 403, r.status_code)
+    r = await a3.post("/api/wms/boxes/NOPE/adjust", json={"units": 1, "reason": "x"})
+    check("admin 3 NO ajusta caja (403)", r.status_code == 403, r.status_code)
 
     for c in (su, a5, a3, pa, pk):
         await c.aclose()

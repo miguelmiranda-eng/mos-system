@@ -468,6 +468,8 @@ const es = {
   wms_notif_disable: "Desactivar en este dispositivo",
   wms_notif_test: "Enviar prueba",
   wms_push_test_sent: "Notificación de prueba enviada",
+  wms_module_col: "Módulo",
+  wms_module_inv_help: "Columna Inventarios: nivel de inventarios (1–3) que abre el módulo. Es lo ÚNICO que rige para el rol inventarios (por defecto: Inventario, Locaciones, Mover, Antigüedad, Conteo cíclico y Movimientos desde nivel 1) y suma acceso a cualquier otro usuario con inventory_level. «—» = esa escalera no abre el módulo.",
   wms_perm_title: "Permisos por acción",
   wms_perm_help: "Cada acción del WMS exige un nivel en dos escaleras: Admin (nivel del usuario admin, 1–5) e Inventarios (inventory_level, 1–3). El usuario pasa si cumple CUALQUIERA de las dos; «—» apaga esa escalera; «Todos» abre la acción a cualquier usuario. Los pisos (lo mínimo que se puede bajar) y el candado los fija el sistema. El supersu siempre puede todo. Antes de guardar, «Vista previa» te dice quién gana y quién pierde.",
   wms_perm_col_action: "Acción",

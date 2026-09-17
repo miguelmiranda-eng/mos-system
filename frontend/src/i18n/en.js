@@ -468,6 +468,8 @@ const en = {
   wms_notif_disable: "Disable on this device",
   wms_notif_test: "Send test",
   wms_push_test_sent: "Test notification sent",
+  wms_module_col: "Module",
+  wms_module_inv_help: "Inventory column: inventory level (1–3) that opens the module. It is the ONLY rule for the inventory role (default: Inventory, Locations, Move, Aging, Cycle count and Movements from level 1) and adds access for any other user with inventory_level. «—» = that ladder does not open the module.",
   wms_perm_title: "Permissions by action",
   wms_perm_help: "Every WMS action requires a level on two ladders: Admin (admin user level, 1–5) and Inventory (inventory_level, 1–3). A user passes if they meet EITHER ladder; «—» turns that ladder off; «Everyone» opens the action to any user. Floors (the lowest you can go) and locks are set by the system. Superuser can always do everything. Before saving, «Preview» tells you who gains and who loses.",
   wms_perm_col_action: "Action",

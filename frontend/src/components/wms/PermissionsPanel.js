@@ -213,6 +213,18 @@ const ModuleAccessPanel = () => {
     } catch { toast.error(t('wms_conn_err')); loadModuleAccess(); }
     finally { setSavingAccess(false); }
   };
+  // Escalera de inventarios por módulo ('' = no concede).
+  const saveModuleInv = async (moduleId, raw) => {
+    const next = { ...(moduleAccess?.inventory_levels || {}), [moduleId]: raw === '' ? null : Number(raw) };
+    setModuleAccess(a => ({ ...a, inventory_levels: next }));
+    setSavingAccess(true);
+    try {
+      const res = await putter('/module-access', { inventory_levels: next });
+      if (res.ok) { const d = await res.json(); setModuleAccess(a => ({ ...a, inventory_levels: d.inventory_levels || next })); toast.success(t('wms_access_updated')); }
+      else { const e = await res.json().catch(() => ({})); toast.error(e.detail || t('wms_access_save_err')); loadModuleAccess(); }
+    } catch { toast.error(t('wms_conn_err')); loadModuleAccess(); }
+    finally { setSavingAccess(false); }
+  };
   if (!moduleAccess || !Object.keys(moduleAccess.defaults || {}).length) return null;
   return (
     <div className="bg-card border border-border rounded-lg overflow-hidden" data-testid="wms-module-access">
@@ -222,23 +234,35 @@ const ModuleAccessPanel = () => {
           {t('users_wms_module_access_help_1')} <span className="text-primary font-semibold">backend</span>{' '}
           {t('users_wms_module_access_help_2')}
         </p>
+        <p className="text-xs text-muted-foreground mt-1">{t('wms_module_inv_help')}</p>
       </div>
-      <div className="px-5 py-4 grid grid-cols-1 md:grid-cols-2 gap-2">
+      <div className="px-5 py-3 grid grid-cols-[1fr_11rem_11rem] gap-3 text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
+        <span>{t('wms_module_col')}</span><span>{t('wms_perm_col_admin')}</span><span>{t('wms_perm_col_inventory')}</span>
+      </div>
+      <div className="px-5 pb-4 space-y-1.5">
         {(moduleAccess.order || Object.keys(moduleAccess.defaults || {})).map(id => {
           const soloLevel = moduleAccess.supersu_only_level || 6;
           const lvl = (moduleAccess.levels || {})[id] ?? moduleAccess.defaults[id];
+          const inv = (moduleAccess.inventory_levels || {})[id] ?? (moduleAccess.inventory_defaults || {})[id] ?? null;
           const enforced = (moduleAccess.enforced || []).includes(id);
+          const invDisabled = id === 'reconciliation' || id === 'incidents';
           return (
-            <div key={id} className="flex items-center justify-between gap-3 bg-muted/30 border border-border rounded-md px-4 py-2.5">
-              <span className="text-sm font-medium text-foreground flex items-center gap-2">
-                {(moduleAccess.labels || {})[id] || id}
-                {enforced && <span className="text-[9px] font-black uppercase tracking-widest text-primary bg-primary/10 border border-primary/30 rounded px-1.5 py-0.5">backend</span>}
+            <div key={id} className="grid grid-cols-[1fr_11rem_11rem] items-center gap-3 bg-muted/30 border border-border rounded-md px-4 py-2" data-testid={`module-access-${id}`}>
+              <span className="text-sm font-medium text-foreground flex items-center gap-2 min-w-0">
+                <span className="truncate">{(moduleAccess.labels || {})[id] || id}</span>
+                {enforced && <span className="text-[9px] font-black uppercase tracking-widest text-primary bg-primary/10 border border-primary/30 rounded px-1.5 py-0.5 shrink-0">backend</span>}
               </span>
               <select value={String(lvl)} onChange={e => saveModuleAccess(id, e.target.value)} disabled={savingAccess}
-                className="w-44 px-2 py-1.5 bg-card border border-input rounded-md text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-ring/25 disabled:opacity-50">
+                className="w-full px-2 py-1.5 bg-card border border-input rounded-md text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-ring/25 disabled:opacity-50">
                 <option value="0">{t('all_boards')}</option>
                 {[1, 2, 3, 4, 5].map(n => <option key={n} value={String(n)}>{t('users_admin_level_plus', { n })}</option>)}
                 <option value={String(soloLevel)}>{t('users_supersu_only')}</option>
+              </select>
+              <select value={inv == null ? '' : String(inv)} onChange={e => saveModuleInv(id, e.target.value)} disabled={savingAccess || invDisabled}
+                title={invDisabled ? t('wms_perm_inv_na') : undefined} data-testid={`module-inv-${id}`}
+                className="w-full px-2 py-1.5 bg-card border border-input rounded-md text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-ring/25 disabled:opacity-50">
+                <option value="">{t('wms_perm_ladder_off')}</option>
+                {[1, 2, 3].map(n => <option key={n} value={String(n)}>{t('wms_perm_inv_level_plus', { n })}</option>)}
               </select>
             </div>
           );

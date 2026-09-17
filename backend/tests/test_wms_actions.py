@@ -67,6 +67,9 @@ def run():
         "recon.manage": (["supersu"], ["admin5", "inv3"]),                                                   # require_supersu
         "asn.edit": (["supersu", "admin3", "inv3"], ["admin2", "inv2"]),                                     # require_admin (≥3)
         "notifications.push": (["admin2", "inv3"], ["admin1", "inv2"]),
+        # verdes del Mover: decisión 2026-09-08 (rol inventarios o admin 5)
+        "inventory.adjust_box": (["supersu", "admin5", "inv1", "inv3"], ["admin3", "admin1", "picker"]),
+        "inventory.generate_box": (["supersu", "admin5", "inv1", "general_inv3"], ["admin3", "picker"]),
         "config.permissions": (["supersu"], ["admin5"]),
     }
     for act, (yes, no) in exp.items():

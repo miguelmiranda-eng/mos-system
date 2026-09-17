@@ -118,22 +118,22 @@ export const buildModules = (t) => [
 /* Filtro por rol y nivel — es LITERALMENTE el que corría dentro del sidebar.
    Se movió aquí para que la barra superior, el sidebar y la paleta no puedan
    discrepar sobre qué ve cada quien. El backend valida igual por su cuenta. */
-export const filterModules = (modules, currentUser, moduleLevels = {}) => modules.filter(m => {
-  // Rol `inventory` del WMS: acotado al área de inventario por nivel. Es una
-  // lista blanca explícita, así que corre ANTES de las guardas adminOnly /
-  // supersuOnly — por eso NO puede incluir 'reconciliation'.
-  //   nivel 1 → locaciones, mover (sin ajustes), conteo cíclico,
-  //             inventario (sin "agregar manual") y movimientos
-  //   nivel 2 → además ajustes en Mover y "agregar manual" en Inventario,
-  //             gateados dentro de cada módulo
-  // (los reportes de conteo — nivel 3 — se gatean dentro de CycleCount)
-  // Conciliación quedó reservada al super usuario, ningún nivel la ve.
-  if (currentUser?.role === 'inventory') {
-    const lvl = parseInt(currentUser?.inventory_level, 10) || 0;
-    if (lvl < 1) return false;
-    const allowed = ['locations', 'mover', 'cycle_count', 'inventory', 'aging', 'movements'];
-    return allowed.includes(m.id);
-  }
+// Respaldo de la escalera de inventarios por módulo (= WMS_MODULE_INVENTORY_DEFAULTS
+// del backend) por si /module-access aún no cargó: la lista blanca histórica.
+const INVENTORY_LEVEL_DEFAULTS = { locations: 1, mover: 1, cycle_count: 1, inventory: 1, aging: 1, movements: 1 };
+
+export const filterModules = (modules, currentUser, moduleLevels = {}, inventoryLevels = null) => modules.filter(m => {
+  const invLevels = inventoryLevels || INVENTORY_LEVEL_DEFAULTS;
+  const invNeeded = invLevels[m.id];
+  const invHave = parseInt(currentUser?.inventory_level, 10) || 0;
+  const invGrants = invNeeded != null && invHave >= invNeeded;
+  // Rol `inventory` del WMS: lo gobierna SOLO la escalera de inventarios por
+  // módulo (Configuración → Permisos → Acceso por módulo, columna Inventarios).
+  // Por default = la lista blanca de siempre: ubicaciones, mover, conteo,
+  // inventario, antigüedad y movimientos desde nivel 1; conciliación nunca.
+  if (currentUser?.role === 'inventory') return invGrants;
+  // Cualquier otro rol con inventory_level también entra por esa escalera.
+  if (invGrants) return true;
   // Roles con lista blanca propia — su piso NO lo mueve el panel de accesos.
   if (currentUser?.role === 'customer') return m.id === 'dashboard';
   if (currentUser?.role === 'picker') return ['picking', 'transit', 'mover'].includes(m.id);
