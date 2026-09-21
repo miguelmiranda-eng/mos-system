@@ -7748,6 +7748,15 @@ async def save_neck_count(order_number: str, request: Request):
 # MAYÚSCULAS. Se suma a CANCELLED.
 _TRACE_EXCLUDE = {"CANCELLED", "LISTO PARA ENVIO", "LISTO PARA INVENTARIO", "EDI",
                   "LISTO PARA FULFILLMENT", "LISTO PARA FULLFILMENT"}
+# Además de la lista exacta, cualquier estatus que EMPIECE con estos prefijos
+# también es terminal: el CRM admite estatus capturados a mano fuera del
+# catálogo (p. ej. "ENVIADO TIJANA-SAN DIEGO") y no deben contar como material
+# en planta. Es por prefijo y no por "contiene": "LABEL LISTO" sigue en piso.
+_TRACE_EXCLUDE_PREFIXES = ("LISTO PARA", "ENVIADO")
+
+def _stage_is_terminal(stage) -> bool:
+    st = str(stage or "").strip().upper()
+    return st in _TRACE_EXCLUDE or st.startswith(_TRACE_EXCLUDE_PREFIXES)
 
 async def _status_catalog():
     """Orden real de los estatus (blank + production) desde la config, con
@@ -7792,7 +7801,7 @@ async def _material_en_piso(customer=""):
             continue
         prod = (o.get("production_status") or "").strip()
         current = prod or "SURTIDO"  # surtido sin production_status = recién en piso
-        if o.get("wms_status") == "shipped" or current.upper() in _TRACE_EXCLUDE:
+        if o.get("wms_status") == "shipped" or _stage_is_terminal(current):
             continue
         present.add(current)
         out.append({
@@ -7804,10 +7813,80 @@ async def _material_en_piso(customer=""):
         })
 
     stages = (["SURTIDO"] if "SURTIDO" in present else [])
-    stages += [s for s in prod_order if s in present and s.upper() not in _TRACE_EXCLUDE]
+    stages += [s for s in prod_order if s in present and not _stage_is_terminal(s)]
     stages += sorted(present - set(stages))
     out.sort(key=lambda r: r.get("piezas") or 0, reverse=True)
     return stages, out
+
+async def _material_en_produccion(customer=""):
+    """Material EN PRODUCCIÓN al grano del inventario (style × color × talla),
+    a partir de los PICK TICKETS confirmados: el ticket ya dice qué material
+    se surtió y para qué orden; la orden del CRM dice dónde está (su
+    production_status, o SURTIDO si aún no tiene). Una fila por ticket × talla.
+    Fuera: órdenes en etapa terminal (_TRACE_EXCLUDE), enviadas, en papelera
+    o que ya no existen en el CRM. `customer` opcional filtra (export)."""
+    cust = (customer or "").strip().upper()
+    tq = {"status": "confirmed"}
+    if cust:
+        tq["$or"] = [{"customer": {"$regex": f"^{re.escape(cust)}$", "$options": "i"}},
+                     {"client": {"$regex": f"^{re.escape(cust)}$", "$options": "i"}}]
+    tickets = await db.wms_pick_tickets.find(tq, {
+        "_id": 0, "ticket_id": 1, "order_number": 1, "customer": 1, "client": 1,
+        "style": 1, "color": 1, "sizes": 1, "picked_sizes": 1, "completed_at": 1,
+    }).to_list(None)
+    if not tickets:
+        return []
+    # Los tickets no traen order_id: se cruza por order_number. Hay números
+    # gemelos en orders; se ignora la papelera y, si aún quedan varios, manda
+    # el más reciente.
+    onums = list({t["order_number"] for t in tickets if t.get("order_number")})
+    orders = {}
+    for o in await db.orders.find(
+        {"order_number": {"$in": onums}},
+        {"_id": 0, "order_number": 1, "client": 1, "customer": 1, "description": 1,
+         "production_status": 1, "wms_status": 1, "board": 1, "updated_at": 1, "created_at": 1},
+    ).to_list(len(onums) + 100):
+        if (o.get("board") or "").strip().upper() == "PAPELERA DE RECICLAJE":
+            continue
+        on = str(o.get("order_number"))
+        prev = orders.get(on)
+        if not prev or (o.get("updated_at") or o.get("created_at") or "") > (prev.get("updated_at") or prev.get("created_at") or ""):
+            orders[on] = o
+
+    def _q(v):
+        return int(v.get("total") or 0) if isinstance(v, dict) else int(v or 0)
+
+    out = []
+    for t in tickets:
+        o = orders.get(str(t.get("order_number") or ""))
+        if not o or o.get("wms_status") == "shipped":
+            continue
+        stage = (o.get("production_status") or "").strip() or "SURTIDO"
+        if _stage_is_terminal(stage):
+            continue
+        # Lo surtido real (picked_sizes); tickets viejos confirmados sin ese
+        # detalle caen a lo pedido (sizes).
+        picked = {k: _q(v) for k, v in (t.get("picked_sizes") or {}).items()}
+        if not any(picked.values()):
+            picked = {k: _q(v) for k, v in (t.get("sizes") or {}).items()}
+        for size, qty in picked.items():
+            if qty <= 0:
+                continue
+            out.append({
+                "customer": t.get("customer") or t.get("client") or o.get("client") or o.get("customer") or "",
+                "order_number": str(t.get("order_number") or ""),
+                "ticket_id": t.get("ticket_id", ""),
+                "style": t.get("style", ""),
+                "color": t.get("color", ""),
+                "size": size,
+                "qty": qty,
+                "stage": stage,
+                "board": o.get("board") or "",
+                "descripcion": o.get("description", ""),
+                "surtido_at": (t.get("completed_at") or "")[:19].replace("T", " "),
+            })
+    out.sort(key=lambda r: (r["customer"], r["style"], r["color"], r["order_number"], r["size"]))
+    return out
 
 @router.get("/trace")
 async def list_order_traces(request: Request, stage: str = ""):
@@ -10946,6 +11025,21 @@ async def export_inventory(request: Request, exclude_hold: bool = False, custome
         ws3.write(trow, 2, o["descripcion"])
         ws3.write(trow, 3, o["stage"])
         ws3.write(trow, 4, o["piezas"])
+
+    # ── Sheet 4: En producción — al grano del inventario ─────────────────────
+    # El material que ya salió del almacén, desglosado como la pestaña
+    # Inventory (style × color × talla) para poder casarlo: el pick ticket dice
+    # qué se surtió y para qué orden; el CRM dice en qué etapa está esa orden.
+    ws4 = wb.add_worksheet("En producción")
+    prod_headers = ["Customer", "Style", "Color", "Size", "Piezas", "Orden", "Etapa (CRM)",
+                    "Tablero (CRM)", "Descripción orden", "Ticket", "Surtido el"]
+    for i, h in enumerate(prod_headers):
+        ws4.write(0, i, h, bold)
+    for prow, r in enumerate(await _material_en_produccion(cust), 1):
+        for col, v in enumerate([r["customer"], r["style"], r["color"], r["size"], r["qty"],
+                                 r["order_number"], r["stage"], r["board"], r["descripcion"],
+                                 r["ticket_id"], r["surtido_at"]]):
+            ws4.write(prow, col, v)
 
     wb.close()
     buf.seek(0)
