@@ -264,6 +264,7 @@ from routers.packing import router as packing_router
 from routers.packing import router_packing_list
 from routers.report_scheduler import router as report_scheduler_router, start_report_scheduler
 from routers.printavo_scheduler import router as printavo_scheduler_router, start_printavo_scheduler
+from routers.gmail_intake import router as gmail_intake_router, start_gmail_intake_scheduler
 from routers.automation_scheduler import router as automation_sla_router, start_automation_scheduler
 from routers.blanks_sweep_scheduler import router as blanks_sweep_router, start_blanks_sweep_scheduler
 from routers.scheduled_shipments import router as scheduled_shipments_router
@@ -300,6 +301,7 @@ app.include_router(router_packing_list)   # GET /api/packing-list (Tarea 1.2)
 app.include_router(scheduled_shipments_router)
 app.include_router(report_scheduler_router)
 app.include_router(printavo_scheduler_router)
+app.include_router(gmail_intake_router)
 app.include_router(automation_sla_router)
 app.include_router(blanks_sweep_router)
 app.include_router(printavo_export_router)
@@ -338,6 +340,9 @@ async def startup_event():
     start_report_scheduler()
     # Printavo invoice auto-sync poller (no-op if disabled / unconfigured).
     start_printavo_scheduler()
+    # Bandeja de POs desde Gmail para el motor reverso de Printavo (arranca
+    # apagada; se prende con PUT /api/gmail-intake/config). Ver routers/gmail_intake.py.
+    start_gmail_intake_scheduler()
     # Automatizaciones por tiempo/SLA (arranca apagado; se prende con
     # PUT /api/automation-sla). Ver routers/automation_scheduler.py.
     start_automation_scheduler()

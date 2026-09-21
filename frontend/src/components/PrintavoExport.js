@@ -1,10 +1,10 @@
-import React, { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import React, { useState, useEffect, useCallback } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { API } from "../lib/constants";
 import { useLang } from "../contexts/LanguageContext";
 import {
   ArrowLeft, Upload, Loader2, CheckCircle2, AlertTriangle,
-  Search, FileText, Send, X, Package,
+  Search, FileText, Send, X, Package, Mail, RefreshCw, Trash2, ExternalLink, Settings2,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -25,9 +25,96 @@ export default function PrintavoExport() {
   const [creating, setCreating] = useState(false);
   const [results, setResults] = useState(null);
 
+  // ── Bandeja "Del correo" (Gmail intake) ─────────────────────────────────
+  // Los PDFs de PO que llegan al correo ya vienen parseados por el backend con
+  // el MISMO parser del botón "Analizar". Aquí sólo se revisan y se confirman.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [intake, setIntake] = useState(null);          // status/config del intake
+  const [items, setItems] = useState([]);              // pendientes
+  const [intakeItem, setIntakeItem] = useState(null);  // item cargado en revisión
+  const [running, setRunning] = useState(false);
+  const [showCfg, setShowCfg] = useState(false);
+  const [cfgDraft, setCfgDraft] = useState({ label_name: "", allowed_domains: "", days_back: 7 });
+
+  const loadIntake = useCallback(async () => {
+    try {
+      const [st, it] = await Promise.all([
+        fetch(`${API}/gmail-intake/status`, { credentials: "include" }).then((r) => r.json()),
+        fetch(`${API}/gmail-intake/items?status=pendiente`, { credentials: "include" }).then((r) => r.json()),
+      ]);
+      setIntake(st);
+      setItems(it.items || []);
+      setCfgDraft({ label_name: st.label_name || "", allowed_domains: (st.allowed_domains || []).join(", "), days_back: st.days_back || 7 });
+    } catch { /* la bandeja es opcional: si falla, la carga manual sigue funcionando */ }
+  }, []);
+
+  useEffect(() => { loadIntake(); }, [loadIntake]);
+  useEffect(() => {
+    if (searchParams.get("gmail_connected")) {
+      toast.success(t('pexport_intake_connected'));
+      setSearchParams({}, { replace: true });
+    }
+  }, [searchParams, setSearchParams, t]);
+
+  const connectGmail = async () => {
+    try {
+      const res = await fetch(`${API}/gmail-intake/auth-url`, { credentials: "include" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Error");
+      window.location.href = data.url;
+    } catch (e) { toast.error(e.message); }
+  };
+
+  const runNow = async () => {
+    setRunning(true);
+    try {
+      const res = await fetch(`${API}/gmail-intake/run-now`, { method: "POST", credentials: "include" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Error");
+      toast.success(t('pexport_intake_run_result', { n: data.orders, e: data.evaluated }));
+      loadIntake();
+    } catch (e) { toast.error(e.message); }
+    finally { setRunning(false); }
+  };
+
+  const toggleEnabled = async (enabled) => {
+    try {
+      const res = await fetch(`${API}/gmail-intake/config`, { method: "PUT", headers: { "Content-Type": "application/json" }, credentials: "include", body: JSON.stringify({ enabled }) });
+      if (!res.ok) throw new Error((await res.json()).detail || "Error");
+      loadIntake();
+    } catch (e) { toast.error(e.message); }
+  };
+
+  const saveCfg = async () => {
+    try {
+      const res = await fetch(`${API}/gmail-intake/config`, { method: "PUT", headers: { "Content-Type": "application/json" }, credentials: "include",
+        body: JSON.stringify({ label_name: cfgDraft.label_name, allowed_domains: cfgDraft.allowed_domains, days_back: Number(cfgDraft.days_back) || 7 }) });
+      if (!res.ok) throw new Error((await res.json()).detail || "Error");
+      toast.success(t('pexport_intake_cfg_saved'));
+      setShowCfg(false); loadIntake();
+    } catch (e) { toast.error(e.message); }
+  };
+
+  const reviewItem = (it) => {
+    setIntakeItem(it); setFile(null); setResults(null);
+    setStyles(it.styles || []);
+    setSelected(Object.fromEntries((it.styles || []).map((_, i) => [i, true])));
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const discardItem = async (it) => {
+    if (!window.confirm(t('pexport_intake_discard_confirm', { po: it.po_number || it.subject }))) return;
+    try {
+      const res = await fetch(`${API}/gmail-intake/items/${it.item_id}/discard`, { method: "POST", credentials: "include" });
+      if (!res.ok) throw new Error((await res.json()).detail || "Error");
+      if (intakeItem?.item_id === it.item_id) { setIntakeItem(null); setStyles([]); }
+      loadIntake();
+    } catch (e) { toast.error(e.message); }
+  };
+
   const handleParse = async () => {
     if (!file) { toast.error(t('admin_pexport_select_pdf')); return; }
-    setParsing(true); setStyles([]); setResults(null);
+    setParsing(true); setStyles([]); setResults(null); setIntakeItem(null);
     try {
       const fd = new FormData();
       fd.append("file", file);
@@ -60,15 +147,18 @@ export default function PrintavoExport() {
     const chosen = styles.filter((_, i) => selected[i]);
     if (!contact) { toast.error(t('admin_pexport_choose_contact')); return; }
     if (!chosen.length) { toast.error(t('admin_pexport_select_style')); return; }
+    if (chosen.some((r) => !(r.brand || "").trim())) { toast.error(t('pexport_flag_retailer_missing')); return; }
     setCreating(true); setResults(null);
     try {
-      const res = await fetch(`${API}/printavo-export/create`, {
+      const url = intakeItem ? `${API}/gmail-intake/items/${intakeItem.item_id}/create` : `${API}/printavo-export/create`;
+      const res = await fetch(url, {
         method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include",
         body: JSON.stringify({ contact_id: contact.id, styles: chosen }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || t('admin_pexport_err_create'));
       setResults(data);
+      if (intakeItem && data.created) { setIntakeItem(null); loadIntake(); }
       toast[data.failed ? "warning" : "success"](`${t('admin_pexport_quotes_created', { n: data.created })}${data.failed ? `, ${t('admin_pexport_with_error', { n: data.failed })}` : ""}`);
     } catch (e) { toast.error(e.message); }
     finally { setCreating(false); }
@@ -95,6 +185,102 @@ export default function PrintavoExport() {
       </header>
 
       <main className="flex-1 relative z-10 w-full max-w-4xl mx-auto px-4 md:px-6 py-8 space-y-6">
+        {/* 0. Del correo (Gmail intake) */}
+        {intake && (
+          <section className="bg-card/60 backdrop-blur-xl border border-border rounded-2xl p-6 space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <h2 className="text-xs font-black uppercase tracking-widest text-muted-foreground flex items-center gap-2">
+                <Mail className="w-4 h-4 text-primary" /> {t('pexport_intake_title')}
+                {items.length > 0 && <span className="ml-1 px-2 py-0.5 rounded-full bg-primary text-black text-[10px]">{items.length}</span>}
+              </h2>
+              <div className="flex items-center gap-2">
+                {intake.connected ? (
+                  <>
+                    <span className={`text-[10px] font-mono px-2 py-1 rounded ${intake.auth_error ? "bg-destructive/10 text-destructive" : "bg-emerald-500/10 text-emerald-600"}`}>
+                      {intake.email || t('pexport_intake_connected_short')}
+                    </span>
+                    <label className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide cursor-pointer select-none">
+                      <input type="checkbox" checked={!!intake.enabled} onChange={(e) => toggleEnabled(e.target.checked)} className="w-3.5 h-3.5" />
+                      {t('pexport_intake_auto')}
+                    </label>
+                    <button onClick={runNow} disabled={running} title={t('pexport_intake_run_now')}
+                      className="p-2 rounded-lg bg-secondary/60 hover:bg-secondary border border-border disabled:opacity-50">
+                      {running ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+                    </button>
+                  </>
+                ) : (
+                  <button onClick={connectGmail} disabled={!intake.google_configured}
+                    className="px-4 py-2 bg-primary text-black rounded-lg font-black text-[11px] uppercase tracking-widest hover:bg-primary/90 disabled:opacity-50 flex items-center gap-2">
+                    <Mail className="w-4 h-4" /> {t('pexport_intake_connect')}
+                  </button>
+                )}
+                <button onClick={() => setShowCfg((v) => !v)} className="p-2 rounded-lg bg-secondary/60 hover:bg-secondary border border-border" title={t('pexport_intake_cfg')}>
+                  <Settings2 className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+
+            {intake.auth_error && (
+              <div className="text-xs bg-destructive/10 border border-destructive/30 text-destructive rounded-lg px-3 py-2 flex flex-wrap items-center justify-between gap-2">
+                <span>{t('pexport_intake_auth_error')}: {intake.auth_error}</span>
+                <button onClick={connectGmail} className="underline font-bold">{t('pexport_intake_reconnect')}</button>
+              </div>
+            )}
+            {!intake.auth_error && intake.last_error && (
+              <div className="text-xs bg-amber-500/10 border border-amber-500/30 text-amber-600 rounded-lg px-3 py-2">{intake.last_error}</div>
+            )}
+            {intake.connected && (
+              <p className="text-[11px] text-muted-foreground font-mono">
+                {t('pexport_intake_meta', { label: intake.label_name, last: intake.last_run_at ? new Date(intake.last_run_at).toLocaleString() : "—" })}
+              </p>
+            )}
+
+            {showCfg && (
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 bg-secondary/20 border border-border rounded-xl p-4">
+                <Field label={t('pexport_intake_cfg_label')} value={cfgDraft.label_name} onChange={(v) => setCfgDraft((d) => ({ ...d, label_name: v }))} />
+                <Field label={t('pexport_intake_cfg_domains')} value={cfgDraft.allowed_domains} onChange={(v) => setCfgDraft((d) => ({ ...d, allowed_domains: v }))} />
+                <Field label={t('pexport_intake_cfg_days')} value={cfgDraft.days_back} onChange={(v) => setCfgDraft((d) => ({ ...d, days_back: v }))} />
+                <div className="md:col-span-3 flex justify-end">
+                  <button onClick={saveCfg} className="px-4 py-2 bg-primary text-black rounded-lg font-black text-[11px] uppercase tracking-widest">{t('save')}</button>
+                </div>
+              </div>
+            )}
+
+            {intake.connected && items.length === 0 && (
+              <p className="text-sm text-muted-foreground">{t('pexport_intake_empty')}</p>
+            )}
+            {items.length > 0 && (
+              <div className="border border-border rounded-xl divide-y divide-border/50 overflow-hidden">
+                {items.map((it) => (
+                  <div key={it.item_id} className={`px-4 py-3 flex flex-wrap items-center gap-3 ${intakeItem?.item_id === it.item_id ? "bg-primary/10" : "hover:bg-secondary/30"}`}>
+                    <div className="flex-1 min-w-[200px]">
+                      <p className="text-sm font-bold flex flex-wrap items-center gap-2">
+                        <span className="font-mono">PO# {it.po_number || "?"}</span>
+                        <span className="text-[10px] font-mono text-muted-foreground">{it.style_count} {t('pexport_intake_styles')} · {it.qty_total} pcs</span>
+                        {it.flags?.includes("new_version") && <Flag text={t('pexport_intake_flag_new_version')} />}
+                        {it.flags?.includes("existing_order") && <Flag text={t('pexport_intake_flag_existing', { n: it.existing_order })} />}
+                        {it.flags?.includes("retailer_missing") && <Flag text={t('pexport_flag_retailer_missing')} />}
+                        {it.flags?.includes("store_po_missing") && <Flag text={t('pexport_flag_store_po_missing')} />}
+                      </p>
+                      <p className="text-xs text-muted-foreground truncate">{it.subject}</p>
+                      <p className="text-[10px] text-muted-foreground/70 font-mono">{it.from_email} · {it.received_at ? new Date(it.received_at).toLocaleString() : ""} · {it.pdf_filename}</p>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      {it.gmail_link && (
+                        <a href={it.gmail_link} target="_blank" rel="noreferrer" className="p-2 rounded-lg hover:bg-secondary" title="Gmail"><ExternalLink className="w-4 h-4" /></a>
+                      )}
+                      <button onClick={() => discardItem(it)} className="p-2 rounded-lg hover:bg-destructive/10 text-destructive" title={t('pexport_intake_discard')}><Trash2 className="w-4 h-4" /></button>
+                      <button onClick={() => reviewItem(it)} className="px-3 py-1.5 bg-primary text-black rounded-lg font-black text-[11px] uppercase tracking-widest hover:bg-primary/90">
+                        {t('pexport_intake_review')}
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+        )}
+
         {/* 1. Upload */}
         <section className="bg-card/60 backdrop-blur-xl border border-border rounded-2xl p-6 space-y-4">
           <h2 className="text-xs font-black uppercase tracking-widest text-muted-foreground flex items-center gap-2">
@@ -118,6 +304,11 @@ export default function PrintavoExport() {
           <section className="bg-card/60 backdrop-blur-xl border border-border rounded-2xl p-6 space-y-4">
             <h2 className="text-xs font-black uppercase tracking-widest text-muted-foreground flex items-center gap-2">
               <CheckCircle2 className="w-4 h-4 text-primary" /> {t('admin_pexport_step2', { sel: selCount, total: styles.length })}
+              {intakeItem && (
+                <span className="ml-2 normal-case tracking-normal font-mono text-[10px] bg-primary/10 text-primary px-2 py-0.5 rounded flex items-center gap-1">
+                  <Mail className="w-3 h-3" /> {intakeItem.subject}
+                </span>
+              )}
             </h2>
             <div className="space-y-3">
               {styles.map((r, i) => (
@@ -125,6 +316,11 @@ export default function PrintavoExport() {
                   <div className="flex items-start gap-3">
                     <input type="checkbox" checked={!!selected[i]} onChange={(e) => setSelected((s) => ({ ...s, [i]: e.target.checked }))} className="w-4 h-4 mt-1 cursor-pointer" />
                     <div className="flex-1 min-w-0 grid grid-cols-2 md:grid-cols-4 gap-3">
+                      <Field label={t('pexport_field_brand')} value={r.brand} onChange={(v) => editStyle(i, "brand", v)}
+                        warn={!r.brand} />
+                      <Field label="PO#" value={r.po_number} onChange={(v) => editStyle(i, "po_number", v)} warn={!r.po_number} />
+                      <Field label={t('pexport_field_store_po')} value={r.store_po} onChange={(v) => editStyle(i, "store_po", v)} warn={!r.store_po} />
+                      <Field label={t('pexport_field_retailer')} value={r.retailer} readOnly />
                       <Field label="Design #" value={r.design_num} onChange={(v) => editStyle(i, "design_num", v)} />
                       <Field label="Blank" value={r.blank} onChange={(v) => editStyle(i, "blank", v)} />
                       <Field label={t('wms_label_color')} value={r.color} onChange={(v) => editStyle(i, "color", v)} />
@@ -137,6 +333,9 @@ export default function PrintavoExport() {
                         {Object.entries(r.sizes || {}).map(([sz, q]) => (
                           <span key={sz} className="text-[11px] font-mono bg-secondary px-2 py-0.5 rounded">{sz}:{q}</span>
                         ))}
+                        {!r.brand && <Flag text={t('pexport_flag_retailer_missing')} />}
+                        {!r.store_po && <Flag text={t('pexport_flag_store_po_missing')} />}
+                        {!r.po_number && <Flag text={t('pexport_flag_po_missing')} />}
                         {!r.sizes_match && <Flag text={t('admin_pexport_sizes_mismatch')} />}
                         {r.po_discrepancy && <Flag text={t('admin_pexport_po_discrepancy', { table: r.store_po, notes: r.store_po_notes })} />}
                       </div>
@@ -210,11 +409,11 @@ export default function PrintavoExport() {
   );
 }
 
-const Field = ({ label, value, onChange, readOnly }) => (
+const Field = ({ label, value, onChange, readOnly, warn }) => (
   <div>
     <label className="text-[10px] uppercase tracking-widest text-muted-foreground/60 font-black block mb-1">{label}</label>
     <input value={value ?? ""} readOnly={readOnly} onChange={(e) => onChange && onChange(e.target.value)}
-      className={`w-full bg-background/60 border border-border/50 rounded px-2 py-1.5 text-sm ${readOnly ? "opacity-60 cursor-not-allowed" : "focus:ring-1 focus:ring-primary"}`} />
+      className={`w-full bg-background/60 border rounded px-2 py-1.5 text-sm ${warn ? "border-amber-500/70 bg-amber-500/5" : "border-border/50"} ${readOnly ? "opacity-60 cursor-not-allowed" : "focus:ring-1 focus:ring-primary"}`} />
   </div>
 );
 

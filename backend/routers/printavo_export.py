@@ -16,21 +16,30 @@ from printavo_export import parse_pdf, build_quote_input
 router = APIRouter(prefix="/api/printavo-export")
 
 
+def parse_po_bytes(data: bytes) -> tuple:
+    """Run the deterministic parsers over a PDF. Returns (records, engine).
+
+    Shared by the upload endpoint and the Gmail intake so both channels
+    classify a PDF with exactly the same rules: Goodie text-based first,
+    then Culture Kings/Spektrum. Empty list = not a recognized PO.
+    """
+    records = parse_pdf(data)                         # Goodie text-based (Spencers/Tractor)
+    if records:
+        return records, "text"
+    # Culture Kings/Spektrum con capa de texto -> parser DETERMINISTA (sin IA).
+    from printavo_export import parse_culturekings_pdf
+    records = parse_culturekings_pdf(data)
+    return records, ("text-ck" if records else "none")
+
+
 @router.post("/parse")
 async def parse_po(request: Request, file: UploadFile = File(...)):
     await require_auth(request)
     if not (file.filename or "").lower().endswith(".pdf"):
         raise HTTPException(400, "El archivo debe ser un PDF")
     data = await file.read()
-    engine = "text"
     try:
-        records = parse_pdf(data)                         # Goodie text-based (Spencers/Tractor)
-        if not records:
-            # Culture Kings/Spektrum con capa de texto -> parser DETERMINISTA (sin IA).
-            from printavo_export import parse_culturekings_pdf
-            records = parse_culturekings_pdf(data)
-            if records:
-                engine = "text-ck"
+        records, engine = parse_po_bytes(data)
     except Exception as e:
         logger.error(f"[printavo-export] parse error: {e}")
         raise HTTPException(500, f"No se pudo leer el PDF: {e}")
@@ -49,18 +58,9 @@ async def search_contacts(request: Request, q: str = ""):
     return {"contacts": await printavo_client.search_contacts(q.strip())}
 
 
-@router.post("/create")
-async def create_quotes(request: Request):
-    user = await require_admin(request)
-    if not printavo_client.is_configured():
-        raise HTTPException(400, "Credenciales de Printavo no configuradas")
-    body = await request.json()
-    contact_id = (body.get("contact_id") or "").strip()
-    styles = body.get("styles") or []
-    if not contact_id:
-        raise HTTPException(400, "Falta el contacto/cliente de Printavo")
-    if not styles:
-        raise HTTPException(400, "No hay estilos para crear")
+async def create_quotes_for(user: dict, contact_id: str, styles: list) -> dict:
+    """Create one Printavo quote per style. Used by POST /create and by the
+    Gmail intake confirm; the caller is responsible for auth + validation."""
 
     # Fetch the chosen contact once for its customer billing/shipping addresses.
     try:
@@ -112,3 +112,18 @@ async def create_quotes(request: Request):
             "failed": sum(1 for x in results if not x["ok"]),
             "owner_email": owner_email,
             "owner_matched": bool(owner_id)}
+
+
+@router.post("/create")
+async def create_quotes(request: Request):
+    user = await require_admin(request)
+    if not printavo_client.is_configured():
+        raise HTTPException(400, "Credenciales de Printavo no configuradas")
+    body = await request.json()
+    contact_id = (body.get("contact_id") or "").strip()
+    styles = body.get("styles") or []
+    if not contact_id:
+        raise HTTPException(400, "Falta el contacto/cliente de Printavo")
+    if not styles:
+        raise HTTPException(400, "No hay estilos para crear")
+    return await create_quotes_for(user, contact_id, styles)

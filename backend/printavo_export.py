@@ -93,6 +93,11 @@ _STYLE_RE = re.compile(
 _SIZE_TOKENS = set(SIZES_MAP.keys())
 # Nickname brand per retailer (first CUST word -> brand). Matches existing invoices.
 RETAILER_BRAND = {"SPENCER": "SPENCERS", "TRACTOR": "TRACTOR SUPPLY"}
+# Tokens that can sit in the row under "CUST PO ... SHIP MODE" when the CUST PO
+# cell is EMPTY: the regex would otherwise grab the ship mode as the store PO
+# (reported 2026-09-21: store PO missing / garbage for some retailers).
+_NOT_A_STORE_PO = {"GROUND", "AIR", "LTL", "TRUCK", "UPS", "FEDEX", "DHL", "USPS", "PICKUP",
+                   "PREPAID", "COLLECT", "N/A", "NA", "-", "TBD"}
 
 # ── Muestra física: se LEE del PO (antes se dejaba TOPS NEEDED vacío para que
 # Viviana lo tecleara — el comentario decía "el detalle NO está en el PDF", falso).
@@ -317,14 +322,32 @@ def _parse_goodie_page(page):
     pack_raw = _pack_raw_from_text(text)
 
     # Branding for the nickname: retailer's first word, mapped (SPENCER -> SPENCERS).
+    # NO default: an unrecognized header used to fall back to SPENCER and the quote
+    # was silently created under the wrong store (reported 2026-09-21). Now brand
+    # stays None, the record is flagged and build_quote_input refuses to create.
     retailer = cust.group(1).strip() if cust else ""
-    first_word = retailer.split()[0] if retailer else "SPENCER"
-    brand = RETAILER_BRAND.get(first_word, first_word)
+    first_word = retailer.split()[0] if retailer else ""
+    brand = RETAILER_BRAND.get(first_word, first_word) or None
     # Packing-line prefix ("SPENCER PO 322586"): from the notes if present, else brand.
-    brand_prefix = store_notes.group(1) if store_notes else first_word
+    brand_prefix = store_notes.group(1) if store_notes else (first_word or None)
+    # Store PO: first token under the CUST PO header, unless that token is really
+    # the ship mode (empty CUST PO cell); then the notes ("X PO 123") or nothing.
+    store_po = store.group(1) if store else None
+    if store_po and store_po.upper() in _NOT_A_STORE_PO:
+        store_po = None
+    if not store_po and store_notes:
+        store_po = store_notes.group(2)
+    flags = []
+    if not brand:
+        flags.append("retailer_missing")
+    if not store_po:
+        flags.append("store_po_missing")
+    if not po:
+        flags.append("po_missing")
     return {
         "po_number": po.group(1) if po else None,
-        "store_po": store.group(1) if store else (store_notes.group(2) if store_notes else None),
+        "store_po": store_po,
+        "flags": flags,
         "store_po_notes": store_notes.group(2) if store_notes else None,
         "brand": brand,                # nickname brand (e.g. SPENCERS / TRACTOR SUPPLY)
         "brand_prefix": brand_prefix,  # packing-line prefix (e.g. SPENCER)
@@ -603,8 +626,11 @@ def _spencers_groups(r, sizes_input, category_id=None):
       - SPECIAL NOTES G1 sin blanks_trim (no aparece en el master).
       - NEW BOXES price = 2.50."""
     pack_txt = r.get("pack_raw") or "\n".join(r["pack_lines"])
+    # Prefix follows the (possibly hand-corrected) brand when the notes had none;
+    # never print 'None PO None'.
+    prefix = r.get("brand_prefix") or (r.get("brand") or "").split()[0]
     packing_desc = (
-        f"{r['brand_prefix']} PO {r['store_po']}\nPACK\n{pack_txt}"
+        f"{prefix} PO {r.get('store_po') or 'N/A'}\nPACK\n{pack_txt}"
         f"\n\n\n\n{PACK_REFERENCES}"
     )
     front = r["front_print"] if (r["front_print"] and "FRONT PRINT" in r["front_print"]) \
@@ -715,7 +741,11 @@ def build_quote_input(r: dict, contact_id: str, contact: dict = None, owner_id: 
         {"size": MOS_TO_PRINTAVO_SIZE[k], "count": v}
         for k, v in r["sizes"].items() if k in MOS_TO_PRINTAVO_SIZE
     ]
-    brand_up = (r.get("brand") or "").upper()
+    brand_up = (r.get("brand") or "").strip().upper()
+    if not brand_up:
+        # Never guess the store. The parser flags 'retailer_missing'; the human
+        # captures it in the review screen before creating.
+        raise ValueError("Falta la tienda (brand): el PDF no la trae reconocible; captúrala en la revisión")
     is_tractor = "TRACTOR" in brand_up
     is_spektrum = "CULTURE KING" in brand_up or "SPEKTRUM" in brand_up
     if is_tractor:
@@ -729,7 +759,7 @@ def build_quote_input(r: dict, contact_id: str, contact: dict = None, owner_id: 
             item["position"] = idx
 
     status = r["status"] or ""
-    brand = r.get("brand") or "SPENCERS"
+    brand = brand_up
     if is_tractor:
         # Matches the corrected quote #2127 header: "TRACTOR SUPPLY PO#21649 - AER0154J1358 - N/A"
         nickname = f"{brand} PO#{r['po_number']} - {r['design_num']} - {r['store_po'] or 'N/A'}"
@@ -739,7 +769,7 @@ def build_quote_input(r: dict, contact_id: str, contact: dict = None, owner_id: 
         nickname = f"{brand} - PO#{r['po_number']} - {r['description']}"
     else:
         # Nickname alineado con master invoice #2406: "PO#21767" (sin espacio).
-        nickname = f"{brand} PO#{r['po_number']} - {r['store_po']} - {r['design_num']}"
+        nickname = f"{brand} PO#{r['po_number']} - {r['store_po'] or 'N/A'} - {r['design_num']}"
     # SPENCERS: el status ('ROLLOUT'/'REORDER') lo agrega Viviana al nickname en la
     # revision (el PDF trae 'ORIGINAL' que no corresponde). No lo anexamos aqui.
     # TRACTOR / SPEKTRUM conservan su comportamiento previo (status del PDF).
