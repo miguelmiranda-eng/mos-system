@@ -8,6 +8,7 @@ invoices and turn them into MOS orders. Printavo has no native webhooks and
 no created-at sort field, so we sort by VISUAL_ID descending (the invoice
 number is sequential, so highest = newest) and keep a high-water mark.
 """
+import asyncio
 import os
 import re
 import httpx
@@ -73,17 +74,32 @@ async def _graphql(query: str, variables: dict) -> dict:
         "token": PRINTAVO_TOKEN,
         "Content-Type": "application/json",
     }
+    max_retries = 3
+    base_delay = 2.0
     async with httpx.AsyncClient(timeout=30.0) as client:
-        resp = await client.post(
-            PRINTAVO_ENDPOINT,
-            json={"query": query, "variables": variables},
-            headers=headers,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        if data.get("errors"):
-            raise RuntimeError(f"Printavo GraphQL errors: {data['errors']}")
-        return data.get("data") or {}
+        for attempt in range(max_retries):
+            resp = await client.post(
+                PRINTAVO_ENDPOINT,
+                json={"query": query, "variables": variables},
+                headers=headers,
+            )
+            if resp.status_code == 429 and attempt < max_retries - 1:
+                retry_after = resp.headers.get("Retry-After")
+                try:
+                    delay = float(retry_after) if retry_after else (base_delay * (2 ** attempt))
+                except (TypeError, ValueError):
+                    delay = base_delay * (2 ** attempt)
+                logger.warning(
+                    f"[printavo] HTTP 429 (Too Many Requests). Esperando {delay:.1f}s "
+                    f"(intento {attempt + 1}/{max_retries})..."
+                )
+                await asyncio.sleep(delay)
+                continue
+            resp.raise_for_status()
+            data = resp.json()
+            if data.get("errors"):
+                raise RuntimeError(f"Printavo GraphQL errors: {data['errors']}")
+            return data.get("data") or {}
 
 
 CONTACTS_QUERY = """

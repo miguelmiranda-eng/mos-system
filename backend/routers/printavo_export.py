@@ -7,6 +7,7 @@
 The parse/contacts endpoints only read. Only /create writes to Printavo, and it
 is driven by the reviewed+confirmed data the UI sends back (never automatic).
 """
+import asyncio
 from fastapi import APIRouter, HTTPException, Request, UploadFile, File
 
 from deps import require_auth, require_admin, log_activity, logger
@@ -92,7 +93,9 @@ async def create_quotes_for(user: dict, contact_id: str, styles: list) -> dict:
         logger.error(f"[printavo-export] category lookup failed: {e}")
 
     results = []
-    for r in styles:
+    for i, r in enumerate(styles):
+        if i > 0:
+            await asyncio.sleep(0.8)
         design = r.get("design_num")
         try:
             quote_input = build_quote_input(r, contact_id, contact=contact, owner_id=owner_id,
