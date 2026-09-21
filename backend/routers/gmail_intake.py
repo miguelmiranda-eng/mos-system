@@ -388,16 +388,14 @@ def _received_at(h: dict, msg: dict) -> str:
 
 
 # ── One pass ─────────────────────────────────────────────────────────────────
-async def _existing_order_for(po_number: str, store_po: str):
-    """Order in MOS already carrying this PO (layer 4). Returns order_number or None."""
-    ors = []
-    if po_number:
-        ors += [{"customer_po": po_number}, {"store_po": po_number}]
-    if store_po:
-        ors += [{"customer_po": store_po}, {"store_po": store_po}]
-    if not ors:
+async def _existing_order_for(po_number: str, store_po: str = None):
+    """Order in MOS already carrying this Goodie PO# (layer 4). Returns
+    order_number or None. Matches customer_po ONLY: the store PO is shared
+    between sibling POs (Meijer 23036/23038 both carry 219888217), so matching
+    it flagged POs that were not in MOS."""
+    if not po_number:
         return None
-    doc = await db.orders.find_one({"$or": ors}, {"_id": 0, "order_number": 1})
+    doc = await db.orders.find_one({"customer_po": po_number}, {"_id": 0, "order_number": 1})
     return (doc or {}).get("order_number")
 
 
@@ -582,9 +580,30 @@ async def _process_message(svc, cfg: dict, labels: dict, msg_id: str, forced: bo
                 "resolved_at": None,
                 "resolved_by": None,
             }
+            # Already in MOS -> resolved on the spot; nothing to do for anyone.
+            if existing:
+                item.update({"status": "ya_existe", "resolved_at": now, "resolved_by": "auto"})
+            # Same PO already waiting: the OLDER PDF is superseded by this one
+            # (original vs Rev1 in the same pass); only the newest waits. If the
+            # older one was already created, this stays a 'new_version' for a human.
+            elif po_number:
+                async for old in db.printavo_intake.find(
+                        {"po_number": po_number, "status": "pendiente", "pdf_sha256": {"$ne": sha}},
+                        {"_id": 0, "item_id": 1, "received_at": 1}):
+                    if (old.get("received_at") or "") <= (item["received_at"] or ""):
+                        await db.printavo_intake.update_one({"item_id": old["item_id"]}, {"$set": {
+                            "status": "reemplazado", "resolved_at": now, "resolved_by": "auto",
+                            "replaced_by": item["item_id"]}})
+                    else:
+                        # This PDF is older than one already waiting: it is the superseded one.
+                        item.update({"status": "reemplazado", "resolved_at": now, "resolved_by": "auto",
+                                     "replaced_by": old["item_id"]})
+                if item["status"] == "pendiente" and "new_version" in flags and not await db.printavo_intake.find_one(
+                        {"po_number": po_number, "status": "creado"}, {"_id": 1}):
+                    flags.remove("new_version")
             await db.printavo_intake.insert_one(item)
             created += 1
-            if await _maybe_auto_create(cfg, item):
+            if item["status"] == "pendiente" and await _maybe_auto_create(cfg, item):
                 auto_created += 1
         if created == 0 and reason is None:
             reason = ("PDF ya visto (re-adjuntado en el hilo)" if duplicates
@@ -773,7 +792,12 @@ async def run_now(request: Request):
 @router.get("/items")
 async def list_items(request: Request, status: str = "pendiente", limit: int = 100):
     await require_auth(request)
-    q = {} if status == "all" else {"status": status}
+    if status == "all":
+        q = {}
+    elif status == "resueltos":
+        q = {"status": {"$ne": "pendiente"}}
+    else:
+        q = {"status": status}
     cur = db.printavo_intake.find(q, {"_id": 0, "body_text": 0, "pdf_text_head": 0}).sort("received_at", -1).limit(max(1, min(500, limit)))
     return {"items": await cur.to_list(length=None)}
 
@@ -804,12 +828,41 @@ async def discard_item(request: Request, item_id: str):
 async def restore_item(request: Request, item_id: str):
     user = await require_admin(request)
     res = await db.printavo_intake.update_one(
-        {"item_id": item_id, "status": "descartado"},
+        {"item_id": item_id, "status": {"$in": ["descartado", "ya_existe", "reemplazado"]}},
         {"$set": {"status": "pendiente", "resolved_at": None, "resolved_by": None}})
     if not res.matched_count:
-        raise HTTPException(404, "No existe o no está descartado")
+        raise HTTPException(404, "No existe o no se puede restaurar")
     await log_activity(user, "gmail_intake_restore", {"item_id": item_id})
     return {"status": "pendiente"}
+
+
+@router.post("/items/{item_id}/reparse")
+async def reparse_item(request: Request, item_id: str):
+    """Fetch the item's email again and re-read its PDF with the CURRENT parser
+    (same path as the MOS/Revisar label, without leaving MOS). Pending only."""
+    user = await require_admin(request)
+    item = await db.printavo_intake.find_one({"item_id": item_id}, {"_id": 0})
+    if not item:
+        raise HTTPException(404, "No existe")
+    if item.get("status") != "pendiente":
+        raise HTTPException(409, f"El elemento ya está '{item.get('status')}'")
+    cfg = await _get_config()
+    if not cfg.get("user_id"):
+        raise HTTPException(400, "No hay buzón conectado")
+    if _run_lock.locked():
+        raise HTTPException(409, "Ya hay una pasada en curso; intenta en un momento")
+    async with _run_lock:
+        svc, err = await _get_gmail_service(cfg["user_id"])
+        if not svc:
+            raise HTTPException(400, err)
+        labels = await run_in_threadpool(_label_map, svc)
+        labels = await run_in_threadpool(_ensure_mos_labels, svc, labels)
+        try:
+            await _process_message(svc, cfg, labels, item["gmail_message_id"], forced=True)
+        except Exception as e:
+            raise HTTPException(400, f"No se pudo releer: {str(e)[:200]}")
+    await log_activity(user, "gmail_intake_reparse", {"item_id": item_id})
+    return await db.printavo_intake.find_one({"item_id": item_id}, {"_id": 0, "body_text": 0, "pdf_text_head": 0})
 
 
 @router.post("/items/{item_id}/create")

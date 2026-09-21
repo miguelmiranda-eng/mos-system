@@ -38,11 +38,14 @@ export default function PrintavoExport() {
   showCfgRef.current = showCfg;
   const [cfgDraft, setCfgDraft] = useState({ label_name: "", allowed_domains: "", days_back: 7 });
 
+  const [showResolved, setShowResolved] = useState(false);
+  const showResolvedRef = useRef(false);
+  showResolvedRef.current = showResolved;
   const loadIntake = useCallback(async () => {
     try {
       const [st, it] = await Promise.all([
         fetch(`${API}/gmail-intake/status`, { credentials: "include" }).then((r) => r.json()),
-        fetch(`${API}/gmail-intake/items?status=pendiente`, { credentials: "include" }).then((r) => r.json()),
+        fetch(`${API}/gmail-intake/items?status=${showResolvedRef.current ? "resueltos" : "pendiente"}&limit=60`, { credentials: "include" }).then((r) => r.json()),
       ]);
       setIntake(st);
       setItems(it.items || []);
@@ -80,7 +83,7 @@ export default function PrintavoExport() {
     putConfig({ auto_create: on });
   };
 
-  useEffect(() => { loadIntake(); }, [loadIntake]);
+  useEffect(() => { loadIntake(); }, [loadIntake, showResolved]);
   useEffect(() => {
     if (searchParams.get("gmail_connected")) {
       toast.success(t('pexport_intake_connected'));
@@ -132,6 +135,28 @@ export default function PrintavoExport() {
     setStyles(it.styles || []);
     setSelected(Object.fromEntries((it.styles || []).map((_, i) => [i, true])));
     window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const [reparsing, setReparsing] = useState(null);
+  const reparseItem = async (it) => {
+    setReparsing(it.item_id);
+    try {
+      const res = await fetch(`${API}/gmail-intake/items/${it.item_id}/reparse`, { method: "POST", credentials: "include" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Error");
+      toast.success(t('pexport_intake_reparsed', { po: data.po_number || "?" }));
+      if (intakeItem?.item_id === it.item_id) reviewItem(data);
+      loadIntake();
+    } catch (e) { toast.error(e.message); }
+    finally { setReparsing(null); }
+  };
+
+  const restoreItem = async (it) => {
+    try {
+      const res = await fetch(`${API}/gmail-intake/items/${it.item_id}/restore`, { method: "POST", credentials: "include" });
+      if (!res.ok) throw new Error((await res.json()).detail || "Error");
+      loadIntake();
+    } catch (e) { toast.error(e.message); }
   };
 
   const discardItem = async (it) => {
@@ -246,6 +271,9 @@ export default function PrintavoExport() {
                     <Mail className="w-4 h-4" /> {t('pexport_intake_connect')}
                   </button>
                 )}
+                <button onClick={() => setShowResolved((v) => !v)} className={`px-2 py-1.5 rounded-lg border text-[10px] font-black uppercase tracking-wide ${showResolved ? "bg-primary/20 border-primary/40" : "bg-secondary/60 border-border hover:bg-secondary"}`}>
+                  {showResolved ? t('pexport_intake_show_pending') : t('pexport_intake_show_resolved')}
+                </button>
                 <button onClick={() => setShowCfg((v) => !v)} className="p-2 rounded-lg bg-secondary/60 hover:bg-secondary border border-border" title={t('pexport_intake_cfg')}>
                   <Settings2 className="w-4 h-4" />
                 </button>
@@ -330,6 +358,11 @@ export default function PrintavoExport() {
                     <div className="flex-1 min-w-[200px]">
                       <p className="text-sm font-bold flex flex-wrap items-center gap-2">
                         <span className="font-mono">PO# {it.po_number || "?"}</span>
+                        {it.status !== "pendiente" && (
+                          <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded ${it.status === "creado" ? "bg-emerald-500/10 text-emerald-600" : "bg-secondary text-muted-foreground"}`}>
+                            {t(`pexport_intake_status_${it.status}`)}{it.status === "ya_existe" && it.existing_order ? ` ${it.existing_order}` : ""}{it.status === "creado" && it.created_quotes?.length ? ` #${it.created_quotes.map((q) => q.visual_id).join(", #")}` : ""}
+                          </span>
+                        )}
                         <span className="text-[10px] font-mono text-muted-foreground">{it.style_count} {t('pexport_intake_styles')} · {it.qty_total} pcs</span>
                         {it.flags?.includes("new_version") && <Flag text={t('pexport_intake_flag_new_version')} />}
                         {it.flags?.includes("existing_order") && <Flag text={t('pexport_intake_flag_existing', { n: it.existing_order })} />}
@@ -343,13 +376,23 @@ export default function PrintavoExport() {
                       )}
                     </div>
                     <div className="flex items-center gap-1.5">
+                      {it.status !== "pendiente" && it.status !== "creado" && (
+                        <button onClick={() => restoreItem(it)} className="px-3 py-1.5 rounded-lg border border-border text-[11px] font-black uppercase tracking-widest hover:bg-secondary">{t('pexport_intake_restore')}</button>
+                      )}
                       {it.gmail_link && (
                         <a href={it.gmail_link} target="_blank" rel="noreferrer" className="p-2 rounded-lg hover:bg-secondary" title="Gmail"><ExternalLink className="w-4 h-4" /></a>
                       )}
-                      <button onClick={() => discardItem(it)} className="p-2 rounded-lg hover:bg-destructive/10 text-destructive" title={t('pexport_intake_discard')}><Trash2 className="w-4 h-4" /></button>
-                      <button onClick={() => reviewItem(it)} className="px-3 py-1.5 bg-primary text-black rounded-lg font-black text-[11px] uppercase tracking-widest hover:bg-primary/90">
-                        {t('pexport_intake_review')}
+                      <button onClick={() => reparseItem(it)} disabled={reparsing === it.item_id} className="p-2 rounded-lg hover:bg-secondary disabled:opacity-50" title={t('pexport_intake_reparse')}>
+                        {reparsing === it.item_id ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
                       </button>
+                      {it.status === "pendiente" && (
+                        <>
+                          <button onClick={() => discardItem(it)} className="p-2 rounded-lg hover:bg-destructive/10 text-destructive" title={t('pexport_intake_discard')}><Trash2 className="w-4 h-4" /></button>
+                          <button onClick={() => reviewItem(it)} className="px-3 py-1.5 bg-primary text-black rounded-lg font-black text-[11px] uppercase tracking-widest hover:bg-primary/90">
+                            {t('pexport_intake_review')}
+                          </button>
+                        </>
+                      )}
                     </div>
                   </div>
                 ))}
