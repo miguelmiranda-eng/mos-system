@@ -97,11 +97,9 @@ RETAILER_BRAND = {"SPENCER": "SPENCERS", "TRACTOR": "TRACTOR SUPPLY"}
 # cell is EMPTY: the regex would otherwise grab the ship mode as the store PO
 # (reported 2026-09-21: store PO missing / garbage for some retailers).
 _NOT_A_STORE_PO = {"GROUND", "AIR", "LTL", "TRUCK", "UPS", "FEDEX", "DHL", "USPS", "PICKUP",
-                   "PREPAID", "COLLECT", "N/A", "NA", "-", "TBD",
-                   # Goodie's 2026 template writes the order TYPE in the CUST PO cell
-                   # for Tractor ("REPLENISHMENT"); the real store PO is N/A there
-                   # (matches the reference quote #2127).
-                   "REPLENISHMENT", "REORDER", "ORIGINAL", "NEW", "ROLLOUT"}
+                   "PREPAID", "COLLECT", "N/A", "NA", "-", "TBD"}
+# Whatever Goodie writes in the CUST PO cell IS the store PO, even a word like
+# "REPLENISHMENT" (Tractor 23017) — decision 2026-09-21; do not second-guess it.
 
 
 def _store_po_from_position(page):
