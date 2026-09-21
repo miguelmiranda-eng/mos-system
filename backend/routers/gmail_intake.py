@@ -1,8 +1,12 @@
 """Gmail intake for the Printavo reverse engine: customer PO PDF arrives by
 email -> parsed with the SAME deterministic parsers as the upload button ->
-waits in a review inbox -> a human confirms and the quotes are created with
-the SAME create_quotes_for() as today. Nothing here writes to Printavo on its
-own.
+if the PO is CLEAN and auto-create is on, the quotes are created right away
+with the SAME create_quotes_for() as the button (fixed Printavo contact) ->
+anything not clean waits in the inbox as an exception for a human.
+
+"Clean" (see _auto_block_reason): store + PO# recognized, sizes add up, PDF not
+seen before, PO# not already created/known, not a revision of a created PO.
+Store PO may be missing only for TRACTOR SUPPLY (their nickname carries N/A).
 
 How it finds mail
   The poller reads ONE mailbox (the MOS user who clicked "Conectar Gmail"),
@@ -84,6 +88,11 @@ DEFAULTS = {
     "allowed_domains": ["goodietwosleeves.com"],
     "poll_minutes": int(os.environ.get("GMAIL_INTAKE_POLL_MINUTES", "5")),
     "days_back": 7,             # newer_than:Nd — keeps the first run from eating history
+    "auto_create": False,       # create quotes in Printavo without a click (clean POs only)
+    "auto_contact_id": None,    # fixed Printavo contact for auto-created quotes
+    "auto_contact_name": None,
+    "auto_created_count": 0,
+    "last_auto_error": None,
     "max_messages": 50,         # per tick
     "last_run_at": None,
     "last_error": None,
@@ -96,7 +105,8 @@ LABEL_ORDEN = "MOS/Orden"
 LABEL_PROCESADO = "MOS/Procesado"
 LABEL_IGNORADO = "MOS/Ignorado"
 LABEL_REVISAR = "MOS/Revisar"
-MOS_LABELS = (LABEL_ORDEN, LABEL_PROCESADO, LABEL_IGNORADO, LABEL_REVISAR)
+LABEL_QUOTE = "MOS/Quote creada"
+MOS_LABELS = (LABEL_ORDEN, LABEL_PROCESADO, LABEL_IGNORADO, LABEL_REVISAR, LABEL_QUOTE)
 
 _run_lock = asyncio.Lock()
 REASON_DOMAIN = "remitente fuera de la lista blanca"
@@ -391,6 +401,78 @@ async def _existing_order_for(po_number: str, store_po: str):
     return (doc or {}).get("order_number")
 
 
+PARSER_FLAGS = ("retailer_missing", "store_po_missing", "po_missing")
+
+
+def _auto_block_reason(item: dict):
+    """Why an item must wait for a human instead of being auto-created. None = clean."""
+    flags = set(item.get("flags") or [])
+    records = item.get("styles") or []
+    if not records:
+        return "sin estilos"
+    if "retailer_missing" in flags:
+        return "tienda no detectada"
+    if "po_missing" in flags:
+        return "PO# no detectado"
+    if "new_version" in flags:
+        return "revisión de un PO ya visto"
+    if "existing_order" in flags:
+        return f"ya existe la orden {item.get('existing_order')} en MOS"
+    if "already_created" in flags:
+        return "ya se creó una quote para este PO#"
+    brands = {(r.get("brand") or "").upper() for r in records}
+    if "store_po_missing" in flags and not all("TRACTOR" in b for b in brands):
+        return "PO de tienda no detectado"
+    if any(not r.get("sizes_match", True) for r in records):
+        return "tallas ≠ cantidad"
+    return None
+
+
+async def _bound_user(cfg: dict) -> dict:
+    u = await db.users.find_one({"user_id": cfg.get("user_id")}, {"_id": 0, "user_id": 1, "email": 1, "name": 1})
+    return u or {"user_id": cfg.get("user_id"), "email": cfg.get("email"), "name": "Gmail intake"}
+
+
+async def _maybe_auto_create(cfg: dict, item: dict) -> bool:
+    """Create the quotes for a clean item with the fixed contact. Returns True
+    when the item ended up 'creado'. Never raises: a failure is recorded on the
+    item (auto_error) and on the config (last_auto_error) and the item stays
+    pending for a human."""
+    if not cfg.get("auto_create") or not cfg.get("auto_contact_id"):
+        return False
+    if not printavo_client.is_configured():
+        return False
+    why = _auto_block_reason(item)
+    if why:
+        await db.printavo_intake.update_one({"item_id": item["item_id"]}, {"$set": {"auto_skipped": why}})
+        return False
+    user = await _bound_user(cfg)
+    try:
+        result = await create_quotes_for(user, cfg["auto_contact_id"], item["styles"])
+    except Exception as e:
+        err = str(e)[:300]
+        logger.error(f"[gmail-intake] auto-create failed for PO {item.get('po_number')}: {err}")
+        await db.printavo_intake.update_one({"item_id": item["item_id"]}, {"$set": {"auto_error": err}})
+        await _set_config({"last_auto_error": f"PO {item.get('po_number')}: {err}"})
+        return False
+    ok = [x for x in result.get("results", []) if x.get("ok")]
+    failed = [x for x in result.get("results", []) if not x.get("ok")]
+    upd = {"created_quotes": ok, "contact_id": cfg["auto_contact_id"], "auto": True}
+    if ok and not failed:
+        upd.update({"status": "creado", "resolved_at": datetime.now(timezone.utc).isoformat(),
+                    "resolved_by": "auto"})
+    else:
+        # Partial or total failure: stays pending, with the errors visible.
+        upd["auto_error"] = "; ".join(f"{x.get('design_num')}: {x.get('error')}" for x in failed)[:500]
+        await _set_config({"last_auto_error": f"PO {item.get('po_number')}: {upd['auto_error']}"})
+    await db.printavo_intake.update_one({"item_id": item["item_id"]}, {"$set": upd})
+    if ok:
+        await _set_config({"auto_created_count": int(cfg.get("auto_created_count") or 0) + len(ok)})
+        cfg["auto_created_count"] = int(cfg.get("auto_created_count") or 0) + len(ok)
+    logger.info(f"[gmail-intake] auto-created {len(ok)} quote(s) for PO {item.get('po_number')} ({len(failed)} failed)")
+    return bool(ok and not failed)
+
+
 async def _process_message(svc, cfg: dict, labels: dict, msg_id: str, forced: bool) -> dict:
     """Evaluate one message. Returns {'orders': n, 'ignored': bool, 'skipped': bool}."""
     seen = await db.gmail_intake_messages.find_one({"message_id": msg_id})
@@ -406,6 +488,7 @@ async def _process_message(svc, cfg: dict, labels: dict, msg_id: str, forced: bo
 
     reason = None
     created = 0
+    auto_created = 0
     duplicates = 0
     if not _domain_allowed(senders, cfg.get("allowed_domains") or []):
         reason = REASON_DOMAIN
@@ -422,7 +505,8 @@ async def _process_message(svc, cfg: dict, labels: dict, msg_id: str, forced: bo
                 continue
             sha = hashlib.sha256(data).hexdigest()
             # Layer 3: same PDF already in the inbox (reply re-attached it).
-            if await db.printavo_intake.find_one({"pdf_sha256": sha}, {"_id": 1}):
+            prior = await db.printavo_intake.find_one({"pdf_sha256": sha}, {"_id": 0, "item_id": 1, "status": 1, "flags": 1})
+            if prior and not (forced and prior.get("status") == "pendiente"):
                 duplicates += 1
                 continue
             try:
@@ -432,6 +516,21 @@ async def _process_message(svc, cfg: dict, labels: dict, msg_id: str, forced: bo
                 records, engine = [], "error"
             if not records:
                 continue  # Layer 2: not a PO
+            if prior:
+                # MOS/Revisar on a pending item = "read it again with the current
+                # parser" (e.g. after a parser fix): refresh styles + flags in place.
+                parser_flags = ("retailer_missing", "store_po_missing", "po_missing")
+                pflags = [f for f in (prior.get("flags") or []) if f not in parser_flags]
+                pflags += [f for f in parser_flags if any(f in (r.get("flags") or []) for r in records)]
+                await db.printavo_intake.update_one({"item_id": prior["item_id"]}, {"$set": {
+                    "styles": records, "engine": engine, "style_count": len(records),
+                    "qty_total": sum(int(r.get("qty") or 0) for r in records),
+                    "po_number": next((r.get("po_number") for r in records if r.get("po_number")), None),
+                    "store_po": next((r.get("store_po") for r in records if r.get("store_po")), None),
+                    "flags": pflags, "reparsed_at": now,
+                }})
+                created += 1
+                continue
             po_number = next((r.get("po_number") for r in records if r.get("po_number")), None)
             # First-page text (what the regexes actually see) travels with the item
             # so an unrecognized store can be diagnosed without asking for the file.
@@ -447,6 +546,9 @@ async def _process_message(svc, cfg: dict, labels: dict, msg_id: str, forced: bo
             existing = await _existing_order_for(po_number, store_po)
             if existing:
                 flags.append("existing_order")
+            if po_number and await db.printavo_intake.find_one(
+                    {"po_number": po_number, "status": "creado"}, {"_id": 1}):
+                flags.append("already_created")
             # Parser-level flags (store not recognized, store PO missing) bubble up
             # so the inbox row warns before anyone opens the item.
             for f in ("retailer_missing", "store_po_missing", "po_missing"):
@@ -482,12 +584,16 @@ async def _process_message(svc, cfg: dict, labels: dict, msg_id: str, forced: bo
             }
             await db.printavo_intake.insert_one(item)
             created += 1
+            if await _maybe_auto_create(cfg, item):
+                auto_created += 1
         if created == 0 and reason is None:
             reason = ("PDF ya visto (re-adjuntado en el hilo)" if duplicates
                       else "ningún PDF adjunto es una orden reconocida")
 
     # Trail in Gmail + seen record. Label failures must not lose the DB state.
     add = [labels[LABEL_PROCESADO], labels[LABEL_ORDEN] if created else labels[LABEL_IGNORADO]]
+    if auto_created:
+        add.append(labels[LABEL_QUOTE])
     remove = [labels[LABEL_REVISAR]] if forced else []
     try:
         await run_in_threadpool(_modify_labels, svc, msg_id, add, remove)
@@ -500,7 +606,7 @@ async def _process_message(svc, cfg: dict, labels: dict, msg_id: str, forced: bo
                   "reason": reason, "evaluated_at": now, "forced": forced}},
         upsert=True,
     )
-    return {"orders": created, "ignored": created == 0}
+    return {"orders": created, "ignored": created == 0, "auto_created": auto_created}
 
 
 async def run_once(cfg: dict) -> dict:
@@ -523,11 +629,12 @@ async def run_once(cfg: dict) -> dict:
     normal_ids = await run_in_threadpool(_list_message_ids, svc, src_id, q, limit)
     forced_ids = await run_in_threadpool(_list_message_ids, svc, labels[LABEL_REVISAR], "", limit)
 
-    summary = {"evaluated": 0, "orders": 0, "ignored": 0, "skipped": 0, "forced": len(forced_ids)}
+    summary = {"evaluated": 0, "orders": 0, "ignored": 0, "skipped": 0, "forced": len(forced_ids), "auto_created": 0}
     for msg_id in forced_ids:
         r = await _process_message(svc, cfg, labels, msg_id, forced=True)
         summary["evaluated"] += 1
         summary["orders"] += r.get("orders", 0)
+        summary["auto_created"] += r.get("auto_created", 0)
         summary["ignored"] += 1 if r.get("ignored") else 0
     for msg_id in normal_ids:
         if msg_id in forced_ids:
@@ -538,6 +645,7 @@ async def run_once(cfg: dict) -> dict:
             continue
         summary["evaluated"] += 1
         summary["orders"] += r.get("orders", 0)
+        summary["auto_created"] += r.get("auto_created", 0)
         summary["ignored"] += 1 if r.get("ignored") else 0
     return summary
 
@@ -628,6 +736,13 @@ async def update_config(request: Request):
         allowed["days_back"] = max(1, min(60, int(body["days_back"])))
     if "poll_minutes" in body:
         allowed["poll_minutes"] = max(1, min(1440, int(body["poll_minutes"])))
+    if "auto_create" in body:
+        allowed["auto_create"] = bool(body["auto_create"])
+    if "auto_contact_id" in body:
+        allowed["auto_contact_id"] = (str(body["auto_contact_id"] or "").strip() or None)
+        allowed["auto_contact_name"] = (str(body.get("auto_contact_name") or "").strip() or None)
+    if allowed.get("auto_create") and not (allowed.get("auto_contact_id") or (await _get_config()).get("auto_contact_id")):
+        raise HTTPException(400, "Elige el contacto de Printavo antes de activar auto-crear")
     if not allowed:
         raise HTTPException(400, "Nada que actualizar")
     await _set_config(allowed)

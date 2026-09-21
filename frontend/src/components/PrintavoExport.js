@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { API } from "../lib/constants";
 import { useLang } from "../contexts/LanguageContext";
@@ -34,6 +34,8 @@ export default function PrintavoExport() {
   const [intakeItem, setIntakeItem] = useState(null);  // item cargado en revisión
   const [running, setRunning] = useState(false);
   const [showCfg, setShowCfg] = useState(false);
+  const showCfgRef = useRef(false);
+  showCfgRef.current = showCfg;
   const [cfgDraft, setCfgDraft] = useState({ label_name: "", allowed_domains: "", days_back: 7 });
 
   const loadIntake = useCallback(async () => {
@@ -44,9 +46,39 @@ export default function PrintavoExport() {
       ]);
       setIntake(st);
       setItems(it.items || []);
-      setCfgDraft({ label_name: st.label_name || "", allowed_domains: (st.allowed_domains || []).join(", "), days_back: st.days_back || 7 });
+      // Sólo refresca el borrador si el panel está cerrado: una pasada (↻) no
+      // debe borrar lo que el usuario está escribiendo.
+      if (!showCfgRef.current) {
+        setCfgDraft({ label_name: st.label_name || "", allowed_domains: (st.allowed_domains || []).join(", "), days_back: st.days_back || 7 });
+      }
     } catch { /* la bandeja es opcional: si falla, la carga manual sigue funcionando */ }
   }, []);
+
+  // Contacto fijo para auto-crear (mismo buscador de contactos que el paso 3)
+  const [autoQuery, setAutoQuery] = useState("");
+  const [autoContacts, setAutoContacts] = useState([]);
+  const searchAutoContacts = async (q) => {
+    setAutoQuery(q);
+    if (q.trim().length < 2) { setAutoContacts([]); return; }
+    try {
+      const res = await fetch(`${API}/printavo-export/contacts?q=${encodeURIComponent(q.trim())}`, { credentials: "include" });
+      const data = await res.json();
+      setAutoContacts(data.contacts || []);
+    } catch { setAutoContacts([]); }
+  };
+  const putConfig = async (body, okMsg) => {
+    try {
+      const res = await fetch(`${API}/gmail-intake/config`, { method: "PUT", headers: { "Content-Type": "application/json" }, credentials: "include", body: JSON.stringify(body) });
+      if (!res.ok) throw new Error((await res.json()).detail || "Error");
+      if (okMsg) toast.success(okMsg);
+      loadIntake();
+    } catch (e) { toast.error(e.message); }
+  };
+  const setAutoContact = (c) => { setAutoContacts([]); setAutoQuery(""); putConfig({ auto_contact_id: c.id, auto_contact_name: `${c.company} · ${c.name}` }, t('pexport_intake_auto_contact_set')); };
+  const toggleAutoCreate = (on) => {
+    if (on && !window.confirm(t('pexport_intake_auto_create_confirm'))) return;
+    putConfig({ auto_create: on });
+  };
 
   useEffect(() => { loadIntake(); }, [loadIntake]);
   useEffect(() => {
@@ -232,7 +264,16 @@ export default function PrintavoExport() {
             {intake.connected && (
               <p className="text-[11px] text-muted-foreground font-mono">
                 {t('pexport_intake_meta', { label: intake.label_name, last: intake.last_run_at ? new Date(intake.last_run_at).toLocaleString() : "—" })}
+                {" · "}
+                {intake.auto_create
+                  ? t('pexport_intake_auto_on', { contact: intake.auto_contact_name || "?", n: intake.auto_created_count || 0 })
+                  : t('pexport_intake_auto_off')}
               </p>
+            )}
+            {intake.last_auto_error && (
+              <div className="text-xs bg-amber-500/10 border border-amber-500/30 text-amber-600 rounded-lg px-3 py-2">
+                {t('pexport_intake_auto_error')}: {intake.last_auto_error}
+              </div>
             )}
 
             {showCfg && (
@@ -242,6 +283,39 @@ export default function PrintavoExport() {
                 <Field label={t('pexport_intake_cfg_days')} value={cfgDraft.days_back} onChange={(v) => setCfgDraft((d) => ({ ...d, days_back: v }))} />
                 <div className="md:col-span-3 flex justify-end">
                   <button onClick={saveCfg} className="px-4 py-2 bg-primary text-black rounded-lg font-black text-[11px] uppercase tracking-widest">{t('save')}</button>
+                </div>
+
+                {/* Auto-crear en Printavo: contacto fijo + switch */}
+                <div className="md:col-span-3 border-t border-border pt-3 space-y-2">
+                  <p className="text-[10px] uppercase tracking-widest text-muted-foreground/60 font-black">{t('pexport_intake_auto_title')}</p>
+                  <p className="text-xs text-muted-foreground">{t('pexport_intake_auto_help')}</p>
+                  <div className="flex flex-wrap items-center gap-3">
+                    <div className="relative flex-1 min-w-[240px]">
+                      {intake.auto_contact_id ? (
+                        <div className="flex items-center justify-between bg-emerald-500/10 border border-emerald-500/30 rounded-lg px-3 py-2">
+                          <span className="text-sm font-bold">{intake.auto_contact_name}</span>
+                          <button onClick={() => putConfig({ auto_contact_id: null, auto_create: false })} className="p-1 hover:bg-secondary rounded"><X className="w-4 h-4" /></button>
+                        </div>
+                      ) : (
+                        <input value={autoQuery} onChange={(e) => searchAutoContacts(e.target.value)} placeholder={t('pexport_intake_auto_contact_search')}
+                          className="w-full bg-secondary/50 border border-border p-2 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
+                      )}
+                      {autoContacts.length > 0 && (
+                        <div className="absolute z-20 mt-1 w-full bg-card border border-border rounded-lg divide-y divide-border/50 overflow-hidden shadow-xl">
+                          {autoContacts.map((c) => (
+                            <button key={c.id} onClick={() => setAutoContact(c)} className="w-full text-left px-3 py-2 hover:bg-secondary/50">
+                              <p className="text-sm font-semibold">{c.company}</p>
+                              <p className="text-xs text-muted-foreground">{c.name} {c.email ? `· ${c.email}` : ""}</p>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    <label className={`flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide select-none ${intake.auto_contact_id ? "cursor-pointer" : "opacity-50"}`}>
+                      <input type="checkbox" disabled={!intake.auto_contact_id} checked={!!intake.auto_create} onChange={(e) => toggleAutoCreate(e.target.checked)} className="w-3.5 h-3.5" />
+                      {t('pexport_intake_auto_switch')}
+                    </label>
+                  </div>
                 </div>
               </div>
             )}
@@ -264,6 +338,9 @@ export default function PrintavoExport() {
                       </p>
                       <p className="text-xs text-muted-foreground truncate">{it.subject}</p>
                       <p className="text-[10px] text-muted-foreground/70 font-mono">{it.from_email} · {it.received_at ? new Date(it.received_at).toLocaleString() : ""} · {it.pdf_filename}</p>
+                      {(it.auto_skipped || it.auto_error) && (
+                        <p className="text-[10px] font-bold text-amber-600">{t('pexport_intake_waiting')}: {it.auto_error || it.auto_skipped}</p>
+                      )}
                     </div>
                     <div className="flex items-center gap-1.5">
                       {it.gmail_link && (

@@ -97,7 +97,42 @@ RETAILER_BRAND = {"SPENCER": "SPENCERS", "TRACTOR": "TRACTOR SUPPLY"}
 # cell is EMPTY: the regex would otherwise grab the ship mode as the store PO
 # (reported 2026-09-21: store PO missing / garbage for some retailers).
 _NOT_A_STORE_PO = {"GROUND", "AIR", "LTL", "TRUCK", "UPS", "FEDEX", "DHL", "USPS", "PICKUP",
-                   "PREPAID", "COLLECT", "N/A", "NA", "-", "TBD"}
+                   "PREPAID", "COLLECT", "N/A", "NA", "-", "TBD",
+                   # Goodie's 2026 template writes the order TYPE in the CUST PO cell
+                   # for Tractor ("REPLENISHMENT"); the real store PO is N/A there
+                   # (matches the reference quote #2127).
+                   "REPLENISHMENT", "REORDER", "ORIGINAL", "NEW", "ROLLOUT"}
+
+
+def _store_po_from_position(page):
+    """Store PO read by COLUMN from the 2026 Master Cut Ticket table
+    'Cust/Date | CUST PO | BLANK PO | TERMS': the header words fix the x-range of
+    the CUST PO column and the next row's words inside that range are the value.
+    Returns None when the page has no such header (older template) so the
+    caller falls back to the text regex."""
+    try:
+        words = page.extract_words()
+    except Exception:
+        return None
+    rows = {}
+    for w in words:
+        rows.setdefault(round(w["top"]), []).append(w)
+    for top in sorted(rows):
+        ws = sorted(rows[top], key=lambda w: w["x0"])
+        texts = [w["text"] for w in ws]
+        if "CUST" in texts and "BLANK" in texts and "PO" in texts:
+            ci = texts.index("CUST")
+            if ci + 1 >= len(texts) or texts[ci + 1] != "PO":
+                continue
+            x0 = ws[ci]["x0"] - 2
+            x1 = ws[texts.index("BLANK")]["x0"] - 2
+            nxt = [t for t in rows if top + 2 < t <= top + 20]
+            if not nxt:
+                return None
+            cell = [w["text"] for w in sorted(rows[min(nxt)], key=lambda w: w["x0"])
+                    if w["x0"] >= x0 and w["x1"] <= x1]
+            return " ".join(cell).strip() or None
+    return None
 
 # ── Muestra física: se LEE del PO (antes se dejaba TOPS NEEDED vacío para que
 # Viviana lo tecleara — el comentario decía "el detalle NO está en el PDF", falso).
@@ -270,7 +305,9 @@ def _parse_goodie_page(page):
     store = re.search(r"CUST PO.*?SHIP MODE\s*\n\s*(\S+)", text, re.S)
     store_notes = re.search(r"\b([A-Z]+)\s+PO\s+(\d+)\b", text)           # "SPENCER PO 322586" (notes)
     # CUST can run into "ISSUE DATE" with no space ("...COMPANISSUE DATE").
-    cust = re.search(r"CUST\s+(.+?)\s*ISSUE ?DATE\s+([\dA-Z\-]+)", text)
+    # The 2026 template says "CUSTOMER MEIJER ISSUE DATE" (was "CUST SPENCER GIFTS ...");
+    # without the optional suffix the store was never read (reported 2026-09-21).
+    cust = re.search(r"\bCUST(?:OMER)?\s+(.+?)\s*ISSUE ?DATE\s+([\dA-Z\-]+)", text)
     ship = re.search(r"\bSHIP\s+(\d{1,2}-[A-Z]{3}-\d{2})", text)
     cancel = re.search(r"CANCEL\s+(\d{1,2}-[A-Z]{3}-\d{2})", text)
     # Color: preferimos POSICION (x-column) via _color_from_position porque
@@ -332,7 +369,7 @@ def _parse_goodie_page(page):
     brand_prefix = store_notes.group(1) if store_notes else (first_word or None)
     # Store PO: first token under the CUST PO header, unless that token is really
     # the ship mode (empty CUST PO cell); then the notes ("X PO 123") or nothing.
-    store_po = store.group(1) if store else None
+    store_po = _store_po_from_position(page) or (store.group(1) if store else None)
     if store_po and store_po.upper() in _NOT_A_STORE_PO:
         store_po = None
     if not store_po and store_notes:
