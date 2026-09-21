@@ -35,6 +35,7 @@ import base64
 import hashlib
 import os
 import re
+import unicodedata
 from datetime import datetime, timezone
 from email.utils import parseaddr, parsedate_to_datetime
 
@@ -98,6 +99,7 @@ LABEL_REVISAR = "MOS/Revisar"
 MOS_LABELS = (LABEL_ORDEN, LABEL_PROCESADO, LABEL_IGNORADO, LABEL_REVISAR)
 
 _run_lock = asyncio.Lock()
+REASON_DOMAIN = "remitente fuera de la lista blanca"
 
 
 # ── Config ───────────────────────────────────────────────────────────────────
@@ -258,8 +260,12 @@ def _ensure_mos_labels(svc, labels: dict) -> dict:
 
 
 def _find_label_id(labels: dict, wanted: str):
-    """Case/space-insensitive match so 'ordenes de goodies' finds 'Ordenes de Goodies'."""
-    norm = lambda s: re.sub(r"\s+", " ", (s or "").strip().lower())
+    """Case/space/accent-insensitive match so 'ordenes de goodies' finds
+    'Órdenes de Goodies'. Nested labels keep their 'Parent/Child' path."""
+    def norm(x):
+        x = unicodedata.normalize("NFKD", x or "")
+        x = "".join(c for c in x if not unicodedata.combining(c))
+        return re.sub(r"\s+", " ", x.strip().lower())
     for name, lid in labels.items():
         if norm(name) == norm(wanted):
             return lid
@@ -331,6 +337,15 @@ def _pdf_parts(msg: dict) -> list:
     return out
 
 
+def _pdf_text_head(data: bytes, limit: int = 4000) -> str:
+    import io
+    import pdfplumber
+    with pdfplumber.open(io.BytesIO(data)) as pdf:
+        if not pdf.pages:
+            return ""
+        return (pdf.pages[0].extract_text() or "")[:limit]
+
+
 def _sender_emails(h: dict) -> list:
     """Real senders: Reply-To first (the Google Group rewrites From to
     'X via GTS Client Support <gts@...>'), then From."""
@@ -393,7 +408,7 @@ async def _process_message(svc, cfg: dict, labels: dict, msg_id: str, forced: bo
     created = 0
     duplicates = 0
     if not _domain_allowed(senders, cfg.get("allowed_domains") or []):
-        reason = "remitente fuera de la lista blanca"
+        reason = REASON_DOMAIN
     else:
         pdfs = _pdf_parts(msg)
         if not pdfs:
@@ -418,6 +433,12 @@ async def _process_message(svc, cfg: dict, labels: dict, msg_id: str, forced: bo
             if not records:
                 continue  # Layer 2: not a PO
             po_number = next((r.get("po_number") for r in records if r.get("po_number")), None)
+            # First-page text (what the regexes actually see) travels with the item
+            # so an unrecognized store can be diagnosed without asking for the file.
+            try:
+                text_head = await run_in_threadpool(_pdf_text_head, data)
+            except Exception:
+                text_head = None
             store_po = next((r.get("store_po") for r in records if r.get("store_po")), None)
             flags = []
             if po_number and await db.printavo_intake.find_one(
@@ -453,6 +474,7 @@ async def _process_message(svc, cfg: dict, labels: dict, msg_id: str, forced: bo
                 "from_name": parseaddr(h.get("reply-to") or h.get("from") or "")[0] or None,
                 "received_at": _received_at(h, msg),
                 "body_text": body_text,
+                "pdf_text_head": text_head,
                 "created_at": now,
                 "created_quotes": None,
                 "resolved_at": None,
@@ -609,6 +631,13 @@ async def update_config(request: Request):
     if not allowed:
         raise HTTPException(400, "Nada que actualizar")
     await _set_config(allowed)
+    # Widening the allow-list must reach the mail already rejected by it:
+    # forget those evaluations so the next pass looks at them again (their
+    # MOS/* labels get rewritten with the new verdict).
+    if "allowed_domains" in allowed:
+        res = await db.gmail_intake_messages.delete_many({"reason": REASON_DOMAIN})
+        if res.deleted_count:
+            logger.info(f"[gmail-intake] {res.deleted_count} correo(s) se reevaluarán tras cambiar dominios")
     await log_activity(user, "gmail_intake_config", allowed)
     return await _get_config()
 
@@ -630,7 +659,7 @@ async def run_now(request: Request):
 async def list_items(request: Request, status: str = "pendiente", limit: int = 100):
     await require_auth(request)
     q = {} if status == "all" else {"status": status}
-    cur = db.printavo_intake.find(q, {"_id": 0, "body_text": 0}).sort("received_at", -1).limit(max(1, min(500, limit)))
+    cur = db.printavo_intake.find(q, {"_id": 0, "body_text": 0, "pdf_text_head": 0}).sort("received_at", -1).limit(max(1, min(500, limit)))
     return {"items": await cur.to_list(length=None)}
 
 
