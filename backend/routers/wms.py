@@ -11225,17 +11225,6 @@ async def put_part_number_config(request: Request):
     if not allowed:
         raise HTTPException(400, f"Nada que guardar; llaves válidas: {sorted(pn.DEFAULT_CONFIG)}")
     stored = await db.wms_part_number_config.find_one({"config_id": "main"}, {"_id": 0, "config_id": 0}) or {}
-    if "descriptions" in allowed:
-        # Frases aduanales: MAYÚSCULAS, espacios colapsados, sin duplicados
-        # (comparadas sin acentos). No se valida contenido: la propuesta de
-        # prenda/composición ya le dice al capturista qué entiende de cada una.
-        clean, seen = [], set()
-        for raw in allowed["descriptions"] or []:
-            txt = re.sub(r"\s+", " ", str(raw or "")).strip().upper()
-            if txt and pn.norm(txt) not in seen:
-                seen.add(pn.norm(txt))
-                clean.append(txt)
-        allowed["descriptions"] = clean
     if "compositions" in allowed:
         # Cada composición del catálogo debe poder componer un número de parte:
         # fibras conocidas, sin repetir, suma 100. Se guarda canónica y sin

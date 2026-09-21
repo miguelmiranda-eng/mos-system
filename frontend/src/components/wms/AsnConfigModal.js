@@ -21,11 +21,13 @@ import { previewComposition } from "./composition";
 // Guardar manda SOLO la pestaña activa; el backend fusiona diccionarios por
 // llave y reemplaza listas completas. Un cliente/país de fábrica se "quita"
 // guardándolo con valor vacío (el backend lo descarta al fusionar).
-const TABS = ["customers", "descriptions", "garments", "fibers", "compositions", "countries", "import_types"];
+// (Las descripciones NO viven aquí: la hoja de Entradas usa el catálogo
+// curado de Configuración → Catálogos, el mismo que Recepción.)
+const TABS = ["customers", "garments", "fibers", "compositions", "countries", "import_types"];
 // Listas de texto plano (una fila = un string): comparten editor.
-const LIST_TABS = new Set(["import_types", "compositions", "descriptions"]);
+const LIST_TABS = new Set(["import_types", "compositions"]);
 // Listas que se capturan en MAYÚSCULAS (van a la hoja tal cual).
-const UPPER_TABS = new Set(["compositions", "descriptions"]);
+const UPPER_TABS = new Set(["compositions"]);
 
 
 const cls = {
@@ -165,7 +167,7 @@ export function AsnConfigPanel({ open = true, onClose, onSaved, embedded = false
                   <div key={i} className="flex items-center gap-2">
                     <input value={v} onChange={e => { const v = e.target.value; setTypes(p => p.map((x, j) => j === i ? (UPPER_TABS.has(tab) ? v.toUpperCase() : v) : x)); }}
                       className={`${cls.input} flex-1 ${tab === "compositions" ? "font-mono" : ""}`}
-                      placeholder={tab === "compositions" ? "60% ALGODON 40% POLIESTER" : tab === "descriptions" ? "CAMISETA MANGA CORTA PARA HOMBRE DE PUNTO 100% ALGODÓN" : undefined}
+                      placeholder={tab === "compositions" ? "60% ALGODON 40% POLIESTER" : undefined}
                       data-testid={`asn-cfg-list-${i}`} />
                     {pv && (
                       <span className={`w-28 text-[11px] font-mono truncate ${pv.ok ? "text-muted-foreground" : "text-amber-600 dark:text-amber-400"}`}

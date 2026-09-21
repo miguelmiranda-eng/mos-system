@@ -3389,8 +3389,6 @@ const en = {
   wms_asn_cfg_tab_countries: "Countries",
   wms_asn_cfg_tab_import_types: "Operation types",
   wms_asn_cfg_tab_compositions: "Compositions",
-  wms_asn_cfg_tab_descriptions: "Descriptions",
-  wms_asn_cfg_help_descriptions: "Descriptions selectable in the sheet's Description column: the full customs phrase from the packing list. Garment, gender and composition are proposed from it.",
   wms_asn_not_in_catalog: "not in the catalog",
   wms_asn_cfg_help_compositions: "Compositions selectable in the sheet's Composition column. Stored in canonical form (fibers from highest to lowest, must add up to 100%); the preview shows the code the part number will carry.",
   wms_asn_cfg_comp_unknown: "Unknown fiber (add it under Fibers)",

@@ -90,11 +90,12 @@ async def main():
         check("el 400 no guardó nada", r.json()["compositions"] == ["100% ALGODON", "58% ALGODON 42% POLIESTER", "60% ALGODON 40% POLIESTER"])
         r = await c.put("/api/wms/asn/part-number/config", json={"compositions": []})
         check("lista vacía → regresan los defaults", r.status_code == 200 and len(r.json()["compositions"]) >= 30)
-        # Catálogo de descripciones: frase aduanal, MAYÚSCULAS, sin duplicados (sin acentos).
+        # Las descripciones NO son parte de este config (salen del catálogo
+        # curado de Configuración → Catálogos, el mismo que Recepción).
         r = await c.get("/api/wms/asn/part-number/config")
-        check("defaults traen descripciones aduanales", any(d.startswith("CAMISETA MANGA CORTA PARA HOMBRE") for d in r.json()["descriptions"]) and len(r.json()["descriptions"]) >= 20)
-        r = await c.put("/api/wms/asn/part-number/config", json={"descriptions": ["camiseta manga corta para hombre de punto 100% algodón", "  CAMISETA  MANGA CORTA PARA HOMBRE DE PUNTO 100% ALGODON ", "", "PANTALON PARA MUJER DE PUNTO 92% NYLON, 8% SPANDEX"]})
-        check("PUT: mayúsculas, espacios colapsados y dedupe sin acentos", r.status_code == 200 and r.json()["descriptions"] == ["CAMISETA MANGA CORTA PARA HOMBRE DE PUNTO 100% ALGODÓN", "PANTALON PARA MUJER DE PUNTO 92% NYLON, 8% SPANDEX"], r.json().get("descriptions"))
+        check("el config ya no trae descripciones", "descriptions" not in r.json(), sorted(r.json()))
+        r = await c.put("/api/wms/asn/part-number/config", json={"descriptions": ["CAMISETA MANGA CORTA PARA HOMBRE DE PUNTO 100% ALGODÓN"]})
+        check("PUT descriptions → 400 (llave que ya no existe)", r.status_code == 400, r.text[:200])
 
         print("\n== 2. Propuesta desde la descripción ==")
         r = await c.post("/api/wms/asn/part-number/propose", json={

@@ -3203,8 +3203,6 @@ const es = {
   wms_asn_cfg_tab_countries: "Países",
   wms_asn_cfg_tab_import_types: "Tipos de operación",
   wms_asn_cfg_tab_compositions: "Composiciones",
-  wms_asn_cfg_tab_descriptions: "Descripciones",
-  wms_asn_cfg_help_descriptions: "Descripciones que se pueden elegir en la columna Descripción de la hoja: la frase aduanal completa del packing list. De ella se proponen prenda, género y composición.",
   wms_asn_not_in_catalog: "no está en el catálogo",
   wms_asn_cfg_help_compositions: "Composiciones que se pueden elegir en la columna Composición de la hoja. Se guardan en forma canónica (fibras de mayor a menor, deben sumar 100 %); la vista previa muestra el código que llevará el número de parte.",
   wms_asn_cfg_comp_unknown: "Fibra no reconocida (agrégala en Fibras)",

@@ -4,7 +4,7 @@ import { FileUp, Loader2, X, Package, Search, AlertTriangle, Trash2, Pencil, Plu
 import * as XLSX from "xlsx";
 import { saveAs } from "file-saver";
 import { useLang } from "../../contexts/LanguageContext";
-import { API, fetcher, deleter, putter, poster, logLoadError } from "./lib";
+import { API, fetcher, deleter, putter, poster, logLoadError, useWmsCatalogs } from "./lib";
 import { AsnStatus } from "./constants";
 import { StatCard, Btn, EmptyState, ModuleToolbar } from "./ui";
 import { AddColumnModal } from "../dashboard/AddColumnModal";
@@ -225,12 +225,18 @@ export const AsnModule = ({ currentUser, initialDetail }) => {
     return { ...it, [f]: v, _touched: touched };
   }) }));
   const addCLine = () => setCreateDraft(d => ({ ...d, items: [...d.items, NEW_LINE()] }));
-  // Opciones del desplegable de composición: el catálogo + el valor actual si
-  // no está en él (entradas viejas, texto pegado que el servidor no pudo
-  // canonizar), marcado, para que nunca se pierda lo capturado.
-  const inCatalog = (listKey, v) => !v || (pnCfg?.[listKey] || []).includes(v);
+  // Listas de los desplegables de la hoja. La DESCRIPCIÓN sale del mismo
+  // catálogo curado que usa Recepción (Configuración → Catálogos →
+  // Descripciones), para que Entradas e inventario hablen el mismo vocabulario;
+  // la composición sigue viniendo del número de parte (pnCfg.compositions).
+  const wmsCat = useWmsCatalogs();
+  const catalogList = (listKey) => listKey === 'descriptions' ? wmsCat.descriptions : (pnCfg?.[listKey] || []);
+  // Opciones del desplegable: el catálogo + el valor actual si no está en él
+  // (entradas viejas, texto pegado que no coincide), marcado, para que nunca
+  // se pierda lo capturado.
+  const inCatalog = (listKey, v) => !v || catalogList(listKey).includes(v);
   const catalogOptions = (listKey, current) => {
-    const opts = [{ value: '', label: '—' }, ...(pnCfg?.[listKey] || []).map(c => ({ value: c, label: c }))];
+    const opts = [{ value: '', label: '—' }, ...catalogList(listKey).map(c => ({ value: c, label: c }))];
     if (current && !inCatalog(listKey, current)) opts.push({ value: current, label: `${current} ⚠ ${t('wms_asn_not_in_catalog')}` });
     return opts;
   };
@@ -241,7 +247,7 @@ export const AsnModule = ({ currentUser, initialDetail }) => {
   const snapToCatalog = (listKey, v) => {
     if (!v) return v;
     const k = foldKey(v);
-    return (pnCfg?.[listKey] || []).find(c => foldKey(c) === k) || v;
+    return catalogList(listKey).find(c => foldKey(c) === k) || v;
   };
   const CATALOG_OF = { description: 'descriptions', fabric: 'compositions' };
   // Modo estricto (espejo de _asn_strict_errors del backend): composición y país
@@ -275,9 +281,10 @@ export const AsnModule = ({ currentUser, initialDetail }) => {
     { key: 'bundles', label: t('wms_asn_bundles'), num: true }, { key: 'package_type', label: t('wms_asn_package_type'), upper: true },
   ];
   const GRID_FIXED = [
-    // Descripción y composición salen de catálogos (pnCfg.descriptions /
-    // compositions), no de texto libre. Lo pegado del Excel se conserva y se
-    // marca si no está en el catálogo; la composición además se canoniza.
+    // Descripción y composición salen de catálogos (Configuración → Catálogos
+    // → Descripciones, el mismo que Recepción / pnCfg.compositions), no de
+    // texto libre. Lo pegado del Excel se conserva y se marca si no está en
+    // el catálogo; la composición además se canoniza.
     { key: 'description', label: t('description'), list: 'descriptions', required: true },
     { key: 'garment', label: t('wms_asn_garment'), select: 'garments' },
     { key: 'gender', label: t('wms_asn_gender'), select: 'genders' },

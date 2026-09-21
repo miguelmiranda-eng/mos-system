@@ -100,44 +100,9 @@ DEFAULT_CONFIG: dict = {
     },
     # tipos de operación (hoja INSTRUCTIONS del packing list)
     "import_types": ["Temporal", "Definitivo", "Retorno de MP", "Almacenaje", "Retrabajo", "Inspeccion"],
-    # Descripciones capturables en la hoja de Entradas (desplegable, no texto
-    # libre): la frase aduanal COMPLETA tal como viene en el packing list, con
-    # composición, para que un solo pick proponga prenda + género + composición
-    # y componga el número de parte. Lista inicial = las frases reales de las
-    # entradas (2026-09-15), sin erratas. Editable desde la configuración del
-    # módulo; se guardan en MAYÚSCULAS, espacios colapsados, sin duplicados
-    # (comparadas sin acentos).
-    "descriptions": [
-        "CAMISETA MANGA CORTA PARA HOMBRE DE PUNTO 100% ALGODÓN",
-        "CAMISETA MANGA CORTA PARA HOMBRE DE PUNTO 50% ALGODÓN, 50% POLIESTER",
-        "CAMISETA MANGA CORTA PARA HOMBRE DE PUNTO 60% ALGODÓN, 40% POLIESTER",
-        "CAMISETA MANGA CORTA PARA HOMBRE DE PUNTO 90% ALGODÓN, 10% POLIESTER",
-        "CAMISETA MANGA CORTA PARA HOMBRE DE PUNTO 50% POLIESTER, 25% ALGODÓN, 25% RAYON",
-        "CAMISETA MANGA LARGA PARA HOMBRE DE PUNTO 50% ALGODÓN, 50% POLIESTER",
-        "CAMISETA SIN MANGAS PARA HOMBRE DE PUNTO 100% ALGODÓN",
-        "CAMISETA MANGA CORTA PARA MUJER DE PUNTO 100% ALGODÓN",
-        "CAMISETA MANGA CORTA PARA MUJER DE PUNTO 95% ALGODÓN, 5% SPANDEX",
-        "CAMISETA MANGA CORTA PARA MUJER DE PUNTO 94% MODAL, 6% SPANDEX",
-        "CAMISETA MANGA CORTA PARA MUJER DE PUNTO 50% POLIESTER, 25% ALGODÓN, 25% RAYON",
-        "CAMISETA MANGA LARGA PARA MUJER DE PUNTO 58% ALGODÓN, 38% MODAL, 4% SPANDEX",
-        "CAMISETA SIN MANGA PARA MUJER DE PUNTO 94% MODAL, 6% SPANDEX",
-        "BLUSA SIN MANGA PARA MUJER DE PUNTO 95% MODAL, 5% SPANDEX",
-        "CAMISETA MANGA CORTA PARA NIÑO DE PUNTO 100% ALGODÓN",
-        "CAMISETA MANGA CORTA PARA NIÑO DE PUNTO 50% ALGODÓN, 50% POLIESTER",
-        "CAMISETA MANGA CORTA PARA NIÑO DE PUNTO 90% ALGODÓN, 10% POLIESTER",
-        "CAMISETA MANGA CORTA PARA NIÑO DE PUNTO 50% POLIESTER, 25% ALGODÓN, 25% RAYON",
-        "SUDADERA SIN DISPOSITIVO DE CIERRE CON CAPUCHA PARA HOMBRE DE PUNTO 100% ALGODÓN",
-        "SUDADERA SIN DISPOSITIVO DE CIERRE CON CAPUCHA PARA HOMBRE DE PUNTO 58% ALGODÓN, 42% POLIESTER",
-        "SUDADERA SIN DISPOSITIVO DE CIERRE CON CAPUCHA PARA HOMBRE DE PUNTO 65% ALGODÓN, 35% POLIESTER",
-        "SUDADERA SIN DISPOSITIVO DE CIERRE CON CAPUCHA PARA JOVEN DE PUNTO 60% ALGODÓN, 40% POLIESTER",
-        "SUDADERA CON DISPOSITIVO DE CIERRE Y CAPUCHA PARA HOMBRE DE PUNTO 50% ALGODÓN, 50% POLIESTER",
-        "SUDADERA SIN DISPOSITIVO DE CIERRE PARA HOMBRE DE PUNTO 58% ALGODÓN, 42% POLIESTER",
-        "PANTALON PARA MUJER DE PUNTO 75% NYLON, 25% SPANDEX",
-        "PANTALON PARA MUJER DE PUNTO 83% POLIESTER, 17% SPANDEX",
-        "PANTALON PARA MUJER DE PUNTO 87% POLIESTER, 13% SPANDEX",
-        "PANTALON PARA MUJER DE PUNTO 92% NYLON, 8% SPANDEX",
-        "CHAMARRA PARA HOMBRE TIPO ROMPEVIENTOS CON CIERRE POR BROCHES 100% NYLON",
-    ],
+    # Las descripciones de la hoja de Entradas NO son parte de este config:
+    # salen del catálogo curado (wms_catalog_options tipo "descriptions",
+    # Configuración → Catálogos), el mismo que usa Recepción.
     # Composiciones capturables en la hoja de Entradas (desplegable, no texto
     # libre). Forma canónica = composition_text(): las fibras de arriba, de
     # mayor a menor porcentaje, suma 100. Lista inicial = las 34 composiciones
