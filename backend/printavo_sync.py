@@ -736,8 +736,59 @@ async def sync_once(cfg: dict) -> dict:
     except Exception as e:
         logger.warning(f"[printavo] note-link refresh failed: {e}")
 
-    return {"initialized": False, "created": created_total, "refreshed": refreshed,
-            "seen": len(nodes), "watermark": watermark}
+    # Pasada de creación POR STATUS (arregla el hueco de la ventana): recupera las
+    # conversiones tardías de quote->Scheduled que caen por DEBAJO de las N invoices
+    # más recientes (bug clásico de reorders: el visualId se fija al crear el quote
+    # y no cambia, así que al convertir tarde queda fuera de la ventana). Acotada a
+    # `create_status_pages` páginas para NO alcanzar histórico viejo que nadie quiere.
+    created_status = 0
+    try:
+        created_status = await create_from_status(cfg)
+    except Exception as e:
+        logger.warning(f"[printavo] create-by-status failed: {e}")
+
+    return {"initialized": False, "created": created_total + created_status,
+            "created_window": created_total, "created_by_status": created_status,
+            "refreshed": refreshed, "seen": len(nodes), "watermark": watermark}
+
+
+async def create_from_status(cfg: dict) -> int:
+    """Crea órdenes para invoices en un status 'ready' (Scheduled) que aún no
+    existen en MOS, paginando POR STATUS (no por ventana de recientes). Cubre las
+    conversiones tardías fuera de la ventana de sync_once. Acotada a
+    `create_status_pages` páginas (default 6 = 150 invoices recientes en Scheduled)
+    para no llegar al histórico viejo. El claim (printavo_processed) evita duplicar
+    y saltar las ya creadas/seeded/trasheadas."""
+    from printavo_client import resolve_status_ids, fetch_invoices_by_status
+
+    names = cfg.get("required_statuses") or DEFAULT_REQUIRED_STATUSES
+    status_ids = await resolve_status_ids(names)
+    if not status_ids:
+        logger.warning(f"[printavo] create-by-status: ningún status matchea {names}; pasada omitida")
+        return 0
+
+    max_pages = max(1, int(cfg.get("create_status_pages") or 6))
+    fetch_size = int(cfg.get("create_status_fetch_size") or 25)
+    created, after = 0, None
+    for _ in range(max_pages):
+        page = await fetch_invoices_by_status(status_ids, fetch_size, after)
+        nodes = page.get("nodes") or []
+        for node in nodes:
+            inv_id = node.get("id")
+            if not await _claim_invoice(inv_id):
+                continue  # ya creada / seeded / trasheada (claim manda)
+            try:
+                created += await process_invoice(node)
+            except Exception as e:
+                logger.error(f"[printavo] create-by-status {node.get('visualId')} falló, libera claim: {e}")
+                await db.printavo_processed.delete_one({"_id": str(inv_id)})
+        info = page.get("pageInfo") or {}
+        if not info.get("hasNextPage"):
+            break
+        after = info.get("endCursor")
+    if created:
+        logger.info(f"[printavo] create-by-status recuperó {created} orden(es) fuera de la ventana")
+    return created
 
 
 # ── Final Bill pass ──────────────────────────────────────────────────────────

@@ -35,6 +35,10 @@ DEFAULTS = {
     "enabled": False,
     "poll_minutes": int(os.environ.get("PRINTAVO_POLL_MINUTES", "5")),
     "fetch_size": 25,
+    # Pasada de creación POR STATUS (recupera conversiones tardías quote->Scheduled
+    # fuera de la ventana de `fetch_size`). Acotada para no tocar histórico viejo.
+    "create_status_pages": 6,        # páginas de 25 escaneadas por status cada tick (150)
+    "create_status_fetch_size": 25,
     "last_visual_id": None,   # high-water mark (highest processed invoice number)
     "last_run_at": None,      # ISO timestamp of last poll attempt
     "last_error": None,       # last error message, if any
