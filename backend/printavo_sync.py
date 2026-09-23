@@ -759,7 +759,10 @@ async def create_from_status(cfg: dict) -> int:
     `create_status_pages` páginas (default 6 = 150 invoices recientes en Scheduled)
     para no llegar al histórico viejo. El claim (printavo_processed) evita duplicar
     y saltar las ya creadas/seeded/trasheadas."""
-    from printavo_client import resolve_status_ids, fetch_invoices_by_status
+    # OJO: usa fetch_invoices_for_create (campos COMPLETOS), NO fetch_invoices_by_status
+    # del Final Bill — esa solo trae line items y las órdenes salían sin
+    # cliente/branding/PO/fechas (bug 3466/3467).
+    from printavo_client import resolve_status_ids, fetch_invoices_for_create
 
     names = cfg.get("required_statuses") or DEFAULT_REQUIRED_STATUSES
     status_ids = await resolve_status_ids(names)
@@ -771,7 +774,7 @@ async def create_from_status(cfg: dict) -> int:
     fetch_size = int(cfg.get("create_status_fetch_size") or 25)
     created, after = 0, None
     for _ in range(max_pages):
-        page = await fetch_invoices_by_status(status_ids, fetch_size, after)
+        page = await fetch_invoices_for_create(status_ids, fetch_size, after)
         nodes = page.get("nodes") or []
         for node in nodes:
             inv_id = node.get("id")

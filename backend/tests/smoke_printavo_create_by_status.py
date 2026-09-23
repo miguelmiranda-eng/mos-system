@@ -68,7 +68,7 @@ async def fake_resolve(names):
 
 
 def _pages(pages):
-    """pages: lista de (nodes, hasNext). Devuelve una fake fetch_invoices_by_status."""
+    """pages: lista de (nodes, hasNext). Devuelve una fake fetch_invoices_for_create."""
     async def _fetch(status_ids, first=25, after=None):
         idx = 0 if after is None else int(after)
         nodes, has_next = pages[idx]
@@ -88,7 +88,7 @@ async def main():
     print("\n1) crea las no reclamadas, salta las ya reclamadas")
     CREATED.clear()
     ps.db = FakeDB(pre={"gid://3468"})  # 3468 ya reclamada (ya creada antes)
-    pc.fetch_invoices_by_status = _pages([
+    pc.fetch_invoices_for_create = _pages([
         ([inv("3468"), inv("3467"), inv("3466")], True),   # pág 1
         ([inv("3400")], False),                             # pág 2
     ])
@@ -105,7 +105,7 @@ async def main():
     print("\n3) acotada: create_status_pages limita las páginas escaneadas")
     CREATED.clear()
     ps.db = FakeDB()
-    pc.fetch_invoices_by_status = _pages([
+    pc.fetch_invoices_for_create = _pages([
         ([inv("9001")], True),
         ([inv("1840")], True),   # histórico viejo — NO debe alcanzarse con pages=1
         ([inv("500")], False),

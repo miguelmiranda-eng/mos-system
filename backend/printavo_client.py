@@ -298,3 +298,39 @@ async def fetch_invoices_by_status(status_ids: list, first: int = 25, after: str
     nodes = conn.get("nodes") or []
     logger.info(f"[printavo] fetched {len(nodes)} final-bill invoice(s) from API")
     return {"nodes": nodes, "pageInfo": conn.get("pageInfo") or {}}
+
+
+# Igual que INVOICES_QUERY (campos COMPLETOS para crear la orden: nickname,
+# contact, fechas, workorderUrl, customerNote) pero filtrada por statusIds y con
+# paginación por cursor. La usa la pasada de creación POR STATUS
+# (printavo_sync.create_from_status), que recupera conversiones tardías fuera de
+# la ventana de recientes. OJO: FINAL_BILL_INVOICES_QUERY NO sirve aquí — solo
+# trae line items + total, así que las órdenes salían sin cliente/branding/PO/fechas.
+CREATE_STATUS_QUERY = """
+query CreateByStatus($first: Int!, $after: String, $statusIds: [ID!]) {
+  invoices(first: $first, after: $after, statusIds: $statusIds,
+           sortOn: VISUAL_ID, sortDescending: true) {
+    pageInfo { hasNextPage endCursor }
+    nodes {
+      id visualId nickname createdAt customerDueAt dueAt total tags url
+      workorderUrl customerNote status { name }
+      contact { fullName customer { companyName } }
+      lineItemGroups(first: 5) {
+        nodes { lineItems(first: 20) { nodes { description color itemNumber items sizes { count size } } } }
+      }
+    }
+  }
+}
+"""
+
+
+async def fetch_invoices_for_create(status_ids: list, first: int = 25, after: str = None) -> dict:
+    """Una página de invoices en `status_ids` con TODOS los campos que necesita
+    invoice_to_orders (nickname/contact/fechas/workorderUrl/customerNote/…).
+    Devuelve {nodes, pageInfo}."""
+    variables = {"first": max(1, min(first, 25)), "after": after, "statusIds": status_ids}
+    data = await _graphql(CREATE_STATUS_QUERY, variables)
+    conn = (data.get("invoices")) or {}
+    nodes = conn.get("nodes") or []
+    logger.info(f"[printavo] fetched {len(nodes)} status-create invoice(s) from API")
+    return {"nodes": nodes, "pageInfo": conn.get("pageInfo") or {}}
