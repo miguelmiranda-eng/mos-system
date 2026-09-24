@@ -3,6 +3,7 @@ import { toast } from "sonner";
 import { useLang } from "../contexts/LanguageContext";
 import { API, DEFAULT_COLUMNS, STATUS_COLORS, getActionLabels } from "../lib/constants";
 import { apiFetch } from "../lib/http";
+import { localDateLabel } from "../lib/utils";
 
 // Re-export so existing consumers keep their import path working
 export { apiFetch };
@@ -93,7 +94,7 @@ export const useOrders = (currentBoard, boardFilters) => {
           if (realVals.length > 0) {
             const sv = String(v);
             if (realVals.includes(v) || realVals.includes(sv)) return true;
-            if (v) { try { const fd = new Date(v).toLocaleDateString(); if (realVals.includes(fd)) return true; } catch {} }
+            if (v && realVals.includes(localDateLabel(v))) return true;
           }
           return false;
         });
@@ -127,11 +128,14 @@ export const useOrders = (currentBoard, boardFilters) => {
     if (!silent) setLoading(true);
     try {
       const params = new URLSearchParams();
-      if (currentBoard !== 'MASTER') params.append('board', currentBoard);
-      // Pull every order, not just the newest 1000 (the backend default). MASTER
-      // aggregates all active boards (~1.4k+ and growing); the old cap silently
-      // hid the oldest orders, so filtering MASTER returned fewer rows than the
-      // board itself (e.g. 20 vs 26 in INVENTARIO).
+      // MASTER también se pide por nombre: el backend lo resuelve a "solo lo
+      // vivo" (fuera FINAL BILL/COMPLETOS/EDI/CANCELLED, ver
+      // MASTER_EXCLUDED_BOARDS en routers/orders.py). Sin `board` llegaban las
+      // ~2.4k órdenes, ~80% cerradas, y la tabla cargaba con todas.
+      params.append('board', currentBoard);
+      // Pull every order, not just the newest 1000 (the backend default); the
+      // old cap silently hid the oldest orders, so filtering MASTER returned
+      // fewer rows than the board itself (e.g. 20 vs 26 in INVENTARIO).
       params.append('limit', '50000');
       const res = await apiFetch(`${API}/orders?${params}`);
       if (res.ok) {

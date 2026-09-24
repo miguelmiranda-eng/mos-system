@@ -58,7 +58,7 @@ import Sidebar from "./dashboard/Sidebar";
 import CommandPalette from "./dashboard/CommandPalette";
 
 // Shared constants and hooks
-import { cn } from "../lib/utils";
+import { cn, localDateLabel } from "../lib/utils";
 import { BOARDS, BOARD_COLORS, FILTER_COLUMNS, STATUS_COLORS, getBoardStyle, evaluateFormulaValue, API, normalizePublicUrl } from "../lib/constants";
 import { useOrders, apiFetch } from "../hooks/useOrders";
 
@@ -342,14 +342,24 @@ const Dashboard = () => {
   // raises this. Reset on board change.
   const [mobileLimit, setMobileLimit] = useState(50);
 
-  // Render acotado: 100 filas y botón "Cargar más" (+200), igual que el patrón
-  // de móvil. El viejo "progressive rendering" (+200 cada 3s hasta el total)
-  // terminaba montando TODO el tablero — en MASTER eran ~28k celdas editables
-  // en el DOM y cada evento del WS reconciliaba la tabla completa.
+  // Progressive rendering: 100 filas al entrar y +200 cada 3s hasta el total;
+  // "Cargar más" solo adelanta. Se quitó el 2026-08-10 (02df051) por costo de
+  // DOM en MASTER y se restauró: con recorte manual, las órdenes creadas antes
+  // de las 100 más nuevas (p. ej. las de cancel 1 oct, filas 124-359) quedaban
+  // invisibles en la vista normal sin que nadie supiera que faltaban.
   useEffect(() => {
     setDisplayLimit(100);
     setMobileLimit(50);
   }, [currentBoard]);
+
+  useEffect(() => {
+    if (orders && Array.isArray(orders) && orders.length > displayLimit) {
+      const timer = setTimeout(() => {
+        setDisplayLimit(prev => prev + 200);
+      }, 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [orders, displayLimit]);
 
   const activeBoards = (dynamicBoards.length > 0 ? dynamicBoards : BOARDS).filter(b => !hiddenBoards.includes(b));
   const allBoardsIncludingHidden = dynamicBoards.length > 0 ? dynamicBoards : BOARDS;
@@ -1041,12 +1051,17 @@ const Dashboard = () => {
     let opts = mapping[col.key] || [];
     if (!opts || opts.length === 0) {
       if (col.isDate) {
-        const vals = [...new Set(unfilteredOrders.map(o => {
+        // Orden cronológico por el valor crudo (ISO), no alfabético por la
+        // etiqueta local ("1/10" quedaba antes que "30/9").
+        const byLabel = new Map();
+        unfilteredOrders.forEach(o => {
           const v = o[col.key];
-          if (!v) return null;
-          try { return new Date(v).toLocaleDateString(); } catch { return String(v); }
-        }).filter(v => v !== null))].sort();
-        opts = vals;
+          if (!v) return;
+          const label = localDateLabel(v);
+          const iso = String(v).slice(0, 10);
+          if (!byLabel.has(label) || iso < byLabel.get(label)) byLabel.set(label, iso);
+        });
+        opts = [...byLabel.entries()].sort((a, b) => a[1].localeCompare(b[1])).map(([label]) => label);
       } else {
         const vals = [...new Set(unfilteredOrders.map(o => o[col.key]).filter(v => v !== null && v !== undefined && String(v) !== ''))].map(String).sort();
         opts = vals;
@@ -1668,16 +1683,18 @@ const Dashboard = () => {
     const noValueLabel = isDateField ? (lang === 'es' ? 'Sin fecha' : 'No date') : (lang === 'es' ? 'Sin asignar' : 'None');
     visibleOrders.forEach(o => {
       const raw = o[groupByDate];
-      const groupKey = isDateField ? (raw ? new Date(raw).toLocaleDateString() : noValueLabel) : (raw || noValueLabel);
+      const groupKey = isDateField ? (raw ? localDateLabel(raw) : noValueLabel) : (raw || noValueLabel);
       if (!groups[groupKey]) groups[groupKey] = [];
       groups[groupKey].push(o);
     });
     const colSpan = 3 + visibleColumns.length + ((currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') ? 1 : 0);
-    const sortedEntries = Object.entries(groups).sort(([a], [b]) => {
+    // Los grupos de fecha se ordenan por el valor crudo (ISO) de su primera
+    // orden: new Date("30/9/2026") es Invalid Date y rompía el orden.
+    const sortKey = (key, list) => isDateField ? String(list[0]?.[groupByDate] || '').slice(0, 10) : key;
+    const sortedEntries = Object.entries(groups).sort(([a, la], [b, lb]) => {
       if (a === noValueLabel) return 1;
       if (b === noValueLabel) return -1;
-      if (isDateField) { const da = new Date(a), db = new Date(b); return da - db; }
-      return a.localeCompare(b);
+      return sortKey(a, la).localeCompare(sortKey(b, lb));
     });
     return sortedEntries.map(([dateKey, groupOrders]) => {
       const isCollapsed = !!collapsedGroups[dateKey];
