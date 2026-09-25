@@ -716,8 +716,10 @@ const ShippingScheduler = () => {
                           data-st={l.status_effective || ''}
                           title={l.status ? t('sch_status_manual_hint', { auto: l.status_auto || '—' }) : t('sch_status_auto_hint')}
                           className="sch-pill flex-1 min-w-0 px-2 py-0.5 text-[10px] font-black uppercase outline-none">
-                          {/* AUTO sólo cuando MOS tiene equivalencia para la orden. */}
-                          <option value="">{l.status_auto ? `AUTO · ${l.status_auto}` : '—'}</option>
+                          {/* AUTO siempre disponible: deja la fila en automático
+                              aunque hoy MOS no tenga equivalencia (se llenará
+                              sola cuando la orden avance a un status ligado). */}
+                          <option value="">{`AUTO · ${l.status_auto || t('sch_status_auto_none')}`}</option>
                           {statuses.map((s) => <option key={s} value={s}>{s}</option>)}
                         </select>
                         {l.status && <span className="text-[10px] font-black text-slate-500" title={t('sch_status_manual_hint', { auto: l.status_auto || '—' })}>✎</span>}

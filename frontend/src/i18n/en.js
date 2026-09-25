@@ -2975,6 +2975,7 @@ const en = {
   sch_load_more: "Load more ({a} of {b})",
   sch_qty_hint: "Order quantity / units already shipped per the WMS",
   sch_status_auto_hint: "Automatic: taken from the order's MOS status. Pick an option to set it by hand.",
+  sch_status_auto_none: "no MOS match",
   sch_status_manual_hint: "Set by hand. MOS would say: {auto}. Pick AUTO to go back to automatic.",
   sch_cancel_moved_hint: "Cancel date changed after scheduling: {from} → {to}",
   sch_sel_count: "{n} selected · {p} pcs",

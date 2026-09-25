@@ -2789,6 +2789,7 @@ const es = {
   sch_load_more: "Cargar más ({a} de {b})",
   sch_qty_hint: "Cantidad de la orden / unidades ya embarcadas según el WMS",
   sch_status_auto_hint: "Automático: sale del status de la orden en MOS. Elige una opción para fijarlo a mano.",
+  sch_status_auto_none: "sin equivalencia en MOS",
   sch_status_manual_hint: "Fijado a mano. MOS diría: {auto}. Elige AUTO para regresar al automático.",
   sch_cancel_moved_hint: "El cancel date cambió después de programar: {from} → {to}",
   sch_sel_count: "{n} seleccionada(s) · {p} pzs",
