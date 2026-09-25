@@ -12,6 +12,32 @@ const SYSTEM_TRANSIT_NAMES = new Set([
   ...Array.from({ length: 50 }, (_, i) => `CARRO ${i + 1}`),
 ]);
 
+// UNA SOLA VERDAD EN EL MODAL (2026-09-25): el detalle de ubicación lee el libro
+// (wms_inventory) crudo, así que un renglón huérfano — saldo>0 sin ninguna caja
+// viva que lo respalde — se muestra como stock aunque el piso esté vacío y el
+// Excel (que agrega desde cajas) ya lo omita. Estas funciones casan un renglón
+// del libro con las cajas VIVAS del piso para colapsarlo por defecto.
+//
+// Se generan DOS llaves (style|color|talla y sku|color|talla): el libro a veces
+// trae el sku compuesto ("5000-MAROON-L") mientras la caja sólo trae el style
+// ("5000"); casar por una sola dejaría renglones REALES sin respaldo aparente.
+const physIdentityKeys = (o) => {
+  const c = (o.color || '').trim().toUpperCase();
+  const s = (o.size || '').trim().toUpperCase();
+  return [(o.style || '').trim().toUpperCase(), (o.sku || '').trim().toUpperCase()]
+    .filter(Boolean)
+    .map(base => `${base}|${c}|${s}`);
+};
+
+// `verified` = /boxes SÍ cargó. Si no cargó, TODO cuenta como respaldado: no se
+// oculta nada por un fallo de red (no cegar al operador). Un renglón con
+// apartadas>0 nunca es "muerto": un compromiso de picking debe verse aunque el
+// piso no lo respalde (posible sobreventa a revisar).
+const rowIsBacked = (it, verified, liveKeys) =>
+  !verified || physIdentityKeys(it).some(k => liveKeys.has(k));
+const rowIsMuerto = (it, verified, liveKeys) =>
+  !rowIsBacked(it, verified, liveKeys) && (it.allocated ?? it.units_allocated ?? 0) <= 0;
+
 export const LocationsModule = ({ currentUser }) => {
   const { t } = useLang();
   // Permisos por acción (Sistema → Configuración → Permisos); el backend
@@ -107,6 +133,13 @@ export const LocationsModule = ({ currentUser }) => {
   // vaciaba cajas EN PAPEL que seguían llenas en el rack; un renglón en 0
   // puede ser la única pista visible de ese material. Un clic los muestra.
   const [showZeroRows, setShowZeroRows] = useState(false);
+  // Identidades con AL MENOS una caja viva en la ubicación abierta (units>0, no
+  // depleted), calculadas al abrir el detalle. Un renglón cuyo material no está
+  // aquí es fantasma "saldo_sin_cajas" y se colapsa por defecto (ver
+  // physIdentityKeys/rowIsMuerto arriba). `physVerified` distingue "no hay
+  // cajas vivas" de "no pude cargar /boxes".
+  const [liveBoxKeys, setLiveBoxKeys] = useState(() => new Set());
+  const [physVerified, setPhysVerified] = useState(false);
   const [relocateDst, setRelocateDst] = useState('');
   const [relocateSaving, setRelocateSaving] = useState(false);
   // Per-LINE move: relocate a whole inventory line (all its LPNs) to another
@@ -161,6 +194,8 @@ export const LocationsModule = ({ currentUser }) => {
     setDetailLoc(loc);
     setDetailItems([]);
     setBoxesByInv({});
+    setLiveBoxKeys(new Set());
+    setPhysVerified(false);
     setOpenDrawers(new Set());
     setRelocatingBoxId(null);
     setRelocateDst('');
@@ -184,13 +219,27 @@ export const LocationsModule = ({ currentUser }) => {
       // is still cheap (single mongo find).
       const [invData, boxData] = await Promise.all([
         fetcher(`/inventory?location=${encodeURIComponent(loc.name)}&limit=500`),
+        // null (no []) al fallar: [] es indistinguible de "sin cajas" y haría
+        // que TODO renglón pareciera fantasma. physVerified se apaga con null.
         fetcher(`/boxes?location=${encodeURIComponent(loc.name)}`).catch(err => {
           logLoadError('location boxes preload')(err);
-          return [];
+          return null;
         }),
       ]);
       const items = Array.isArray(invData) ? invData : (invData.items || []);
       setDetailItems(items);
+
+      const boxes = Array.isArray(boxData) ? boxData : [];
+
+      // Identidades con AL MENOS una caja VIVA (units>0 y no depleted). Es la
+      // verdad física contra la que se colapsan los renglones sin respaldo.
+      const live = new Set();
+      boxes.forEach(b => {
+        const u = Number(b.units ?? b.qty ?? 0);
+        if (u > 0 && b.status !== 'depleted') physIdentityKeys(b).forEach(k => live.add(k));
+      });
+      setLiveBoxKeys(live);
+      setPhysVerified(boxData !== null);
 
       // Bucket boxes by composite SKU key (sku + color + size). Many receiving
       // flows write boxes without an inventory_id link, so we can't rely on
@@ -198,7 +247,7 @@ export const LocationsModule = ({ currentUser }) => {
       // populated on both sides.
       const skuKey = (o) => `${(o.sku || o.style || '').toUpperCase()}|${(o.color || '').toUpperCase()}|${(o.size || '').toUpperCase()}`;
       const grouped = {};
-      (Array.isArray(boxData) ? boxData : []).forEach(b => {
+      boxes.forEach(b => {
         const key = skuKey(b);
         if (!grouped[key]) grouped[key] = [];
         grouped[key].push(b);
@@ -1016,10 +1065,9 @@ export const LocationsModule = ({ currentUser }) => {
                       </thead>
                       <tbody>
                         {detailItems.filter(it => showZeroRows
-                            || (it.on_hand ?? it.units_on_hand ?? 0) > 0
-                            || (it.allocated ?? it.units_allocated ?? 0) > 0
-                            || (it.total_boxes ?? 0) > 0).map((it, i) => {
+                            || !rowIsMuerto(it, physVerified, liveBoxKeys)).map((it, i) => {
                           const isOpen = openDrawers.has(it.inventory_id);
+                          const sinCajas = physVerified && !rowIsBacked(it, physVerified, liveBoxKeys);
                           const hasBoxes = isOpen; // legacy alias used below for hover/highlight
                           const canExpand = !!it.inventory_id && (it.total_boxes || 0) > 0;
                           const onHand = it.on_hand ?? it.units_on_hand ?? 0;
@@ -1054,7 +1102,17 @@ export const LocationsModule = ({ currentUser }) => {
                                 <td className="px-3 py-2.5 text-right tabular-nums font-medium">
                                   <span className={hasBoxes ? 'text-primary' : ''}>{(it.total_boxes || 0).toLocaleString()}</span>
                                 </td>
-                                <td className="px-3 py-2.5 text-right tabular-nums font-medium">{onHand.toLocaleString()}</td>
+                                <td className="px-3 py-2.5 text-right tabular-nums font-medium">
+                                  {sinCajas && (
+                                    <span
+                                      title={t('wms_row_no_live_boxes_title')}
+                                      className="mr-1.5 inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold bg-red-100 text-red-700 dark:bg-red-500/15 dark:text-red-400 align-middle"
+                                    >
+                                      {t('wms_row_no_live_boxes')}
+                                    </span>
+                                  )}
+                                  {onHand.toLocaleString()}
+                                </td>
                                 <td className="px-3 py-2.5 text-right tabular-nums font-semibold">{available.toLocaleString()}</td>
                                 {canManageLocations && (
                                   <td className="px-3 py-2.5 text-right whitespace-nowrap">
@@ -1331,8 +1389,7 @@ export const LocationsModule = ({ currentUser }) => {
             <div className="flex items-center justify-between gap-3 p-5 border-t border-border/20">
               <span className="text-xs text-muted-foreground">
                 {(() => {
-                  const muertos = detailItems.filter(it => !((it.on_hand ?? it.units_on_hand ?? 0) > 0
-                    || (it.allocated ?? it.units_allocated ?? 0) > 0 || (it.total_boxes ?? 0) > 0)).length;
+                  const muertos = detailItems.filter(it => rowIsMuerto(it, physVerified, liveBoxKeys)).length;
                   const vivos = detailItems.length - muertos;
                   return (<>
                     {vivos === 1 ? t('wms_line_in_loc_one') : t('wms_lines_in_loc', { n: vivos })}
