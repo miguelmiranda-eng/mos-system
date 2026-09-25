@@ -192,20 +192,28 @@ async def undo_action(activity_id: str, request: Request):
         logger.error(f"Undo error: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to undo: {str(e)}")
 
+# Toda llave servida aquí lleva un id aleatorio (orders: uuid; fotos WMS:
+# gen_id), así que su contenido nunca cambia: el navegador puede guardarla sin
+# volver a preguntar. Antes cada imagen se revalidaba en cada apertura.
+_UPLOAD_CACHE = {"Cache-Control": "public, max-age=31536000, immutable"}
+
+
 @router.get("/uploads/{filename:path}")
 async def get_uploaded_file(filename: str):
     """Retrieve an uploaded file from MongoDB (legacy base64) or disk by filename."""
-    # Try MongoDB first
+    # Try MongoDB first (índice storage_key en CORE_INDEXES; sin él era COLLSCAN
+    # de ~69k docs por imagen)
     doc = await db.file_uploads.find_one({"storage_key": filename}, {"_id": 0})
-    
+
     if doc and "data" in doc and doc["data"]:
         # Legacy Base64 image still in DB
         image_bytes = base64.b64decode(doc["data"])
-        return Response(content=image_bytes, media_type=doc.get("content_type", "image/png"))
-    
+        return Response(content=image_bytes, media_type=doc.get("content_type", "image/png"),
+                        headers=_UPLOAD_CACHE)
+
     # Fallback to disk (for migrated DB files or standard local uploads)
     file_path = UPLOADS_DIR / filename
     if file_path.exists():
-        return FileResponse(file_path)
+        return FileResponse(file_path, headers=_UPLOAD_CACHE)
     
     raise HTTPException(status_code=404, detail="File not found")

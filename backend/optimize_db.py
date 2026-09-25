@@ -161,6 +161,12 @@ CORE_INDEXES = [
     ("activity_logs", [("details.order_id", 1)], {}),
     ("activity_logs", [("details.order_number", 1)], {}),
     ("activity_logs", [("previous_data.order_ids", 1)], {}),
+    # Adjuntos de órdenes. GET /api/uploads busca por storage_key en CADA imagen
+    # y el detalle de orden por order_id: sin índice eran COLLSCAN de ~69k docs
+    # (300-560 ms por imagen, 76% del tiempo lento de Mongo el 2026-09-25).
+    # No único a propósito: un duplicado legado haría que el índice se saltara.
+    ("file_uploads", "storage_key", {}),
+    ("file_uploads", "order_id", {}),
     ("production_logs", "created_at", {}),
     ("production_logs", "order_id", {}),
     # QC — /qc/stats ($facet) + record listing sorted by created_at.
