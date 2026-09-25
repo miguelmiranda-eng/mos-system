@@ -166,6 +166,18 @@ class EnvioProgramado(BaseModel):
     scheduled_month: Optional[int] = None      # 1..12
     scheduled_week: Optional[int] = None       # 1..5 (semana del mes)
     shipment_no: Optional[int] = None          # envío (grupo) dentro de la semana
+    # Programador por export (2026-09): la línea vive en un bloque de export
+    # con fecha real. Los registros del formato anterior no traen export_id.
+    export_id: Optional[str] = None
+    ship_date: Optional[str] = None            # YYYY-MM-DD (fecha del export)
+    pcs: Optional[int] = None                  # piezas de ESTA línea (parciales)
+    shipping_no: Optional[str] = None
+    priority: Optional[int] = None             # 1..4
+    ship_notes: Optional[str] = None
+    ship_from: Optional[str] = None
+    carrier: Optional[str] = None
+    manual: Optional[bool] = None              # orden que no existe en el CRM
+    late: Optional[bool] = None                # sale después de ship_by/cancel_date
     scheduled_export_date: Optional[str] = None
     delivery_to: Optional[str] = None
     pl_export: Optional[str] = None
