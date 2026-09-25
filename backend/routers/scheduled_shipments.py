@@ -28,6 +28,7 @@ Endpoints (prefijo /api/scheduled-shipments):
   GET    ""                          → todas las líneas unidas (forma histórica {items, weeks})
   POST   ""                          → [histórico] programa por mes/semana (idempotente por orden)
   GET    "/week?start=YYYY-MM-DD"    → exports + líneas de la semana (lunes..domingo)
+  GET    "/summary?year=YYYY"        → conteos por semana del año (navegador Año → Mes → Semana)
   POST   "/exports"                  → crea un bloque de export en una fecha
   PUT    "/exports/{export_id}"      → edita encabezado (o lo mueve de fecha, arrastrando líneas)
   POST   "/exports/{export_id}/assign-number" → siguiente EXPORT# consecutivo
@@ -54,8 +55,43 @@ router = APIRouter(prefix="/api/scheduled-shipments", tags=["scheduled-shipments
 
 PAPELERA = "PAPELERA DE RECICLAJE"
 
-# Catálogos de la hoja (validación de lo que se escribe).
-STATUSES = ["READY TO SHIP", "PACKAGED READY", "PRINTED", "IN SETUP", "SE MUEVE FECHA", "CANCELLED"]
+# Catálogos de la hoja (validación de lo que se escribe). STATUSES = el
+# desplegable de la pestaña "21 SEP - 25 SEP", en su mismo orden.
+STATUSES = ["READY TO SHIP", "IN SETUP", "SURTIDO A PISO", "NECK READY", "PRINTED", "PACKAGED READY",
+            "QC READY", "CANCELLED", "SE MUEVE FECHA", "PRINTING", "PRIORITY"]
+# STATUS automático = equivalencia con MOS definida por Envíos (2026-09-25).
+# READY TO SHIP y PRIORITY son SÓLO manuales. EN PRODUCCION se parte por piezas
+# impresas (production_logs): sin piezas = IN SETUP, con piezas = PRINTING.
+# Status de MOS sin equivalencia → sin status automático (se elige a mano).
+AUTO_FROM_PRODUCTION = {
+    "CANCELLED": "CANCELLED",
+    "LISTO PARA ENVIO": "QC READY",
+    "NECESITA QC": "PACKAGED READY",
+    "NECESITA EMPACAR": "PRINTED",
+    "LABEL LISTO": "NECK READY",
+}
+BLANK_COUNTED = ("CONTADO", "CONTADO/PICKED")     # → SURTIDO A PISO
+# Status de MOS posteriores a la impresión sin equivalencia: ahí el blank
+# contado ya no describe la orden (mostraría SURTIDO A PISO a una orden en
+# empaque), así que quedan sin status automático.
+PAST_FLOOR = {"EN PROCESO DE EMPAQUE", "CORRECIÓN DE QC", "CORRECCION DE QC",
+              "LISTO PARA FULFILLMENT", "LISTO PARA INVENTARIO"}
+
+
+def _auto_status(order: dict | None) -> str | None:
+    """STATUS que corresponde a la orden según MOS (None = sin equivalencia)."""
+    if not order:
+        return None
+    ps = str(order.get("production_status") or "").strip().upper()
+    if ps == "EN PRODUCCION":
+        return "PRINTING" if (order.get("_printed") or 0) > 0 else "IN SETUP"
+    if ps in AUTO_FROM_PRODUCTION:
+        return AUTO_FROM_PRODUCTION[ps]
+    if ps in PAST_FLOOR:
+        return None
+    if str(order.get("blank_status") or "").strip().upper() in BLANK_COUNTED:
+        return "SURTIDO A PISO"
+    return None
 CUSTOMS_LIGHTS = ["VERDE", "ROJO"]
 PRIORITIES = [1, 2, 3, 4]
 DEFAULT_CUTOFF = "15:00"
@@ -72,7 +108,7 @@ MANUAL_KEYS = ("client", "branding", "customer_po", "design_num", "quantity")
 _ORDER_PROJ = {
     "_id": 0, "order_id": 1, "order_number": 1, "customer_po": 1, "design_#": 1, "design_num": 1,
     "cancel_date": 1, "ship_by": 1, "client": 1, "branding": 1, "quantity": 1,
-    "production_status": 1, "board": 1, "notes": 1,
+    "production_status": 1, "board": 1, "notes": 1, "blank_status": 1,
     "packing_link": 1, "packing_link_label": 1, "packing_link_at": 1,
 }
 
@@ -215,6 +251,15 @@ def _row(sched: dict, order: dict | None, pl_seed: dict | None = None,
         "position": sched.get("position"),
         # LATE: la fecha de salida cae después del límite de la orden.
         "late": bool(ship_d and dl and ship_d > dl),
+        # STATUS: `status` es lo elegido a mano (override); si está vacío manda
+        # el automático de MOS. `status_effective` es lo que se muestra.
+        "status_auto": _auto_status(order),
+        "status_effective": sched.get("status") or _auto_status(order),
+        # SE MUEVE FECHA: el cancel date cambió desde que se programó.
+        "cancel_date_at_schedule": sched.get("cancel_date_at_schedule"),
+        "cancel_moved": bool(
+            order and sched.get("cancel_date_at_schedule")
+            and str(o.get("cancel_date") or "")[:10] != str(sched["cancel_date_at_schedule"])[:10]),
         # ── Formato anterior (mes → semana → envío) ──
         "scheduled_year": sched.get("scheduled_year"),
         "scheduled_month": sched.get("scheduled_month"),   # 1..12
@@ -264,6 +309,19 @@ async def _orders_for(nums):
         {"order_number": {"$in": nums}, "board": {"$ne": PAPELERA}}, _ORDER_PROJ,
     ).to_list(5000)
     by_num = {o["order_number"]: o for o in orders if o.get("order_number")}
+    # Piezas impresas (production_logs) sólo de las que están EN PRODUCCION:
+    # es lo que separa IN SETUP de PRINTING en el STATUS automático.
+    en_prod = [o["order_id"] for o in orders
+               if o.get("order_id") and str(o.get("production_status") or "").strip().upper() == "EN PRODUCCION"]
+    if en_prod:
+        printed = await db.production_logs.aggregate([
+            {"$match": {"order_id": {"$in": en_prod}}},
+            {"$group": {"_id": "$order_id", "n": {"$sum": "$quantity_produced"}}},
+        ]).to_list(5000)
+        n_by_oid = {r["_id"]: r.get("n") or 0 for r in printed}
+        for o in orders:
+            if o.get("order_id") in n_by_oid:
+                o["_printed"] = n_by_oid[o["order_id"]]
     # PL desde los comentarios packing_link_seed (por order_id), el más fresco por orden.
     oids = [o.get("order_id") for o in orders if o.get("order_id")]
     pl_by_num = {}
@@ -428,6 +486,43 @@ async def get_week(request: Request, start: str | None = None):
     }
 
 
+@router.get("/summary")
+async def year_summary(request: Request, year: int | None = None):
+    """Conteos por semana (lunes) de un año para el navegador Año → Mes →
+    Semana: exports, líneas y piezas. Incluye las semanas que cruzan de año."""
+    await require_auth(request)
+    y = year or datetime.now(timezone.utc).year
+    if not (2000 <= y <= 2100):
+        raise HTTPException(status_code=400, detail="year fuera de rango")
+    lo = (date(y, 1, 1) - timedelta(days=6)).isoformat()
+    hi = (date(y, 12, 31) + timedelta(days=6)).isoformat()
+    exports = await db.shipping_exports.find(
+        {"date": {"$gte": lo, "$lte": hi}}, {"_id": 0, "export_id": 1, "date": 1}).to_list(5000)
+    week_of = {}
+    weeks = {}
+    for e in exports:
+        d = _parse_date(e.get("date"))
+        if not d:
+            continue
+        ws = (d - timedelta(days=d.weekday())).isoformat()
+        week_of[e["export_id"]] = ws
+        weeks.setdefault(ws, {"week_start": ws, "exports": 0, "lines": 0, "pcs": 0})["exports"] += 1
+    if week_of:
+        agg = await db.scheduled_shipments.aggregate([
+            {"$match": {"export_id": {"$in": list(week_of)}}},
+            {"$group": {"_id": "$export_id", "n": {"$sum": 1},
+                        "pcs": {"$sum": {"$cond": [{"$eq": ["$status", "CANCELLED"]}, 0, {"$ifNull": ["$pcs", 0]}]}}}},
+        ]).to_list(5000)
+        for r in agg:
+            w = weeks[week_of[r["_id"]]]
+            w["lines"] += r["n"]
+            w["pcs"] += r["pcs"] or 0
+    # Años con datos (para listar años anteriores al actual si los hay).
+    first = await db.shipping_exports.find({}, {"_id": 0, "date": 1}).sort("date", 1).limit(1).to_list(1)
+    return {"year": y, "weeks": sorted(weeks.values(), key=lambda w: w["week_start"]),
+            "first_year": int(first[0]["date"][:4]) if first else None}
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Exports (bloques / encabezados)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -583,6 +678,8 @@ async def add_lines(request: Request):
             **_date_fields(exp["date"]),
             "position": pos,
             "pcs": _qty_int(order.get("quantity")) if order else None,
+            # Base para detectar SE MUEVE FECHA (cancel date cambió después).
+            "cancel_date_at_schedule": (order or {}).get("cancel_date") or None,
             **inherit,
             "status": None,
             "priority": None,

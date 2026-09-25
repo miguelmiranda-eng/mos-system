@@ -73,21 +73,28 @@ LUNES_SIG = (LUNES + timedelta(days=7)).isoformat()
 def sembrar():
     print(f"== Sembrando {SMOKE_DB} ==")
     for c in ["orders", "users", "user_sessions", "scheduled_shipments", "shipping_exports",
-              "scheduled_week_envios", "activity_logs", "comments"]:
+              "scheduled_week_envios", "activity_logs", "comments", "production_logs"]:
         sdb[c].delete_many({})
     base = {"client": "GTS", "branding": "SPENCER GIFTS", "board": "COMPLETOS", "quantity": 280}
     sdb.orders.insert_many([
         {**base, "order_id": "o1", "order_number": "3352", "customer_po": "22818", "design_#": "TS03153M1000",
-         "cancel_date": (LUNES + timedelta(days=30)).isoformat()},
+         "cancel_date": (LUNES + timedelta(days=30)).isoformat(), "production_status": "LISTO PARA ENVIO"},
         {**base, "order_id": "o2", "order_number": "3353", "customer_po": "22817", "design_#": "TS03487M1000",
          # límite ANTES del martes → LATE
-         "ship_by": (LUNES - timedelta(days=3)).isoformat()},
+         "ship_by": (LUNES - timedelta(days=3)).isoformat(), "production_status": "EN PRODUCCION"},
         {**base, "order_id": "o3", "order_number": "3446", "client": "GTS", "branding": "BUCEES",
-         "customer_po": "BUC92326SA", "quantity": "10,436"},
-        {**base, "order_id": "o4", "order_number": "2491", "client": "SPEKTRUM", "branding": "CULTURE KINGS"},
+         "customer_po": "BUC92326SA", "quantity": "10,436", "production_status": "EN PRODUCCION"},
+        {**base, "order_id": "o4", "order_number": "2491", "client": "SPEKTRUM", "branding": "CULTURE KINGS",
+         "blank_status": "CONTADO/PICKED"},
+        {**base, "order_id": "o6", "order_number": "2980", "production_status": "LABEL LISTO"},
+        {**base, "order_id": "o7", "order_number": "2981", "production_status": "EN PROCESO DE EMPAQUE",
+         "blank_status": "CONTADO"},
         # gemela en papelera: el join no debe traerla
         {**base, "order_id": "o5", "order_number": "3380", "board": "PAPELERA DE RECICLAJE"},
     ])
+    # 3446 ya tiene piezas impresas → PRINTING; 3353 no → IN SETUP.
+    sdb.production_logs.insert_one({"log_id": "pl1", "order_id": "o3", "order_number": "3446",
+                                    "quantity_produced": 500, "machine": "MAQUINA1"})
     sdb.users.insert_one({"user_id": "u_sup", "email": "sup@test.local", "name": "Programador",
                           "password_hash": bcrypt.hash("sup123"), "role": "supersu", "admin_level": 5, "active": True})
 
@@ -96,6 +103,9 @@ async def main():
     sembrar()
     from httpx import ASGITransport, AsyncClient
     from server import app
+
+    global STATUSES_HOJA
+    from routers.scheduled_shipments import STATUSES as STATUSES_HOJA
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://smoke") as c:
         r = await c.post("/api/auth/login", json={"email": "sup@test.local", "password": "sup123"})
@@ -148,6 +158,30 @@ async def main():
         r = await c.post(f"{API}/lines", json={"export_id": e1["export_id"], "order_numbers": "3352"})
         check("misma orden en el mismo export → duplicates", r.json()["duplicates"] == ["3352"], r.json())
 
+        print("\n== STATUS automático (equivalencia con MOS) ==")
+        check("catálogo = desplegable de la hoja (11)", len(STATUSES_HOJA) == 11)
+        check("LISTO PARA ENVIO → QC READY", l1["status_auto"] == "QC READY" and l1["status_effective"] == "QC READY", l1["status_auto"])
+        check("EN PRODUCCION sin piezas → IN SETUP", l2["status_auto"] == "IN SETUP", l2["status_auto"])
+        e3 = (await c.post(f"{API}/exports", json={"date": JUEVES})).json()
+        r = await c.post(f"{API}/lines", json={"export_id": e3["export_id"], "order_numbers": "3446 2491 2980 2981"})
+        auto = {x["order_number"]: x["status_auto"] for x in r.json()["added"]}
+        check("EN PRODUCCION con piezas impresas → PRINTING", auto.get("3446") == "PRINTING", auto)
+        check("blank CONTADO/PICKED sin status de producción → SURTIDO A PISO", auto.get("2491") == "SURTIDO A PISO", auto)
+        check("LABEL LISTO → NECK READY", auto.get("2980") == "NECK READY", auto)
+        check("status de MOS sin equivalencia gana al blank → vacío", auto.get("2981") is None, auto)
+        r = await c.put(f"{API}/{l1['shipment_id']}", json={"status": "READY TO SHIP"})
+        x = r.json()
+        check("override manual: READY TO SHIP se muestra, el auto se conserva",
+              x["status_effective"] == "READY TO SHIP" and x["status_auto"] == "QC READY", x)
+        r = await c.put(f"{API}/{l1['shipment_id']}", json={"status": None})
+        check("quitar override regresa al automático", r.json()["status_effective"] == "QC READY", r.json()["status_effective"])
+        check("sin cambio de cancel date → sin SE MUEVE FECHA", r.json()["cancel_moved"] is False)
+        sdb.orders.update_one({"order_id": "o1"}, {"$set": {"cancel_date": (LUNES + timedelta(days=45)).isoformat()}})
+        r = await c.get(f"{API}/week", params={"start": MARTES})
+        mv = next(x for x in r.json()["lines"] if x["shipment_id"] == l1["shipment_id"])
+        check("cancel date cambió después de programar → cancel_moved", mv["cancel_moved"] is True, mv)
+        await c.delete(f"{API}/exports/{e3['export_id']}", params={"cascade": "true"})
+
         r = await c.put(f"{API}/{l1['shipment_id']}", json={
             "shipping_no": "306", "delivery_to": "ST ANDREWS", "carrier": "UPS GROUND", "ship_from": "ST ANDREWS",
             "status": "ready to ship", "priority": 2, "ship_notes": "Se va hoy", "pcs": "1,152"})
@@ -186,6 +220,14 @@ async def main():
 
         r = await c.post(f"{API}/lines", json={"export_id": e2["export_id"], "order_numbers": "3446"})
         check("misma orden en OTRO export → aviso also_in (parcial)", "3446" in r.json()["also_in"], r.json())
+
+        print("\n== Resumen anual (navegador Año → Mes → Semana) ==")
+        r = await c.get(f"{API}/summary", params={"year": LUNES.year})
+        sw = {w["week_start"]: w for w in r.json()["weeks"]}
+        wk = sw.get(LUNES.isoformat()) or {}
+        n_lines = sdb.scheduled_shipments.count_documents({"export_id": {"$exists": True}})
+        check("resumen: la semana trae exports y líneas", wk.get("exports") == 2 and wk.get("lines") == n_lines, wk)
+        check("resumen: año sin datos → vacío", (await c.get(f"{API}/summary", params={"year": 2099})).json()["weeks"] == [])
 
         print("\n== Mover ==")
         r = await c.put(f"{API}/{l2['shipment_id']}", json={"export_id": e2["export_id"]})

@@ -42,7 +42,11 @@ MONTHS = {"ENE": 1, "FEB": 2, "MAR": 3, "ABR": 4, "MAY": 5, "JUN": 6, "JUL": 7, 
           "SEP": 9, "OCT": 10, "NOV": 11, "DIC": 12}
 DAYS = {"LUNES": 0, "MARTES": 1, "MIERCOLES": 2, "MIÉRCOLES": 2, "JUEVES": 3, "VIERNES": 4,
         "SABADO": 5, "SÁBADO": 5, "DOMINGO": 6}
-STATUSES = ["READY TO SHIP", "PACKAGED READY", "PRINTED", "IN SETUP", "SE MUEVE FECHA", "CANCELLED"]
+STATUSES = ["READY TO SHIP", "IN SETUP", "SURTIDO A PISO", "NECK READY", "PRINTED", "PACKAGED READY",
+            "QC READY", "CANCELLED", "SE MUEVE FECHA", "PRINTING", "PRIORITY"]
+# El STATUS del módulo es automático desde MOS; de la hoja sólo se conserva lo
+# que MOS no puede calcular. El resto se deja en None (= AUTO).
+KEEP_MANUAL = {"READY TO SHIP", "PRIORITY", "SE MUEVE FECHA", "CANCELLED"}
 PRIO = {"1RA": 1, "2DA": 2, "3RA": 3, "4TA": 4}
 
 
@@ -258,7 +262,7 @@ def main():
     found = {}
     for i in range(0, len(nums), 50):
         for o in db.orders.find({"order_number": {"$in": nums[i:i+50]}, "board": {"$ne": "PAPELERA DE RECICLAJE"}},
-                                {"_id": 0, "order_number": 1, "client": 1}):
+                                {"_id": 0, "order_number": 1, "client": 1, "cancel_date": 1}):
             found[o["order_number"]] = o
     missing = [n for n in nums if n not in found]
     print(f"Órdenes distintas: {len(nums)} · en el CRM: {len(found)} · NO en el CRM (irán como manuales): {len(missing)}")
@@ -299,7 +303,9 @@ def main():
                 "ship_date": b["date"], "scheduled_export_date": b["date"],
                 "scheduled_year": d.year, "scheduled_month": d.month, "position": i,
                 "pcs": l["pcs"], "shipping_no": l["shipping_no"], "delivery_to": l["delivery_to"],
-                "ship_from": l["ship_from"], "carrier": l["carrier"], "status": l["status"],
+                "ship_from": l["ship_from"], "carrier": l["carrier"],
+                "status": l["status"] if l["status"] in KEEP_MANUAL else None,
+                "cancel_date_at_schedule": (found.get(l["order_number"]) or {}).get("cancel_date") or None,
                 "priority": l["priority"], "ship_notes": l["ship_notes"], "manual": manual,
                 "manual_fields": ({"client": l["client"], "branding": l["branding"],
                                    "customer_po": l["customer_po"], "design_num": l["design_num"]}

@@ -34,11 +34,17 @@ const PRIORITY_LABEL = { 1: '1RA', 2: '2DA', 3: '3RA', 4: '4TA' };
 // Van como CSS con selector por id (SCOPED_CSS): el tema global del sistema
 // fuerza fondo/color de inputs, selects y zebra de tablas con !important, y
 // las clases de Tailwind perdían contra eso.
+// Orden de avance: surtido → label → setup → impresión → empaque → QC → envío.
 const STATUS_COLORS = {
   'READY TO SHIP': { row: '#bbf7d0', pill: '#047857' },
+  'QC READY': { row: '#d9f99d', pill: '#4d7c0f' },
   'PACKAGED READY': { row: '#ccfbf1', pill: '#0d9488' },
   'PRINTED': { row: '#e0f2fe', pill: '#0284c7' },
+  'PRINTING': { row: '#dbeafe', pill: '#1d4ed8' },
   'IN SETUP': { row: '#fef3c7', pill: '#d97706' },
+  'NECK READY': { row: '#ede9fe', pill: '#7c3aed' },
+  'SURTIDO A PISO': { row: '#f1f5f9', pill: '#475569' },
+  'PRIORITY': { row: '#fae8ff', pill: '#a21caf' },
   'SE MUEVE FECHA': { row: '#ffedd5', pill: '#ea580c' },
   'CANCELLED': { row: '#fee2e2', pill: '#dc2626' },
 };
@@ -112,7 +118,7 @@ const Cell = ({ value, onSave, type = 'text', list, placeholder, className = '',
 };
 
 const COLS = ['CUSTOMER', 'SHIPPING#', 'DELIVER TO', 'BRANDING', 'ORDER', 'CUSTOMER PO.', 'DESIGN #', 'PCS', 'STATUS', 'PRIORITY', 'NOTES', 'SHIPPING FROM', 'CARRIER'];
-const COL_W = [110, 90, 120, 130, 110, 150, 150, 80, 150, 80, 190, 120, 120, 96];
+const COL_W = [110, 90, 120, 130, 110, 150, 150, 80, 190, 80, 190, 120, 120, 96];
 // Columnas del programador anterior que vienen VIVAS de la orden (solo
 // lectura): cancel date / Days Com., status de producción, pedido vs.
 // embarcado (bitácora del WMS), PL de la orden y notas de la orden. Se pueden
@@ -128,6 +134,11 @@ const ShippingScheduler = () => {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [showWeekend, setShowWeekend] = useState(false);
+  // Navegador Año → Mes (la semana abierta es weekStart). Arranca en el mes
+  // del jueves de la semana (regla ISO: la semana es del mes donde cae su jueves).
+  const [navYear, setNavYear] = useState(() => addDays(mondayOf(new Date()), 3).getFullYear());
+  const [navMonth, setNavMonth] = useState(() => addDays(mondayOf(new Date()), 3).getMonth() + 1);
+  const [summary, setSummary] = useState(null);   // { byWeek: {iso: {exports, lines}}, first_year }
   const [addText, setAddText] = useState({});      // export_id → texto de captura
   const [showCrm, setShowCrm] = useState(() => {
     try { return localStorage.getItem(CRM_KEY) !== '0'; } catch { return true; }
@@ -162,6 +173,33 @@ const ShippingScheduler = () => {
   }, [weekStart, t]);
 
   useEffect(() => { loadWeek(); }, [loadWeek]);
+
+  const loadSummary = useCallback(async () => {
+    try {
+      const res = await fetch(`${API}/summary?year=${navYear}`, { credentials: 'include' });
+      if (!res.ok) return;
+      const d = await res.json();
+      const byWeek = {};
+      (d.weeks || []).forEach((w) => { byWeek[w.week_start] = w; });
+      setSummary({ byWeek, first_year: d.first_year });
+    } catch { /* el navegador funciona sin conteos */ }
+  }, [navYear]);
+  useEffect(() => { loadSummary(); }, [loadSummary]);
+  // Flechas / HOY / selector de fecha: si la semana nueva no toca el mes que
+  // se está viendo, el navegador salta al mes de su jueves.
+  useEffect(() => {
+    const touches = [0, 1, 2, 3, 4].some((k) => {
+      const d = addDays(weekStart, k);
+      return d.getFullYear() === navYear && d.getMonth() + 1 === navMonth;
+    });
+    if (!touches) {
+      const th = addDays(weekStart, 3);
+      setNavYear(th.getFullYear());
+      setNavMonth(th.getMonth() + 1);
+    }
+    // Sólo reacciona al cambio de semana, no a la navegación manual de año/mes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [weekStart]);
   // Estilos acotados al programador: se inyectan una vez en <head> (un
   // <style> dentro del árbol no llegaba a aplicarse en todos los navegadores).
   useEffect(() => {
@@ -174,10 +212,10 @@ const ShippingScheduler = () => {
   // Varias personas programan a la vez (como en la hoja): al volver a la
   // pestaña se refresca en silencio.
   useEffect(() => {
-    const onFocus = () => loadWeek(true);
+    const onFocus = () => { loadWeek(true); loadSummary(); };
     window.addEventListener('focus', onFocus);
     return () => window.removeEventListener('focus', onFocus);
-  }, [loadWeek]);
+  }, [loadWeek, loadSummary]);
 
   const call = async (url, method, body) => {
     const res = await fetch(url, {
@@ -340,7 +378,7 @@ const ShippingScheduler = () => {
     const body = ls.map((l) => [
       l.client || '', l.shipping_no || '', l.delivery_to || '', l.branding || '',
       `${l.order_number}${l.late ? ' (LATE)' : ''}`, l.customer_po || '', l.design_num || '',
-      l.pcs ?? '', l.status || '', l.priority ? `${PRIORITY_LABEL[l.priority]} PRIORIDAD` : '',
+      l.pcs ?? '', `${l.status_effective || ''}${l.cancel_moved ? ' · SE MUEVE FECHA' : ''}`, l.priority ? `${PRIORITY_LABEL[l.priority]} PRIORIDAD` : '',
       l.ship_notes || '', l.ship_from || '', l.carrier || '',
       ...(showCrm ? crmValues(l) : []),
     ]);
@@ -370,12 +408,41 @@ const ShippingScheduler = () => {
   const visibleDays = weekDays.filter((d, i) => i < 5 || showWeekend || exportsList.some((e) => e.date === d));
   const statusCounts = useMemo(() => {
     const c = {};
-    lines.forEach((l) => { const k = l.status || '—'; c[k] = (c[k] || 0) + 1; });
+    lines.forEach((l) => { const k = l.status_effective || '—'; c[k] = (c[k] || 0) + 1; });
     return c;
   }, [lines]);
   const statuses = data?.statuses || Object.keys(STATUS_COLORS);
   const suggest = data?.suggest || {};
-  const weekStrip = [-2, -1, 0, 1, 2, 3].map((k) => addDays(mondayOf(new Date()), k * 7));
+  // ── Navegador Año → Mes → Semana ───────────────────────────────────────────
+  // Semanas de un mes = las que tienen algún día hábil (lun–vie) en él; la
+  // que cruza de mes ("31 AGO - 04 SEP") sale en los dos.
+  const weeksOfMonth = (y, m) => {
+    const out = [];
+    for (let w = mondayOf(new Date(y, m - 1, 1)); w <= new Date(y, m, 0); w = addDays(w, 7)) {
+      if ([0, 1, 2, 3, 4].some((k) => addDays(w, k).getMonth() === m - 1)) out.push(w);
+    }
+    return out;
+  };
+  // Conteos por semana: resumen anual, con la semana abierta en vivo.
+  const weekInfo = (iso) => (iso === isoOf(weekStart)
+    ? { exports: exportsList.length, lines: lines.length }
+    : (summary?.byWeek?.[iso] || { exports: 0, lines: 0 }));
+  const monthLines = (y, m) => (y === navYear
+    ? weeksOfMonth(y, m).reduce((s, w) => s + weekInfo(isoOf(w)).lines, 0) : 0);
+  const summaryYearTotal = Object.entries(summary?.byWeek || {})
+    .filter(([iso]) => iso !== isoOf(weekStart) && iso.startsWith(String(navYear)))
+    .reduce((s, [, w]) => s + w.lines, 0) + (weekStart.getFullYear() === navYear ? lines.length : 0);
+  const thisYear = new Date().getFullYear();
+  const navYears = Array.from(
+    { length: thisYear + 3 - Math.min(summary?.first_year || thisYear, thisYear, navYear) + 1 },
+    (_, i) => Math.min(summary?.first_year || thisYear, thisYear, navYear) + i);
+  // Entrar a un mes abre la semana de hoy si cae ahí; si no, la primera.
+  const openMonth = (y, m) => {
+    setNavMonth(m);
+    const ws = weeksOfMonth(y, m);
+    const today = isoOf(mondayOf(new Date()));
+    setWeekStart(ws.find((w) => isoOf(w) === today) || ws[0]);
+  };
 
   const exportLabel = (e) => {
     const d = parseIso(e.date);
@@ -472,7 +539,7 @@ const ShippingScheduler = () => {
                 const saveManual = (k) => (v) => updateLine(l, { manual_fields: { [k]: v } });
                 const ro = (v) => <span className="block px-1.5 py-1 truncate" title={v || ''}>{v || <span className="text-slate-300">—</span>}</span>;
                 return (
-                  <tr key={l.shipment_id} data-st={l.status || 'none'} className="border-b border-slate-200">
+                  <tr key={l.shipment_id} data-st={l.status_effective || 'none'} className="border-b border-slate-200">
                     <td className="border-r border-slate-200 font-bold text-center">{man ? <Cell value={l.client} onSave={saveManual('client')} className="text-center" /> : ro(l.client)}</td>
                     <td className="border-r border-slate-200"><Cell value={l.shipping_no} className="text-center font-bold" onSave={(v) => updateLine(l, { shipping_no: v })} /></td>
                     <td className="border-r border-slate-200"><Cell value={l.delivery_to} list="sch-deliver" className="text-center" onSave={(v) => updateLine(l, { delivery_to: v })} /></td>
@@ -491,11 +558,24 @@ const ShippingScheduler = () => {
                       title={l.quantity != null ? t('sch_ordered_qty', { n: fmtNum(l.qty_ordered ?? l.quantity) }) : undefined}
                       onSave={(v) => updateLine(l, { pcs: v })} /></td>
                     <td className="border-r border-slate-200 px-1">
-                      <select value={l.status || ''} onChange={(e) => updateLine(l, { status: e.target.value || null })}
-                        data-st={l.status || ''} className="sch-pill w-full px-2 py-0.5 text-[10px] font-black uppercase outline-none">
-                        <option value="">—</option>
-                        {statuses.map((s) => <option key={s} value={s}>{s}</option>)}
-                      </select>
+                      {/* STATUS: por default el automático de MOS; elegir una
+                          opción lo fija a mano, "Automático" lo regresa. */}
+                      <div className="flex items-center gap-1">
+                        <select value={l.status || ''} onChange={(e) => updateLine(l, { status: e.target.value || null })}
+                          data-st={l.status_effective || ''}
+                          title={l.status ? t('sch_status_manual_hint', { auto: l.status_auto || '—' }) : t('sch_status_auto_hint')}
+                          className="sch-pill flex-1 min-w-0 px-2 py-0.5 text-[10px] font-black uppercase outline-none">
+                          <option value="">{`AUTO · ${l.status_auto || '—'}`}</option>
+                          {statuses.map((s) => <option key={s} value={s}>{s}</option>)}
+                        </select>
+                        {l.status && <span className="text-[10px] font-black text-slate-500" title={t('sch_status_manual_hint', { auto: l.status_auto || '—' })}>✎</span>}
+                        {l.cancel_moved && (
+                          <span className="px-1 rounded text-[9px] font-black text-white whitespace-nowrap" style={{ background: STATUS_COLORS['SE MUEVE FECHA'].pill }}
+                            title={t('sch_cancel_moved_hint', { from: l.cancel_date_at_schedule || '—', to: l.cancel_date || '—' })}>
+                            SE MUEVE FECHA
+                          </span>
+                        )}
+                      </div>
                     </td>
                     <td className="border-r border-slate-200 px-1">
                       <select value={l.priority || ''} onChange={(e) => updateLine(l, { priority: e.target.value ? Number(e.target.value) : null })}
@@ -576,7 +656,7 @@ const ShippingScheduler = () => {
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2">
             <button onClick={() => setWeekStart((w) => addDays(w, -7))} className="w-8 h-8 rounded-lg bg-slate-100 text-slate-600 hover:bg-slate-200 flex items-center justify-center"><ChevronLeft className="w-4 h-4" /></button>
-            <span className="text-xl font-black text-slate-800 tabular-nums">{weekLabel(weekStart)} <span className="text-slate-400">{weekStart.getFullYear()}</span></span>
+            <span className="text-xl font-black text-slate-800 tabular-nums">{weekLabel(weekStart)} <span className="text-slate-400">{weekStart.getFullYear()}{addDays(weekStart, 4).getFullYear() !== weekStart.getFullYear() ? `–${addDays(weekStart, 4).getFullYear()}` : ''}</span></span>
             <button onClick={() => setWeekStart((w) => addDays(w, 7))} className="w-8 h-8 rounded-lg bg-slate-100 text-slate-600 hover:bg-slate-200 flex items-center justify-center"><ChevronRight className="w-4 h-4" /></button>
             <button onClick={() => setWeekStart(mondayOf(new Date()))} className="px-3 py-1.5 rounded-lg bg-slate-100 text-slate-600 text-[10px] font-black uppercase tracking-widest hover:bg-slate-200">{t('sch_today')}</button>
             <input type="date" value={isoOf(weekStart)} onChange={(e) => e.target.value && setWeekStart(mondayOf(parseIso(e.target.value)))}
@@ -606,14 +686,43 @@ const ShippingScheduler = () => {
             </button>
           </div>
         </div>
+        {/* Navegador Año → Mes → Semana (como carpetas). */}
         <div className="flex items-center gap-1.5 flex-wrap">
-          {weekStrip.map((w) => {
-            const active = isoOf(w) === isoOf(weekStart);
-            const current = isoOf(w) === isoOf(mondayOf(new Date()));
+          {navYears.map((y) => {
+            const n = y === navYear ? summaryYearTotal : null;
             return (
-              <button key={isoOf(w)} onClick={() => setWeekStart(w)}
+              <button key={y} onClick={() => setNavYear(y)}
+                className={`px-3.5 py-1.5 rounded-lg text-[12px] font-black tabular-nums transition-all ${y === navYear ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>
+                {y}{n ? <span className="ml-1.5 text-[10px] opacity-70">· {n}</span> : null}
+              </button>
+            );
+          })}
+        </div>
+        <div className="flex items-center gap-1 flex-wrap">
+          {MONTHS[L].map((mn, i) => {
+            const m = i + 1;
+            const n = monthLines(navYear, m);
+            const active = m === navMonth;
+            const current = navYear === new Date().getFullYear() && m === new Date().getMonth() + 1;
+            return (
+              <button key={mn} onClick={() => openMonth(navYear, m)}
+                className={`min-w-[58px] px-2.5 py-1.5 rounded-lg text-[11px] font-black uppercase tracking-wider transition-all ${active ? 'bg-blue-600 text-white shadow-sm' : n ? 'bg-blue-50 text-blue-700 hover:bg-blue-100' : 'bg-white text-slate-400 border border-slate-200 hover:bg-slate-50'} ${current && !active ? 'ring-2 ring-blue-300' : ''}`}>
+                {mn}{n ? <span className="ml-1 opacity-70">· {n}</span> : null}
+              </button>
+            );
+          })}
+        </div>
+        <div className="flex items-center gap-1.5 flex-wrap">
+          {weeksOfMonth(navYear, navMonth).map((w, i) => {
+            const iso = isoOf(w);
+            const active = iso === isoOf(weekStart);
+            const current = iso === isoOf(mondayOf(new Date()));
+            const n = weekInfo(iso).lines;
+            return (
+              <button key={iso} onClick={() => setWeekStart(w)} title={t('sch_week_counts', { e: weekInfo(iso).exports, o: n })}
                 className={`px-3 py-1.5 rounded-t-lg border-b-2 text-[11px] font-black uppercase tracking-wider transition-all ${active ? 'bg-blue-600 text-white border-blue-800' : current ? 'bg-blue-50 text-blue-700 border-blue-300 hover:bg-blue-100' : 'bg-slate-50 text-slate-500 border-slate-200 hover:bg-slate-100'}`}>
-                {weekLabel(w)}
+                <span className="opacity-60 mr-1">{L === 'en' ? 'W' : 'S'}{i + 1}</span>{weekLabel(w)}
+                {n ? <span className={`ml-1.5 px-1.5 rounded-full text-[10px] ${active ? 'bg-white/25' : 'bg-blue-100 text-blue-700'}`}>{n}</span> : null}
               </button>
             );
           })}
