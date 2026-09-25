@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useCallback, useMemo } from "react";
+import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import {
   ChevronLeft, ChevronRight, Plus, Trash2, Copy, Download, RefreshCw, Loader2,
-  ExternalLink, FileSpreadsheet, Wand2, Search,
+  ExternalLink, FileSpreadsheet, Wand2, Search, GripVertical, X,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { toast } from "sonner";
@@ -117,8 +117,11 @@ const Cell = ({ value, onSave, type = 'text', list, placeholder, className = '',
   );
 };
 
-const COLS = ['CUSTOMER', 'SHIPPING#', 'DELIVER TO', 'BRANDING', 'ORDER', 'CUSTOMER PO.', 'DESIGN #', 'PCS', 'STATUS', 'PRIORITY', 'NOTES', 'SHIPPING FROM', 'CARRIER'];
-const COL_W = [110, 90, 120, 130, 110, 150, 150, 80, 190, 80, 190, 120, 120, 96];
+// ORDER va primero (pedido de Envíos); antes de ella, la columna de
+// selección + manija de arrastre (SEL_W).
+const COLS = ['ORDER', 'CUSTOMER', 'SHIPPING#', 'DELIVER TO', 'BRANDING', 'CUSTOMER PO.', 'DESIGN #', 'PCS', 'STATUS', 'PRIORITY', 'NOTES', 'SHIPPING FROM', 'CARRIER'];
+const COL_W = [125, 110, 90, 120, 130, 150, 150, 80, 190, 80, 190, 120, 120, 96];
+const SEL_W = 46;
 // Columnas del programador anterior que vienen VIVAS de la orden (solo
 // lectura): cancel date / Days Com., status de producción, pedido vs.
 // embarcado (bitácora del WMS), PL de la orden y notas de la orden. Se pueden
@@ -139,6 +142,12 @@ const ShippingScheduler = () => {
   const [navYear, setNavYear] = useState(() => addDays(mondayOf(new Date()), 3).getFullYear());
   const [navMonth, setNavMonth] = useState(() => addDays(mondayOf(new Date()), 3).getMonth() + 1);
   const [summary, setSummary] = useState(null);   // { byWeek: {iso: {exports, lines}}, first_year }
+  // Selección múltiple (shipment_ids) y estado del arrastre.
+  const [selected, setSelected] = useState(() => new Set());
+  const lastSel = useRef(null);                   // { exportId, idx } para Shift+clic
+  const dragIds = useRef([]);
+  const [dragging, setDragging] = useState(null); // Set de ids que viajan (para atenuarlos)
+  const [dropHint, setDropHint] = useState(null); // { exportId, index } | { date }
   const [addText, setAddText] = useState({});      // export_id → texto de captura
   const [showCrm, setShowCrm] = useState(() => {
     try { return localStorage.getItem(CRM_KEY) !== '0'; } catch { return true; }
@@ -173,6 +182,8 @@ const ShippingScheduler = () => {
   }, [weekStart, t]);
 
   useEffect(() => { loadWeek(); }, [loadWeek]);
+  // La selección es de la semana abierta: al cambiar de semana se limpia.
+  useEffect(() => { setSelected(new Set()); lastSel.current = null; }, [weekStart]);
 
   const loadSummary = useCallback(async () => {
     try {
@@ -376,8 +387,8 @@ const ShippingScheduler = () => {
     head.push([dayLabel(exp.date).replace(' · ', ' - '), `CORTE: ${to12h(exp.cutoff_time)}`, '', '', `EXPORT HR: ${to12h(exp.export_time)}`]);
     head.push(showCrm ? [...COLS, ...CRM_COLS] : COLS);
     const body = ls.map((l) => [
-      l.client || '', l.shipping_no || '', l.delivery_to || '', l.branding || '',
-      `${l.order_number}${l.late ? ' (LATE)' : ''}`, l.customer_po || '', l.design_num || '',
+      `${l.order_number}${l.late ? ' (LATE)' : ''}`, l.client || '', l.shipping_no || '', l.delivery_to || '',
+      l.branding || '', l.customer_po || '', l.design_num || '',
       l.pcs ?? '', `${l.status_effective || ''}${l.cancel_moved ? ' · SE MUEVE FECHA' : ''}`, l.priority ? `${PRIORITY_LABEL[l.priority]} PRIORIDAD` : '',
       l.ship_notes || '', l.ship_from || '', l.carrier || '',
       ...(showCrm ? crmValues(l) : []),
@@ -455,14 +466,131 @@ const ShippingScheduler = () => {
   // Destino del panel "Buscar orden": el elegido, o el primer export desde hoy.
   const target = exportsList.find((e) => e.export_id === targetExport)
     || exportsList.find((e) => e.date >= todayIso) || exportsList[exportsList.length - 1] || null;
-  const widths = [...COL_W.slice(0, COLS.length), ...(showCrm ? CRM_W : []), COL_W[COLS.length]];
+  const widths = [SEL_W, ...COL_W.slice(0, COLS.length), ...(showCrm ? CRM_W : []), COL_W[COLS.length]];
+
+  // ── Selección múltiple y arrastre ──────────────────────────────────────────
+  // Orden visual de todas las líneas de la semana (día → export → posición):
+  // la selección se mueve respetando ese orden.
+  const visualIds = exportsList.flatMap((e) => (linesByExport[e.export_id] || []).map((l) => l.shipment_id));
+  const selIds = visualIds.filter((id) => selected.has(id));
+  const selPcs = sumPcs(lines.filter((l) => selected.has(l.shipment_id)));
+  const toggleSel = (exp, idx, shift) => {
+    const ls = linesByExport[exp.export_id] || [];
+    const id = ls[idx].shipment_id;
+    // Se lee ANTES de setSelected: React corre el actualizador después, cuando
+    // lastSel ya apunta a este clic (el rango quedaba de un solo renglón).
+    const last = lastSel.current;
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (shift && last && last.exportId === exp.export_id) {
+        const [a, b] = [Math.min(last.idx, idx), Math.max(last.idx, idx)];
+        ls.slice(a, b + 1).forEach((l) => next.add(l.shipment_id));
+      } else if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+    lastSel.current = { exportId: exp.export_id, idx };
+  };
+  const toggleAllIn = (exp, on) => setSelected((prev) => {
+    const next = new Set(prev);
+    (linesByExport[exp.export_id] || []).forEach((l) => (on ? next.add(l.shipment_id) : next.delete(l.shipment_id)));
+    return next;
+  });
+  // Mueve `ids` al export (o fecha) en la posición `index` de la lista VISIBLE
+  // del destino; el backend cuenta posiciones sin las que se mueven.
+  const moveIds = async (ids, dest, index) => {
+    if (!ids.length) return;
+    const body = { shipment_ids: ids };
+    if (dest.exportId) {
+      body.export_id = dest.exportId;
+      if (index !== undefined) {
+        const moving = new Set(ids);
+        body.index = (linesByExport[dest.exportId] || []).slice(0, index).filter((l) => !moving.has(l.shipment_id)).length;
+      }
+    } else body.move_to_date = dest.date;
+    try {
+      const r = await call(`${API}/lines/move`, 'POST', body);
+      const destExp = exportsList.find((e) => e.export_id === r.export_id);
+      toast.success(t('sch_moved_n', { n: r.moved, dest: destExp ? exportLabel(destExp) : dayLabel(r.date) }));
+      setSelected(new Set());
+      loadWeek(true);
+      loadSummary();
+    } catch (e) { toast.error(e.message); }
+  };
+  const moveSelectedPrompt = () => {
+    const d = window.prompt(t('sch_prompt_date'), isoOf(addDays(weekStart, 7)));
+    if (d && /^\d{4}-\d{2}-\d{2}$/.test(d.trim())) moveIds(selIds, { date: d.trim() });
+    else if (d) toast.error(t('sch_bad_date'));
+  };
+  const deleteSelected = async () => {
+    if (!window.confirm(t('sch_confirm_bulk_delete', { n: selIds.length }))) return;
+    try {
+      const r = await call(`${API}/lines/delete`, 'POST', { shipment_ids: selIds });
+      toast.success(t('sch_deleted_n', { n: r.deleted }));
+      setSelected(new Set());
+      loadWeek(true);
+      loadSummary();
+    } catch (e) { toast.error(e.message); }
+  };
+  // Arrastre (HTML5): se arrastra desde la manija ⠿; si la fila está
+  // seleccionada viaja toda la selección. Soltar sobre una fila = antes o
+  // después de ella (según la mitad); sobre el bloque = al final; sobre la
+  // barra de un día = a esa fecha.
+  const startDrag = (e, l) => {
+    const ids = selected.has(l.shipment_id) ? selIds : [l.shipment_id];
+    dragIds.current = ids;
+    e.dataTransfer.effectAllowed = 'move';
+    try { e.dataTransfer.setData('text/plain', ids.join(',')); } catch { /* algunos navegadores */ }
+    setDragging(new Set(ids));
+  };
+  const endDrag = () => { dragIds.current = []; setDragging(null); setDropHint(null); };
+  const overRow = (e, exp, idx) => {
+    if (!dragIds.current.length) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const r = e.currentTarget.getBoundingClientRect();
+    const index = e.clientY < r.top + r.height / 2 ? idx : idx + 1;
+    if (!dropHint || dropHint.exportId !== exp.export_id || dropHint.index !== index) setDropHint({ exportId: exp.export_id, index });
+  };
+  const overBlockEnd = (e, exp) => {
+    if (!dragIds.current.length) return;
+    e.preventDefault();
+    const index = (linesByExport[exp.export_id] || []).length;
+    if (!dropHint || dropHint.exportId !== exp.export_id || dropHint.index !== index) setDropHint({ exportId: exp.export_id, index });
+  };
+  const dropOnExport = (e) => {
+    if (!dragIds.current.length || !dropHint) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const ids = dragIds.current;
+    const hint = dropHint;
+    endDrag();
+    moveIds(ids, { exportId: hint.exportId }, hint.index);
+  };
+  const overDay = (e, iso) => {
+    if (!dragIds.current.length) return;
+    e.preventDefault();
+    if (!dropHint || dropHint.date !== iso) setDropHint({ date: iso });
+  };
+  const dropOnDay = (e, iso) => {
+    if (!dragIds.current.length) return;
+    e.preventDefault();
+    const ids = dragIds.current;
+    endDrag();
+    moveIds(ids, { date: iso });
+  };
 
   // ── Render ─────────────────────────────────────────────────────────────────
   const renderExport = (exp, idxInDay) => {
     const ls = linesByExport[exp.export_id] || [];
     const light = exp.customs_light;
+    const allSel = ls.length > 0 && ls.every((l) => selected.has(l.shipment_id));
+    const someSel = ls.some((l) => selected.has(l.shipment_id));
+    const isDropBlock = dropHint && dropHint.exportId === exp.export_id;
     return (
-      <div key={exp.export_id} className="sch-sheet rounded-xl border border-slate-300 overflow-hidden shadow-sm">
+      <div key={exp.export_id}
+        onDragOver={(e) => overBlockEnd(e, exp)} onDrop={dropOnExport}
+        className={`sch-sheet rounded-xl border overflow-hidden shadow-sm ${isDropBlock ? 'border-blue-500 ring-2 ring-blue-300' : 'border-slate-300'}`}>
         {/* Encabezado del export: renglón EXPORT# / PL / transporte / semáforo */}
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-3 py-2 bg-slate-100 border-b border-slate-300">
           <div className="flex items-center gap-1">
@@ -524,6 +652,11 @@ const ShippingScheduler = () => {
             <colgroup>{widths.map((w, i) => <col key={i} style={{ width: w }} />)}</colgroup>
             <thead>
               <tr className="bg-emerald-50/60 text-[10px] font-black uppercase tracking-wider text-slate-700 border-b border-slate-300">
+                <th className="px-1 py-1.5 border-r border-slate-200 text-center">
+                  <input type="checkbox" checked={allSel} disabled={!ls.length} title={t('sch_select_all')}
+                    ref={(el) => { if (el) el.indeterminate = someSel && !allSel; }}
+                    onChange={(e) => toggleAllIn(exp, e.target.checked)} className="cursor-pointer align-middle" />
+                </th>
                 {COLS.map((c, i) => (
                   <th key={c} className={`px-2 py-1.5 border-r border-slate-200 ${i === 7 ? 'text-right' : 'text-center'}`}>{c === 'PRIORITY' ? t('sch_priority') : c}</th>
                 ))}
@@ -534,16 +667,30 @@ const ShippingScheduler = () => {
               </tr>
             </thead>
             <tbody>
-              {ls.map((l) => {
+              {ls.map((l, idx) => {
                 const man = l.manual;
                 const saveManual = (k) => (v) => updateLine(l, { manual_fields: { [k]: v } });
                 const ro = (v) => <span className="block px-1.5 py-1 truncate" title={v || ''}>{v || <span className="text-slate-300">—</span>}</span>;
+                const isSel = selected.has(l.shipment_id);
+                const hintTop = isDropBlock && dropHint.index === idx;
                 return (
-                  <tr key={l.shipment_id} data-st={l.status_effective || 'none'} className="border-b border-slate-200">
-                    <td className="border-r border-slate-200 font-bold text-center">{man ? <Cell value={l.client} onSave={saveManual('client')} className="text-center" /> : ro(l.client)}</td>
-                    <td className="border-r border-slate-200"><Cell value={l.shipping_no} className="text-center font-bold" onSave={(v) => updateLine(l, { shipping_no: v })} /></td>
-                    <td className="border-r border-slate-200"><Cell value={l.delivery_to} list="sch-deliver" className="text-center" onSave={(v) => updateLine(l, { delivery_to: v })} /></td>
-                    <td className="border-r border-slate-200 text-center">{man ? <Cell value={l.branding} onSave={saveManual('branding')} className="text-center" /> : ro(l.branding)}</td>
+                  <tr key={l.shipment_id} data-st={l.status_effective || 'none'}
+                    onDragOver={(e) => overRow(e, exp, idx)} onDrop={dropOnExport}
+                    style={{
+                      boxShadow: hintTop ? 'inset 0 3px 0 #2563eb' : isSel ? 'inset 3px 0 0 #2563eb' : undefined,
+                      opacity: dragging && dragging.has(l.shipment_id) ? 0.4 : undefined,
+                    }}
+                    className="border-b border-slate-200">
+                    <td className="border-r border-slate-200 px-1">
+                      <div className="flex items-center justify-center gap-0.5">
+                        <span draggable onDragStart={(e) => startDrag(e, l)} onDragEnd={endDrag}
+                          title={t('sch_drag_hint')} className="cursor-grab active:cursor-grabbing text-slate-400 hover:text-blue-600">
+                          <GripVertical className="w-3.5 h-3.5" />
+                        </span>
+                        <input type="checkbox" checked={isSel} readOnly
+                          onClick={(e) => toggleSel(exp, idx, e.shiftKey)} className="cursor-pointer" />
+                      </div>
+                    </td>
                     <td className="border-r border-slate-200 text-center">
                       <span className="inline-flex items-center gap-1 px-1 font-black text-slate-800 whitespace-nowrap">
                         {l.order_number}
@@ -552,6 +699,10 @@ const ShippingScheduler = () => {
                         {l.pl_url && <a href={l.pl_url} target="_blank" rel="noopener noreferrer" title={l.pl_number || t('sch_open_pl')} className="text-blue-600 hover:text-blue-800"><ExternalLink className="w-3 h-3" /></a>}
                       </span>
                     </td>
+                    <td className="border-r border-slate-200 font-bold text-center">{man ? <Cell value={l.client} onSave={saveManual('client')} className="text-center" /> : ro(l.client)}</td>
+                    <td className="border-r border-slate-200"><Cell value={l.shipping_no} className="text-center font-bold" onSave={(v) => updateLine(l, { shipping_no: v })} /></td>
+                    <td className="border-r border-slate-200"><Cell value={l.delivery_to} list="sch-deliver" className="text-center" onSave={(v) => updateLine(l, { delivery_to: v })} /></td>
+                    <td className="border-r border-slate-200 text-center">{man ? <Cell value={l.branding} onSave={saveManual('branding')} className="text-center" /> : ro(l.branding)}</td>
                     <td className="border-r border-slate-200 text-center">{man ? <Cell value={l.customer_po} onSave={saveManual('customer_po')} className="text-center" /> : ro(l.customer_po)}</td>
                     <td className="border-r border-slate-200 text-center">{man ? <Cell value={l.design_num} onSave={saveManual('design_num')} className="text-center" /> : ro(l.design_num)}</td>
                     <td className="border-r border-slate-200"><Cell value={l.pcs} numeric className="font-bold"
@@ -565,7 +716,8 @@ const ShippingScheduler = () => {
                           data-st={l.status_effective || ''}
                           title={l.status ? t('sch_status_manual_hint', { auto: l.status_auto || '—' }) : t('sch_status_auto_hint')}
                           className="sch-pill flex-1 min-w-0 px-2 py-0.5 text-[10px] font-black uppercase outline-none">
-                          <option value="">{`AUTO · ${l.status_auto || '—'}`}</option>
+                          {/* AUTO sólo cuando MOS tiene equivalencia para la orden. */}
+                          <option value="">{l.status_auto ? `AUTO · ${l.status_auto}` : '—'}</option>
                           {statuses.map((s) => <option key={s} value={s}>{s}</option>)}
                         </select>
                         {l.status && <span className="text-[10px] font-black text-slate-500" title={t('sch_status_manual_hint', { auto: l.status_auto || '—' })}>✎</span>}
@@ -616,8 +768,9 @@ const ShippingScheduler = () => {
                 );
               })}
               {/* Renglón de captura: pega una o varias órdenes y Enter */}
-              <tr className="bg-slate-50/60">
-                <td colSpan={7} className="px-2 py-1.5">
+              <tr className="bg-slate-50/60"
+                style={{ boxShadow: isDropBlock && dropHint.index === ls.length ? 'inset 0 3px 0 #2563eb' : undefined }}>
+                <td colSpan={8} className="px-2 py-1.5">
                   <div className="flex items-center gap-2">
                     <Plus className="w-4 h-4 text-blue-600 flex-shrink-0" />
                     <input value={addText[exp.export_id] || ''}
@@ -790,14 +943,19 @@ const ShippingScheduler = () => {
             const dayExports = exportsList.filter((e) => e.date === iso);
             const dayLines = dayExports.flatMap((e) => linesByExport[e.export_id] || []);
             const isToday = iso === todayIso;
+            const dayDrop = dropHint && dropHint.date === iso;
             return (
               <section key={iso} className="space-y-2">
-                <div className={`flex flex-wrap items-center justify-between gap-2 px-4 py-2 rounded-xl ${isToday ? 'bg-blue-700' : 'bg-slate-800'} text-white`}>
+                {/* La barra del día también recibe órdenes arrastradas: van al
+                    primer export de ese día (o a uno nuevo si no hay). */}
+                <div onDragOver={(e) => overDay(e, iso)} onDrop={(e) => dropOnDay(e, iso)}
+                  className={`flex flex-wrap items-center justify-between gap-2 px-4 py-2 rounded-xl ${dayDrop ? 'bg-blue-500 ring-4 ring-blue-200' : isToday ? 'bg-blue-700' : 'bg-slate-800'} text-white`}>
                   <div className="flex items-center gap-3">
                     <span className="text-sm font-black tracking-widest">{dayLabel(iso)}</span>
                     {isToday && <span className="px-2 py-0.5 rounded-full bg-white/20 text-[10px] font-black uppercase">{t('sch_today')}</span>}
                     <span className="text-[11px] font-bold text-white/60">
-                      {t('sch_day_summary', { e: dayExports.length, o: dayLines.length, p: fmtNum(sumPcs(dayLines)) })}
+                      {dayDrop ? t('sch_drop_day', { day: dayLabel(iso) })
+                        : t('sch_day_summary', { e: dayExports.length, o: dayLines.length, p: fmtNum(sumPcs(dayLines)) })}
                     </span>
                   </div>
                   <button onClick={() => addExport(iso)}
@@ -807,6 +965,7 @@ const ShippingScheduler = () => {
                 </div>
                 {dayExports.length === 0 ? (
                   <button onClick={() => addExport(iso)}
+                    onDragOver={(e) => overDay(e, iso)} onDrop={(e) => dropOnDay(e, iso)}
                     className="w-full py-4 rounded-xl border-2 border-dashed border-slate-200 text-[12px] font-bold text-slate-400 hover:border-blue-300 hover:text-blue-600 hover:bg-blue-50/40">
                     {t('sch_no_exports')}
                   </button>
@@ -818,6 +977,24 @@ const ShippingScheduler = () => {
       )}
       </div>
       </div>
+
+      {/* Barra de acciones de la selección (flotante abajo). */}
+      {selIds.length > 0 && (
+        <div className="fixed bottom-5 left-1/2 -translate-x-1/2 z-50 flex flex-wrap items-center gap-2 px-4 py-2.5 rounded-2xl bg-slate-900 text-white shadow-2xl">
+          <span className="text-[12px] font-black">{t('sch_sel_count', { n: selIds.length, p: fmtNum(selPcs) })}</span>
+          <select value="" onChange={(e) => e.target.value && moveIds(selIds, { exportId: e.target.value })}
+            className="sch-field rounded-lg px-2 py-1 text-[11px] font-bold outline-none">
+            <option value="">{t('sch_move_to')}</option>
+            {exportsList.map((e) => <option key={e.export_id} value={e.export_id}>{exportLabel(e)}</option>)}
+          </select>
+          <button onClick={moveSelectedPrompt}
+            className="px-2.5 py-1 rounded-lg bg-white/15 hover:bg-white/25 text-[11px] font-black">{t('sch_other_date')}</button>
+          <button onClick={deleteSelected}
+            className="px-2.5 py-1 rounded-lg bg-red-600 hover:bg-red-700 text-[11px] font-black">{t('sch_bulk_delete')}</button>
+          <button onClick={() => setSelected(new Set())} title={t('sch_bulk_clear')}
+            className="p-1 rounded-lg hover:bg-white/15"><X className="w-4 h-4" /></button>
+        </div>
+      )}
     </main>
   );
 };

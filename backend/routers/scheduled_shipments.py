@@ -35,6 +35,8 @@ Endpoints (prefijo /api/scheduled-shipments):
   DELETE "/exports/{export_id}"      → borra el bloque (409 si tiene líneas, salvo ?cascade=true)
   POST   "/lines"                    → agrega orden(es) a un export
   POST   "/lines/{shipment_id}/duplicate" → clona una línea (para partir un envío)
+  POST   "/lines/move"               → mueve varias líneas (selección / arrastre) a un export o fecha, en una posición
+  POST   "/lines/delete"             → quita varias líneas
   PUT    "/{shipment_id}"            → edita una línea (o la mueve de export / fecha)
   DELETE "/{shipment_id}"            → quita la línea
 """
@@ -719,6 +721,82 @@ async def duplicate_line(shipment_id: str, request: Request):
     await _renumber(src["export_id"])
     await log_activity(user, "duplicate_shipping_line", {"from": shipment_id, "order_number": src.get("order_number")})
     return await _one_row(await db.scheduled_shipments.find_one({"shipment_id": doc["shipment_id"]}, {"_id": 0}))
+
+
+async def _resolve_target(user, body) -> dict:
+    """Export destino de un movimiento: `export_id`, o el primer export de
+    `move_to_date` (si ese día no tiene, se crea uno con horarios default)."""
+    if body.get("export_id"):
+        return await _get_export(body["export_id"])
+    if body.get("move_to_date"):
+        day_iso = _req_date(body["move_to_date"], "move_to_date")
+        target = await db.shipping_exports.find_one(
+            {"date": day_iso}, {"_id": 0}, sort=[("position", 1), ("created_at", 1)])
+        return target or await _new_export(user, day_iso)
+    raise HTTPException(status_code=400, detail="export_id o move_to_date requerido")
+
+
+@router.post("/lines/move")
+async def move_lines(request: Request):
+    """Mueve una o varias líneas (selección o arrastre) a un export, en la
+    posición `index` (default: al final) y en el orden recibido. Con el mismo
+    export de origen sirve para reacomodar. Renumera destino y orígenes."""
+    user = await require_auth(request)
+    body = await request.json()
+    ids = [str(x) for x in (body.get("shipment_ids") or []) if x]
+    ids = list(dict.fromkeys(ids))
+    if not ids:
+        raise HTTPException(status_code=400, detail="shipment_ids requerido")
+    if len(ids) > 500:
+        raise HTTPException(status_code=400, detail="Máximo 500 líneas por movimiento")
+    moving = await db.scheduled_shipments.find(
+        {"shipment_id": {"$in": ids}, "export_id": {"$exists": True}}, {"_id": 0}).to_list(500)
+    if len(moving) != len(ids):
+        raise HTTPException(status_code=404, detail="Alguna línea no existe o no pertenece al programador")
+    target = await _resolve_target(user, body)
+    tid = target["export_id"]
+    stay = await db.scheduled_shipments.find(
+        {"export_id": tid, "shipment_id": {"$nin": ids}}, {"_id": 0, "shipment_id": 1, "position": 1, "created_at": 1},
+    ).to_list(5000)
+    stay.sort(key=lambda s: (s.get("position") or 0, s.get("created_at") or ""))
+    try:
+        idx = int(body["index"]) if body.get("index") is not None else len(stay)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="index inválido")
+    idx = max(0, min(idx, len(stay)))
+    order = [s["shipment_id"] for s in stay[:idx]] + ids + [s["shipment_id"] for s in stay[idx:]]
+    now = _now()
+    dates = _date_fields(target["date"])
+    moved_set = set(ids)
+    for pos, sid in enumerate(order):
+        upd = {"position": pos}
+        if sid in moved_set:
+            upd.update({"export_id": tid, **dates, "updated_at": now})
+        await db.scheduled_shipments.update_one({"shipment_id": sid}, {"$set": upd})
+    for src in {m["export_id"] for m in moving} - {tid}:
+        await _renumber(src)
+    await log_activity(user, "move_shipping_lines", {
+        "to_export": tid, "date": target["date"], "index": idx,
+        "orders": [m.get("order_number") for m in moving]})
+    return {"moved": len(ids), "export_id": tid, "date": target["date"]}
+
+
+@router.post("/lines/delete")
+async def delete_lines(request: Request):
+    """Quita varias líneas de golpe (selección)."""
+    user = await require_auth(request)
+    body = await request.json()
+    ids = list(dict.fromkeys(str(x) for x in (body.get("shipment_ids") or []) if x))
+    if not ids:
+        raise HTTPException(status_code=400, detail="shipment_ids requerido")
+    lines = await db.scheduled_shipments.find(
+        {"shipment_id": {"$in": ids}, "export_id": {"$exists": True}},
+        {"_id": 0, "shipment_id": 1, "export_id": 1, "order_number": 1}).to_list(1000)
+    await db.scheduled_shipments.delete_many({"shipment_id": {"$in": [x["shipment_id"] for x in lines]}})
+    for eid in {x["export_id"] for x in lines}:
+        await _renumber(eid)
+    await log_activity(user, "delete_shipping_lines", {"orders": [x.get("order_number") for x in lines]})
+    return {"deleted": len(lines)}
 
 
 async def _renumber(export_id):

@@ -266,6 +266,35 @@ async def main():
         r = await c.get(f"{API}/week", params={"start": LUNES_SIG})
         check("otra semana vacía", r.json()["exports"] == [])
 
+        print("\n== Selección múltiple y arrastre ==")
+        eA = (await c.post(f"{API}/exports", json={"date": MARTES})).json()
+        eB = (await c.post(f"{API}/exports", json={"date": MIERCOLES})).json()
+        add = (await c.post(f"{API}/lines", json={"export_id": eA["export_id"], "order_numbers": "3352 3353 2980 2981"})).json()["added"]
+        sid = {x["order_number"]: x["shipment_id"] for x in add}
+
+        def orden(eid):
+            return [s["order_number"] for s in sdb.scheduled_shipments.find({"export_id": eid}).sort("position", 1)]
+        r = await c.post(f"{API}/lines/move", json={"shipment_ids": [sid["3353"], sid["2981"]], "export_id": eB["export_id"]})
+        check("mover varias a otro export", r.status_code == 200 and orden(eB["export_id"]) == ["3353", "2981"]
+              and orden(eA["export_id"]) == ["3352", "2980"], (orden(eA["export_id"]), orden(eB["export_id"])))
+        movida = sdb.scheduled_shipments.find_one({"shipment_id": sid["3353"]})
+        check("…con la fecha del destino", movida["ship_date"] == MIERCOLES and movida["scheduled_export_date"] == MIERCOLES)
+        await c.post(f"{API}/lines/move", json={"shipment_ids": [sid["2980"]], "export_id": eA["export_id"], "index": 0})
+        check("arrastrar dentro del bloque reacomoda", orden(eA["export_id"]) == ["2980", "3352"], orden(eA["export_id"]))
+        await c.post(f"{API}/lines/move", json={"shipment_ids": [sid["3352"]], "export_id": eB["export_id"], "index": 1})
+        check("soltar en medio de otro bloque respeta la posición", orden(eB["export_id"]) == ["3353", "3352", "2981"],
+              orden(eB["export_id"]))
+        pos = sorted(s["position"] for s in sdb.scheduled_shipments.find({"export_id": eA["export_id"]}))
+        check("el origen se renumera sin huecos", pos == list(range(len(pos))), pos)
+        viernes = (LUNES + timedelta(days=4)).isoformat()
+        r = await c.post(f"{API}/lines/move", json={"shipment_ids": [sid["2980"], sid["2981"]], "move_to_date": viernes})
+        check("mover varias a otra fecha (crea el export)", r.json().get("date") == viernes
+              and sorted(orden(r.json()["export_id"])) == ["2980", "2981"], r.text[:200])
+        r = await c.post(f"{API}/lines/move", json={"shipment_ids": ["no-existe"], "export_id": eA["export_id"]})
+        check("línea inexistente → 404 (no mueve nada)", r.status_code == 404, r.status_code)
+        r = await c.post(f"{API}/lines/delete", json={"shipment_ids": [sid["3352"], sid["3353"]]})
+        check("quitar varias", r.json().get("deleted") == 2 and orden(eB["export_id"]) == [], orden(eB["export_id"]))
+
 
 try:
     asyncio.run(main())
