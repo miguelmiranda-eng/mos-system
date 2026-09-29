@@ -273,6 +273,7 @@ from routers.paint import router as paint_router
 from routers.samples import router as samples_router
 from routers.tools import router as tools_router
 from routers.order_components import router as order_components_router
+from routers.planner import router as planner_router
 
 app.include_router(auth_router)
 app.include_router(orders_router)
@@ -309,6 +310,7 @@ app.include_router(paint_router)
 app.include_router(samples_router)
 app.include_router(tools_router)
 app.include_router(order_components_router)
+app.include_router(planner_router)
 
 @app.on_event("startup")
 async def startup_event():

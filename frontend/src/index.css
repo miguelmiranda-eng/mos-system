@@ -631,3 +631,23 @@ html.wms-theme :focus-visible,
   outline: 2px solid hsl(var(--primary) / 0.75);
   outline-offset: 1px;
 }
+
+/* ─── Planeación (/planeacion) ───────────────────────────────────────────
+   El módulo es SIEMPRE claro, también con MOS en tema oscuro: las reglas
+   globales de encabezados (`html.dark table th`) y de columnas fijas lo
+   pintaban de negro. La grilla fija encabezado y columna con `style`, no con
+   la clase `sticky`, para no caer en `.dark td.sticky`. */
+.planner-page table th,
+html.dark .planner-page table th,
+html:not(.dark) .planner-page table th {
+  background: #f1f5f9 !important;
+  backdrop-filter: none !important;
+  box-shadow: none !important;
+}
+.planner-page .planner-machine-cell {
+  background: #f8fafc !important;
+}
+.planner-page table tbody tr:nth-child(even),
+.planner-page table thead tr {
+  background: transparent !important;
+}

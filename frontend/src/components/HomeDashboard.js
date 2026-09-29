@@ -4,7 +4,7 @@ import {
   Factory, Warehouse, Zap, History, Users,
   Database, Boxes, Tags, UserSquare, Columns, ClipboardList,
   LayoutDashboard, TrendingUp, ShieldCheck, Search,
-  ArrowLeft, Palette, Beaker, Brush, Droplets,
+  ArrowLeft, Palette, Beaker, Brush, Droplets, CalendarClock,
 } from 'lucide-react';
 import { useAuth } from '../App';
 import { useLang } from '../contexts/LanguageContext';
@@ -14,7 +14,7 @@ import { FormFieldsManagerModal } from './dashboard/FormFieldsManagerModal';
 const ICON_MAP = {
   Warehouse, Boxes, Database, History, Zap, Users, Tags,
   UserSquare, Factory, Columns, ClipboardList, LayoutDashboard, TrendingUp,
-  ShieldCheck, Palette, Beaker, Brush, Droplets,
+  ShieldCheck, Palette, Beaker, Brush, Droplets, CalendarClock,
 };
 
 // Acento visual por sección (clases literales: Tailwind no compila strings dinámicos)
@@ -45,6 +45,7 @@ const SECTIONS_DEFS = [
       { nameKey: 'home_blocker', path: '/blocker-tool', descKey: 'home_blocker_desc', icon: 'Droplets' },
       { nameKey: 'home_final_bill', path: '/final-bill', descKey: 'home_final_bill_desc', icon: 'ClipboardList' },
       { nameKey: 'home_order_tracking', path: '/order-components', descKey: 'home_order_tracking_desc', icon: 'Boxes' },
+      { nameKey: 'home_planner', path: '/planeacion', descKey: 'home_planner_desc', icon: 'CalendarClock' },
     ]
   },
   {
