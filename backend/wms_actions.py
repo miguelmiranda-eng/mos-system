@@ -104,6 +104,8 @@ ACTIONS: dict = {
     # ── Surtido y terminados ────────────────────────────────────────────────
     "picking.manage": _a("Asignar / priorizar tickets y ligar cajas", "picking", 3, 3, floor_admin=1, floor_inventory=1,
                          desc="Asignar picker, prioridad y ligar caja a un pick ticket."),
+    "picking.priority_config": _a("Configurar prioridad de ubicaciones al surtir", "picking", 3, 3, floor_admin=1, floor_inventory=1,
+                                  desc="Orden en que el surtido ofrece las familias de ubicación (piso, narrow, reserva…)."),
     "finished.edit": _a("Editar producto terminado", "picking", 3, 3, floor_admin=1, floor_inventory=1,
                         desc="Modificar una caja de terminados."),
     # ── Catálogo UPC ────────────────────────────────────────────────────────

@@ -9,7 +9,7 @@
    · Columnas        — columnas personalizadas de Entradas (asn.columns)
    · Notificaciones  — alertas push de ESTE dispositivo (notifications.push) */
 import { useState } from "react";
-import { ShieldCheck, BookOpen, ScanLine, Hash, Columns3, Bell, BellOff, Send, Loader2 } from "lucide-react";
+import { ShieldCheck, BookOpen, ScanLine, Hash, Columns3, Bell, BellOff, Send, Loader2, ClipboardCheck } from "lucide-react";
 import { useLang } from "../../contexts/LanguageContext";
 import { useWms } from "./lib";
 import { HomeModule } from "./Home";
@@ -17,6 +17,7 @@ import { UpcCatalog } from "./UpcCatalog";
 import { PermissionsPanel } from "./PermissionsPanel";
 import { AsnConfigPanel } from "./AsnConfigModal";
 import { AsnColumnsPanel } from "./AsnColumnsPanel";
+import { PickPriorityPanel } from "./PickPriorityPanel";
 import { Btn } from "./ui";
 
 const TAB_KEY = 'mos_wms_settings_tab';
@@ -32,6 +33,7 @@ export const SettingsModule = () => {
     { id: 'upc', label: t('wms_settings_tab_upc'), icon: ScanLine },
     ...(can('asn.part_number_config') ? [{ id: 'part_number', label: t('wms_settings_tab_part_number'), icon: Hash }] : []),
     ...(can('asn.columns') ? [{ id: 'columns', label: t('wms_settings_tab_columns'), icon: Columns3 }] : []),
+    ...(can('picking.priority_config') ? [{ id: 'picking', label: t('wms_settings_tab_picking'), icon: ClipboardCheck }] : []),
     ...(can('notifications.push') ? [{ id: 'notifications', label: t('wms_settings_tab_notifications'), icon: Bell }] : []),
   ];
   // Sin pestaña guardada, `tab` queda null y la activa es la primera visible:
@@ -60,6 +62,7 @@ export const SettingsModule = () => {
       {active === 'upc' && <UpcCatalog isManager={isManager} />}
       {active === 'part_number' && <AsnConfigPanel embedded />}
       {active === 'columns' && <AsnColumnsPanel />}
+      {active === 'picking' && <PickPriorityPanel />}
       {active === 'notifications' && <NotificationsPanel />}
     </div>
   );

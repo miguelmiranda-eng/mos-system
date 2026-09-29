@@ -5520,12 +5520,127 @@ def _location_sort_key_origin(loc_obj: dict):
     name = (loc_obj.get("location") or "").upper()
     return (coo, name)
 
-def apply_picking_strategy(size_locations: dict, strategy: str) -> dict:
+# ── Prioridad de ubicaciones al surtir (CONFIGURABLE) ─────────────────────────
+# La reserva (RP) guarda pallets completos, así que ordenar sólo por unidades
+# desc la sacaba SIEMPRE primero — justo lo que el almacén no debe tocar de
+# entrada (necesita montacargas y es stock de respaldo). Los pickfaces se surten
+# primero: piso (PS = Pallet Storage) y narrow (NA = NARRO); RP se sigue
+# ofreciendo, pero al final, para que un SKU cuyo único stock esté en reserva no
+# desaparezca de la vista.
+#
+# El orden ya NO está hardcodeado: es una lista de GRUPOS configurable desde
+# Sistema → Configuración → Surtido (config_options.wms_pick_priority). Cada
+# grupo casa por PREFIJO del nombre de la ubicación; "*" es el comodín que
+# atrapa lo que ningún prefijo más específico casó. El tier de una ubicación =
+# posición de su grupo en la lista. DENTRO de cada tier: la más llena primero
+# (menos viajes). Los DEFAULTS reproducen exactamente el comportamiento pedido
+# el 2026-09-29 (piso y narrow primero, RP al final).
+# Default: piso (PS) y narrow (NA) en el MISMO grupo → se entremezclan por "más
+# llena primero" (menos viajes). Quien quiera piso estricto antes que narrow los
+# separa en dos grupos desde la config.
+WMS_PICK_PRIORITY_DEFAULT = [
+    {"key": "pickfaces", "label": "Piso y narrow (PS, NA)", "prefixes": ["PS", "NA"]},
+    {"key": "otros",     "label": "Otras ubicaciones",      "prefixes": ["*"]},
+    {"key": "reserva",   "label": "Reserva (RP)",           "prefixes": ["RP"]},
+]
+
+# Cache en proceso del orden vigente (se invalida al guardar). Mismo patrón que
+# _ACTIONS_CACHE: barato de recalcular, se relee tras cada escritura.
+_PICK_PRIORITY_CACHE = {"groups": None, "at": 0.0}
+_PICK_PRIORITY_TTL = 60.0
+
+
+def _sanitize_pick_priority(groups) -> list:
+    """Valida/limpia la lista de grupos. Descarta grupos sin prefijos y prefijos
+    vacíos; garantiza que exista un comodín '*' al final (si el admin lo borró,
+    lo reañade como último tier) para que NINGUNA ubicación quede sin clasificar
+    y desaparezca del surtido."""
+    out = []
+    seen_star = False
+    if isinstance(groups, list):
+        for i, g in enumerate(groups):
+            if not isinstance(g, dict):
+                continue
+            prefixes = [str(p).strip().upper() for p in (g.get("prefixes") or []) if str(p).strip()]
+            if not prefixes:
+                continue
+            if "*" in prefixes:
+                seen_star = True
+            out.append({
+                "key": str(g.get("key") or f"grupo{i+1}").strip() or f"grupo{i+1}",
+                "label": str(g.get("label") or ", ".join(prefixes)).strip(),
+                "prefixes": prefixes,
+            })
+    if not out:
+        return [dict(g) for g in WMS_PICK_PRIORITY_DEFAULT]
+    if not seen_star:
+        out.append({"key": "otros", "label": "Otras ubicaciones", "prefixes": ["*"]})
+    return out
+
+
+async def get_pick_priority(force: bool = False) -> list:
+    """Grupos de prioridad vigentes (guardado sobre el default), cacheados."""
+    import time as _t
+    c = _PICK_PRIORITY_CACHE
+    if not force and c["groups"] is not None and _t.monotonic() - c["at"] < _PICK_PRIORITY_TTL:
+        return c["groups"]
+    doc = await db.config_options.find_one(
+        {"config_id": "wms_pick_priority"}, {"_id": 0, "groups": 1}) or {}
+    groups = _sanitize_pick_priority(doc.get("groups")) if doc.get("groups") else \
+        [dict(g) for g in WMS_PICK_PRIORITY_DEFAULT]
+    c.update({"groups": groups, "at": _t.monotonic()})
+    return groups
+
+
+def _build_pick_tier_fn(groups):
+    """De la lista de grupos arma (tier_de_ubicación, tier_comodín). El prefijo
+    MÁS LARGO que case gana, para que 'PS' y 'PSX' puedan convivir sin que el
+    corto secuestre al largo."""
+    # (prefijo, tier) ordenados por longitud desc para casar el más específico.
+    prefs = []
+    star_tier = len(groups)  # comodín al final si no está declarado
+    for tier, g in enumerate(groups):
+        for p in g.get("prefixes") or []:
+            if p == "*":
+                star_tier = tier
+            else:
+                prefs.append((p, tier))
+    prefs.sort(key=lambda x: -len(x[0]))
+
+    def tier_of(name):
+        n = (name or "").upper()
+        for p, tier in prefs:
+            if n.startswith(p):
+                return tier
+        return star_tier
+    return tier_of
+
+
+def _location_sort_key_default(loc_obj: dict, tier_of):
+    """Orden por defecto del surtido: por tier del grupo (configurable) y, DENTRO
+    de cada tier, la ubicación más llena primero, con el nombre como desempate."""
+    return (tier_of(loc_obj.get("location")),
+            -int(loc_obj.get("available") or 0),
+            (loc_obj.get("location") or "").upper())
+
+def apply_picking_strategy(size_locations: dict, strategy: str, pick_priority=None) -> dict:
     """Reorder the `locations` array inside each size of size_locations
-    according to the chosen strategy. Default keeps backend's existing order."""
-    if strategy not in {"proximity", "origin"} or not size_locations:
+    according to the chosen strategy.
+
+    'default' YA NO conserva el orden crudo de Mongo (units desc): escalona por
+    familia de ubicación según la config de prioridad (piso/narrow antes que la
+    reserva RP, por default). proximity/origin mandan su propio orden y no se
+    tocan aquí. `pick_priority` = lista de grupos ya resuelta (get_pick_priority);
+    si no viene, se usa el default para no romper llamadores viejos."""
+    if not size_locations:
         return size_locations
-    key_fn = _location_sort_key_proximity if strategy == "proximity" else _location_sort_key_origin
+    if strategy == "proximity":
+        key_fn = _location_sort_key_proximity
+    elif strategy == "origin":
+        key_fn = _location_sort_key_origin
+    else:
+        tier_of = _build_pick_tier_fn(pick_priority or WMS_PICK_PRIORITY_DEFAULT)
+        key_fn = lambda l: _location_sort_key_default(l, tier_of)
     for sz_data in size_locations.values():
         if isinstance(sz_data, dict) and "locations" in sz_data:
             sz_data["locations"].sort(key=key_fn)
@@ -5735,7 +5850,8 @@ async def _compute_size_locations(style: str, color: str, sizes: dict, strategy:
             l["percentage"] = round((l["available"] / total) * 100) if total > 0 else 0
         size_locations[sz] = {"locations": locs, "total_available": total}
 
-    result = apply_picking_strategy(size_locations, strategy if strategy in PICK_STRATEGIES else "default")
+    result = apply_picking_strategy(size_locations, strategy if strategy in PICK_STRATEGIES else "default",
+                                    await get_pick_priority())
     # Guarda en cache — próxima llamada con mismo (style, color, sizes) devuelve
     # instantáneo por hasta 30s.
     _SIZE_LOCS_CACHE[cache_key] = (_time.monotonic(), result)
@@ -5849,7 +5965,7 @@ async def internal_create_picking_ticket(data: dict, user: dict) -> dict:
     strategy = data.get("strategy", "default")
     if strategy not in PICK_STRATEGIES:
         strategy = "default"
-    size_locations = apply_picking_strategy(size_locations, strategy)
+    size_locations = apply_picking_strategy(size_locations, strategy, await get_pick_priority())
 
     assigned_to = data.get("assigned_to", "").strip()
     assigned_to_name = data.get("assigned_to_name", "").strip()
@@ -7556,7 +7672,7 @@ async def edit_pick_ticket(ticket_id: str, request: Request):
     # Re-apply strategy if it changed (use freshly-built or existing size_locations)
     if "strategy" in update:
         target = update.get("size_locations") or ticket.get("size_locations") or {}
-        update["size_locations"] = apply_picking_strategy(target, update["strategy"])
+        update["size_locations"] = apply_picking_strategy(target, update["strategy"], await get_pick_priority())
 
     update["updated_at"] = now_iso()
     update["updated_by"] = user.get("user_id")
@@ -8526,6 +8642,35 @@ async def wms_permissions_put(request: Request):
         await log_activity(user, "wms_actions_update", {
             "changed": [{"action": k, "label": wa.ACTIONS[k]["label"], **v} for k, v in changed.items()]})
     return {"ok": True, "levels": await get_action_levels(force=True), "changed": changed}
+
+
+@router.get("/pick-priority")
+async def wms_pick_priority_get(request: Request):
+    """Orden de prioridad de ubicaciones al surtir + el default de fábrica.
+    Cualquier autenticado lo lee (el panel de config lo necesita)."""
+    await require_auth(request)
+    return {"groups": await get_pick_priority(),
+            "default": [dict(g) for g in WMS_PICK_PRIORITY_DEFAULT]}
+
+
+@router.put("/pick-priority")
+async def wms_pick_priority_put(request: Request):
+    """Guarda el orden de prioridad de ubicaciones al surtir. Gobernado por
+    picking.priority_config. Se sanea (comodín '*' garantizado al final) para
+    que ninguna ubicación quede sin clasificar. Invalida el caché del orden y el
+    de size_locations para que el cambio se vea de inmediato en la PDA."""
+    user = await require_action(request, "picking.priority_config")
+    body = await request.json()
+    groups = _sanitize_pick_priority(body.get("groups"))
+    await db.config_options.update_one(
+        {"config_id": "wms_pick_priority"},
+        {"$set": {"groups": groups, "updated_at": now_iso(), "updated_by": user.get("email")}},
+        upsert=True)
+    _PICK_PRIORITY_CACHE["groups"] = None
+    _SIZE_LOCS_CACHE.clear()   # el orden viejo ya no debe servirse ni 30s
+    await log_activity(user, "wms_pick_priority_update",
+                       {"groups": [{"key": g["key"], "prefixes": g["prefixes"]} for g in groups]})
+    return {"ok": True, "groups": await get_pick_priority(force=True)}
 
 
 # ==================== AUDITORIA ====================
