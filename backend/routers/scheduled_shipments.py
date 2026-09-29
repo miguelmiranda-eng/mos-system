@@ -29,6 +29,7 @@ Endpoints (prefijo /api/scheduled-shipments):
   POST   ""                          → [histórico] programa por mes/semana (idempotente por orden)
   GET    "/week?start=YYYY-MM-DD"    → exports + líneas de la semana (lunes..domingo)
   GET    "/summary?year=YYYY"        → conteos por semana del año (navegador Año → Mes → Semana)
+  GET    "/search?q=…"               → busca líneas de cualquier semana (orden, cliente, PO, design, branding)
   POST   "/exports"                  → crea un bloque de export en una fecha
   PUT    "/exports/{export_id}"      → edita encabezado (o lo mueve de fecha, arrastrando líneas)
   POST   "/exports/{export_id}/assign-number" → siguiente EXPORT# consecutivo
@@ -486,6 +487,43 @@ async def get_week(request: Request, start: str | None = None):
         "customs_lights": CUSTOMS_LIGHTS,
         "suggest": suggest,
     }
+
+
+@router.get("/search")
+async def search_lines(request: Request, q: str = "", limit: int = 50):
+    """Buscador del programador: líneas (de cualquier semana) cuya orden
+    coincide por número, cliente, PO, design o branding. Devuelve dónde va
+    cada una (fecha + export) para saltar a ella."""
+    await require_auth(request)
+    term = (q or "").strip().lstrip("#")
+    if len(term) < 2:
+        return {"items": []}
+    limit = max(1, min(limit, 100))
+    rx = {"$regex": re.escape(term), "$options": "i"}
+    # Órdenes vivas que coinciden por sus datos (cliente, PO, design…).
+    by_data = await db.orders.find(
+        {"board": {"$ne": PAPELERA}, "$or": [
+            {"order_number": rx}, {"client": rx}, {"customer_po": rx},
+            {"design_#": rx}, {"design_num": rx}, {"branding": rx}]},
+        {"_id": 0, "order_number": 1}).limit(500).to_list(500)
+    nums = [o["order_number"] for o in by_data if o.get("order_number")]
+    scheds = await db.scheduled_shipments.find(
+        {"export_id": {"$exists": True}, "$or": [
+            {"order_number": rx}, {"order_number": {"$in": nums}},
+            {"manual_fields.client": rx}, {"manual_fields.customer_po": rx},
+            {"manual_fields.design_num": rx}, {"manual_fields.branding": rx}]},
+        {"_id": 0}).sort("ship_date", -1).limit(limit).to_list(limit)
+    rows = await _rows(scheds)
+    exps = {e["export_id"]: e for e in await db.shipping_exports.find(
+        {"export_id": {"$in": list({s["export_id"] for s in scheds})}},
+        {"_id": 0, "export_id": 1, "export_no": 1, "date": 1, "position": 1}).to_list(500)}
+    items = []
+    for r in rows:
+        e = exps.get(r["export_id"]) or {}
+        items.append({k: r.get(k) for k in (
+            "shipment_id", "order_number", "client", "branding", "customer_po", "design_num",
+            "pcs", "status_effective", "ship_date", "export_id")} | {"export_no": e.get("export_no")})
+    return {"items": items}
 
 
 @router.get("/summary")

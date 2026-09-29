@@ -229,6 +229,19 @@ async def main():
         check("resumen: la semana trae exports y líneas", wk.get("exports") == 2 and wk.get("lines") == n_lines, wk)
         check("resumen: año sin datos → vacío", (await c.get(f"{API}/summary", params={"year": 2099})).json()["weeks"] == [])
 
+        print("\n== Buscador ==")
+        r = await c.get(f"{API}/search", params={"q": "#3352"})
+        hits = r.json()["items"]
+        check("busca por número de orden (con #)", any(h["order_number"] == "3352" and h["ship_date"] == MARTES
+                                                       and h["export_no"] == 81 for h in hits), hits)
+        r = await c.get(f"{API}/search", params={"q": "buc92"})
+        check("busca por PO (sin distinguir mayúsculas)", {h["order_number"] for h in r.json()["items"]} == {"3446"},
+              r.json()["items"])
+        r = await c.get(f"{API}/search", params={"q": "52012557"})
+        check("busca en líneas manuales", any(h["order_number"] == "0" for h in r.json()["items"]), r.json())
+        r = await c.get(f"{API}/search", params={"q": "3"})
+        check("término de 1 carácter → vacío", r.json()["items"] == [])
+
         print("\n== Mover ==")
         r = await c.put(f"{API}/{l2['shipment_id']}", json={"export_id": e2["export_id"]})
         check("mover línea a otro export", r.json()["export_id"] == e2["export_id"], r.text[:200])

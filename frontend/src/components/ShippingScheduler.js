@@ -148,6 +148,12 @@ const ShippingScheduler = () => {
   const dragIds = useRef([]);
   const [dragging, setDragging] = useState(null); // Set de ids que viajan (para atenuarlos)
   const [dropHint, setDropHint] = useState(null); // { exportId, index } | { date }
+  // Buscador del módulo (cualquier semana) y renglón a resaltar al saltar.
+  const [findQ, setFindQ] = useState('');
+  const [findRes, setFindRes] = useState(null);   // null = cerrado | [] | [items]
+  const [findLoading, setFindLoading] = useState(false);
+  const [flashId, setFlashId] = useState(null);
+  const [findOpen, setFindOpen] = useState(false);
   const [addText, setAddText] = useState({});      // export_id → texto de captura
   const [showCrm, setShowCrm] = useState(() => {
     try { return localStorage.getItem(CRM_KEY) !== '0'; } catch { return true; }
@@ -184,6 +190,67 @@ const ShippingScheduler = () => {
   useEffect(() => { loadWeek(); }, [loadWeek]);
   // La selección es de la semana abierta: al cambiar de semana se limpia.
   useEffect(() => { setSelected(new Set()); lastSel.current = null; }, [weekStart]);
+
+  // ── Buscador (todas las semanas) ───────────────────────────────────────────
+  useEffect(() => {
+    const q = findQ.trim();
+    if (q.length < 2) { setFindRes(q ? [] : null); return undefined; }
+    const h = setTimeout(async () => {
+      setFindLoading(true);
+      try {
+        const res = await fetch(`${API}/search?q=${encodeURIComponent(q)}`, { credentials: 'include' });
+        if (res.ok) setFindRes((await res.json()).items || []);
+      } catch { /* sin conexión: se queda la lista anterior */ }
+      finally { setFindLoading(false); }
+    }, 300);
+    return () => clearTimeout(h);
+  }, [findQ]);
+  // Saltar a un resultado: abre su semana y, cuando el renglón ya está en
+  // pantalla, lo centra y lo resalta unos segundos.
+  const goToHit = (h) => {
+    setFindOpen(false);
+    setFlashId(h.shipment_id);
+    const ws = mondayOf(parseIso(h.ship_date));
+    if (isoOf(ws) !== isoOf(weekStart)) setWeekStart(ws);
+  };
+  useEffect(() => {
+    if (!flashId) return undefined;
+    const el = document.querySelector(`#${ROOT_ID} tr[data-sid="${flashId}"]`);
+    if (!el) return undefined;
+    el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    const h = setTimeout(() => setFlashId(null), 3000);
+    return () => clearTimeout(h);
+  }, [flashId, data]);
+
+  // ── Desplazamiento automático al arrastrar ─────────────────────────────────
+  // Con muchos renglones el destino queda fuera de pantalla: mientras se
+  // arrastra, acercar el mouse al borde superior/inferior desplaza la lista
+  // (más rápido entre más cerca del borde).
+  useEffect(() => {
+    if (!dragging) return undefined;
+    let el = document.getElementById(ROOT_ID)?.parentElement;
+    while (el && el !== document.body) {
+      const oy = getComputedStyle(el).overflowY;
+      if (/(auto|scroll|overlay)/.test(oy) && el.scrollHeight > el.clientHeight) break;
+      el = el.parentElement;
+    }
+    const scroller = el && el !== document.body ? el : (document.scrollingElement || document.documentElement);
+    const isPage = scroller === document.scrollingElement || scroller === document.documentElement;
+    // Lo mueve el propio `dragover` (el navegador lo dispara ~20 veces por
+    // segundo aunque el mouse esté quieto); no depende de requestAnimationFrame.
+    const onOver = (e) => {
+      const r = isPage ? { top: 0, bottom: window.innerHeight } : scroller.getBoundingClientRect();
+      const top = Math.max(r.top, 0);
+      const bottom = Math.min(r.bottom, window.innerHeight);
+      const EDGE = 120;
+      let dy = 0;
+      if (e.clientY < top + EDGE) dy = -Math.ceil((top + EDGE - e.clientY) / 3);
+      else if (e.clientY > bottom - EDGE) dy = Math.ceil((e.clientY - (bottom - EDGE)) / 3);
+      if (dy) scroller.scrollBy(0, dy);
+    };
+    document.addEventListener('dragover', onOver);
+    return () => document.removeEventListener('dragover', onOver);
+  }, [dragging]);
 
   const loadSummary = useCallback(async () => {
     try {
@@ -674,10 +741,12 @@ const ShippingScheduler = () => {
                 const isSel = selected.has(l.shipment_id);
                 const hintTop = isDropBlock && dropHint.index === idx;
                 return (
-                  <tr key={l.shipment_id} data-st={l.status_effective || 'none'}
+                  <tr key={l.shipment_id} data-st={l.status_effective || 'none'} data-sid={l.shipment_id}
                     onDragOver={(e) => overRow(e, exp, idx)} onDrop={dropOnExport}
                     style={{
-                      boxShadow: hintTop ? 'inset 0 3px 0 #2563eb' : isSel ? 'inset 3px 0 0 #2563eb' : undefined,
+                      boxShadow: hintTop ? 'inset 0 3px 0 #2563eb'
+                        : flashId === l.shipment_id ? 'inset 0 0 0 3px #f59e0b'
+                          : isSel ? 'inset 3px 0 0 #2563eb' : undefined,
                       opacity: dragging && dragging.has(l.shipment_id) ? 0.4 : undefined,
                     }}
                     className="border-b border-slate-200">
@@ -817,6 +886,49 @@ const ShippingScheduler = () => {
             <input type="date" value={isoOf(weekStart)} onChange={(e) => e.target.value && setWeekStart(mondayOf(parseIso(e.target.value)))}
               title={t('sch_jump_week')}
               className="sch-field rounded-lg px-2 py-1 text-[12px] font-bold outline-none" />
+            {/* Buscador: órdenes ya programadas en cualquier semana. */}
+            <div className="relative">
+              <div className="flex items-center gap-1.5 sch-field rounded-lg px-2 py-1">
+                {findLoading ? <Loader2 className="w-3.5 h-3.5 text-blue-500 animate-spin" /> : <Search className="w-3.5 h-3.5 text-slate-400" />}
+                <input value={findQ} onChange={(e) => setFindQ(e.target.value)}
+                  onFocus={() => setFindOpen(true)}
+                  onBlur={() => setTimeout(() => setFindOpen(false), 150)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Escape') { setFindQ(''); setFindRes(null); e.currentTarget.blur(); }
+                    if (e.key === 'Enter' && findRes && findRes.length) goToHit(findRes[0]);
+                  }}
+                  placeholder={t('sch_find_ph')}
+                  className="sch-cell w-64 text-[12px] font-bold outline-none !p-0" />
+                {findQ && (
+                  <button onClick={() => { setFindQ(''); setFindRes(null); }} className="text-slate-400 hover:text-slate-600"><X className="w-3.5 h-3.5" /></button>
+                )}
+              </div>
+              {findOpen && findRes !== null && findQ.trim().length >= 2 && (
+                <div className="absolute z-40 left-0 top-full mt-1 w-[440px] max-h-[60vh] overflow-y-auto bg-white rounded-xl border border-slate-200 shadow-xl">
+                  {findRes.length === 0 ? (
+                    <p className="px-3 py-4 text-center text-[11px] font-black uppercase text-slate-300">{findLoading ? t('loading') : t('sch_no_matches')}</p>
+                  ) : findRes.map((h) => {
+                    const d = parseIso(h.ship_date);
+                    return (
+                      <button key={h.shipment_id} onMouseDown={(e) => { e.preventDefault(); goToHit(h); }}
+                        className="w-full text-left px-3 py-2 border-b border-slate-100 last:border-0 hover:bg-blue-50 flex items-center gap-2">
+                        <span className="px-1.5 py-0.5 bg-blue-600 text-white text-[10px] font-black rounded">#{h.order_number}</span>
+                        <span className="flex-1 min-w-0">
+                          <span className="block text-[11px] font-bold text-slate-700 truncate">{[h.client, h.branding, h.customer_po, h.design_num].filter(Boolean).join(' · ')}</span>
+                          <span className="block text-[10px] text-slate-400">
+                            {DAYS_SHORT[L][(d.getDay() + 6) % 7]} {pad(d.getDate())} {MONTHS[L][d.getMonth()]} {d.getFullYear()} · {h.export_no ? `EXP#${h.export_no}` : t('sch_block')} · {fmtNum(h.pcs)} pzs
+                          </span>
+                        </span>
+                        {h.status_effective && (
+                          <span className="px-1.5 py-0.5 rounded-full text-[9px] font-black text-white whitespace-nowrap"
+                            style={{ background: (STATUS_COLORS[h.status_effective] || {}).pill || '#64748b' }}>{h.status_effective}</span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
             <span className="px-2.5 py-1 rounded-full bg-yellow-100 text-slate-800 text-[11px] font-black tabular-nums">{t('sch_week_pcs', { n: fmtNum(weekPcs) })}</span>
