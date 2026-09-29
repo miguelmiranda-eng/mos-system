@@ -2103,24 +2103,23 @@ async def list_locations(request: Request, summary: bool = True, skip: int = 0, 
                 "items": items,
             }
 
-        # LA CAJA MANDA también en el resumen del grid. El resumen se arma desde
-        # el LIBRO (wms_inventory) arriba, pero el libro DERIVA: una celda puede
-        # tener el renglón drifteado —units_on_hand=0 mientras las cajas físicas
-        # siguen ahí con stock— y entonces el grid pintaba "Vacío" aunque el modal
-        # (que lee cajas) y el surtido (que lee cajas) mostraran material. Caso
-        # confirmado 2026-09-29: RP01-C37, renglón 0u / total_boxes 2, contra 2
-        # cajas 'located' de 72 = 144u reales.
+        # Transit slots (CARRO <n> + UBICACION TEMPORAL) hold physical boxes that
+        # may have NO wms_inventory row yet: stock received straight into a cart,
+        # or a ledger row that drifted away while the boxes stayed put. Without
+        # this fallback a cart shows "Vacío" here while Putaway counts its boxes
+        # (e.g. CARRO 73: 0 inventory rows but 24 cajas). The picker/inventory
+        # report already reads boxes for these slots — mirror it. Inventory wins
+        # when a row exists for the slot, so we never double-count.
         #
-        # Regla: las cajas VIVAS son la verdad física. Para toda ubicación con
-        # cajas vivas, el resumen se toma de las CAJAS (sobrescribe al libro). Las
-        # celdas SIN cajas conservan el número del libro (saldo legado de Excel
-        # sin cajas detrás, que debe seguir visible). Antes esto solo cubría
-        # tránsito (carros); ahora cubre CUALQUIER ubicación, incluidos los racks.
-        # Mismo filtro de status que _available_units/el surtido, para que grid,
-        # modal y picking no puedan contradecirse.
+        # NOTA (2026-09-29): este fallback se limita A PROPÓSITO a tránsito. Se
+        # probó extenderlo a TODA ubicación para que "la caja mande" en el grid,
+        # pero eso resucitaba stock FANTASMA: 674 cartones del import de Excel (0
+        # movimientos, libro ya dado de baja a 0) reaparecían con 40,687 u. La
+        # regla correcta es dar de baja el papel fantasma (writeoff), no que el
+        # grid lea cajas colgadas. Los fantasmas se limpiaron; el grid lee el
+        # LIBRO, que para esas celdas dice 0 = Vacío, que es la verdad.
         box_pipeline = [
-            {"$match": {"units": {"$gt": 0}, "status": {"$nin": list(_BOX_OUT_STATUSES)},
-                        "location": {"$nin": [None, ""]}}},
+            {"$match": {"location": _transit_loc_filter(), "units": {"$gt": 0}, "status": {"$ne": "depleted"}}},
             {"$group": {
                 "_id": {"location": "$location", "style": {"$ifNull": ["$style", "$sku"]}},
                 "style_units": {"$sum": "$units"},
@@ -2133,8 +2132,9 @@ async def list_locations(request: Request, summary: bool = True, skip: int = 0, 
             }},
         ]
         async for doc in db.wms_boxes.aggregate(box_pipeline):
+            if doc["_id"] in loc_summary:
+                continue  # ledger already covers this slot — trust it, don't double-count
             items = sorted(doc["items"], key=lambda x: x["units"], reverse=True)[:5]
-            # Sobrescribe: las cajas vivas mandan sobre el libro (drift/fantasma).
             loc_summary[doc["_id"]] = {
                 "total_units": doc["total_units"],
                 "skus_count": doc["skus_count"],
