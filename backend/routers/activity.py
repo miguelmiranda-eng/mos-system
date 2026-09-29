@@ -143,6 +143,32 @@ async def get_activity_logs(request: Request, limit: int = 200, offset: int = 0,
     await _detallar_lotes(logs, ids_buscados)
     return {"total": total, "logs": logs, "limit": limit, "offset": offset}
 
+
+# Registro de descargas. Los Excel/PDF/CSV se arman casi todos en el navegador
+# y no pasaban por el backend, así que no quedaba rastro de quién bajaba qué.
+# El frontend (lib/downloadTracker.js) intercepta cada descarga en un solo
+# punto y la reporta aquí; queda en activity_logs como action="download".
+_DOWNLOAD_VIA = {"client", "server"}
+
+
+@router.post("/activity/download")
+async def track_download(request: Request):
+    user = await require_auth(request)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+    via = body.get("via")
+    await log_activity(user, "download", {
+        "filename": str(body.get("filename") or "")[:200],
+        "module": str(body.get("module") or "")[:120],
+        "via": via if via in _DOWNLOAD_VIA else "client",
+    })
+    return {"ok": True}
+
+
 @router.post("/undo/{activity_id}")
 async def undo_action(activity_id: str, request: Request):
     user = await require_admin(request)

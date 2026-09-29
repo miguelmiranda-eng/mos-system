@@ -3,6 +3,10 @@ import ReactDOM from "react-dom/client";
 import "@/index.css";
 import App from "@/App";
 import ErrorBoundary from "@/components/ErrorBoundary";
+import { installDownloadTracker } from "@/lib/downloadTracker";
+
+// Registra cada descarga (Excel/PDF/CSV) en activity_logs; ver lib/downloadTracker.js.
+installDownloadTracker();
 
 const root = ReactDOM.createRoot(document.getElementById("root"));
 root.render(
