@@ -79,6 +79,8 @@ ACTIONS: dict = {
                                desc="Borrar un renglón de inventario (identidad + ubicación)."),
     "inventory.import": _a("Importar inventario desde Excel", "inventory", 3, 3, floor_admin=3, floor_inventory=3,
                            desc="Carga masiva de inventario."),
+    "inventory.hide_locations": _a("Ocultar ubicaciones del inventario", "inventory", 5, None, floor_admin=5, floor_inventory=0,
+                                   desc="Ocultar ubicaciones (por nombre o prefijo) de todo el WMS, y revelarlas con el toggle 'mostrar ocultas'. Default: solo admin nivel 5 (+supersu)."),
     # ── Conteo cíclico / tareas ─────────────────────────────────────────────
     "cycle_count.operate": _a("Crear y capturar conteos", "cycle_count", 1, 1, floor_admin=0, floor_inventory=0,
                               desc="Crear conteos, escanear y cerrar ubicaciones, guardar conteo."),

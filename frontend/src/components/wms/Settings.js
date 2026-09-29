@@ -9,7 +9,7 @@
    · Columnas        — columnas personalizadas de Entradas (asn.columns)
    · Notificaciones  — alertas push de ESTE dispositivo (notifications.push) */
 import { useState } from "react";
-import { ShieldCheck, BookOpen, ScanLine, Hash, Columns3, Bell, BellOff, Send, Loader2, ClipboardCheck } from "lucide-react";
+import { ShieldCheck, BookOpen, ScanLine, Hash, Columns3, Bell, BellOff, Send, Loader2, ClipboardCheck, EyeOff } from "lucide-react";
 import { useLang } from "../../contexts/LanguageContext";
 import { useWms } from "./lib";
 import { HomeModule } from "./Home";
@@ -18,6 +18,7 @@ import { PermissionsPanel } from "./PermissionsPanel";
 import { AsnConfigPanel } from "./AsnConfigModal";
 import { AsnColumnsPanel } from "./AsnColumnsPanel";
 import { PickPriorityPanel } from "./PickPriorityPanel";
+import { HiddenLocationsPanel } from "./HiddenLocationsPanel";
 import { Btn } from "./ui";
 
 const TAB_KEY = 'mos_wms_settings_tab';
@@ -34,6 +35,7 @@ export const SettingsModule = () => {
     ...(can('asn.part_number_config') ? [{ id: 'part_number', label: t('wms_settings_tab_part_number'), icon: Hash }] : []),
     ...(can('asn.columns') ? [{ id: 'columns', label: t('wms_settings_tab_columns'), icon: Columns3 }] : []),
     ...(can('picking.priority_config') ? [{ id: 'picking', label: t('wms_settings_tab_picking'), icon: ClipboardCheck }] : []),
+    ...(can('inventory.hide_locations') ? [{ id: 'hidden', label: t('wms_settings_tab_hidden'), icon: EyeOff }] : []),
     ...(can('notifications.push') ? [{ id: 'notifications', label: t('wms_settings_tab_notifications'), icon: Bell }] : []),
   ];
   // Sin pestaña guardada, `tab` queda null y la activa es la primera visible:
@@ -63,6 +65,7 @@ export const SettingsModule = () => {
       {active === 'part_number' && <AsnConfigPanel embedded />}
       {active === 'columns' && <AsnColumnsPanel />}
       {active === 'picking' && <PickPriorityPanel />}
+      {active === 'hidden' && <HiddenLocationsPanel />}
       {active === 'notifications' && <NotificationsPanel />}
     </div>
   );

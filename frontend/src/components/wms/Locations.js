@@ -52,6 +52,10 @@ export const LocationsModule = ({ currentUser }) => {
   const canEditLocations = can('locations.rename');
   const canCreateLocations = can('locations.create');
   const canDeleteLocations = can('locations.delete');
+  // Ubicaciones ocultas: solo el nivel 5 (misma acción que las configura) las
+  // revela con el toggle. El filtrado es server-side.
+  const canSeeHidden = can('inventory.hide_locations');
+  const [showHidden, setShowHidden] = useState(false);
   const [clearingLoc, setClearingLoc] = useState(false);
   const [locations, setLocations] = useState([]);
   const [editingId, setEditingId] = useState(null);
@@ -167,10 +171,11 @@ export const LocationsModule = ({ currentUser }) => {
   // accessing it before initialization throws at first render.
   const load = useCallback(() => {
     setLoading(true);
-    fetcher('/locations')
+    const qs = (showHidden && canSeeHidden) ? '?show_hidden=true' : '';
+    fetcher(`/locations${qs}`)
       .then(setLocations)
       .finally(() => setLoading(false));
-  }, []);
+  }, [showHidden, canSeeHidden]);
 
   // HOLD (SAT): supersu can park a location so nobody touches its stock, or
   // release it. Mirrors the backend guard in wms.py (_assert_not_on_hold).
@@ -639,7 +644,13 @@ export const LocationsModule = ({ currentUser }) => {
     <div className="space-y-6">
       <ModuleToolbar
         right={
-          <div className="flex gap-2">
+          <div className="flex gap-2 items-center">
+            {canSeeHidden && (
+              <label className="flex items-center gap-1.5 text-sm text-muted-foreground cursor-pointer select-none px-1" title={t('wms_show_hidden_title')}>
+                <input type="checkbox" checked={showHidden} onChange={e => setShowHidden(e.target.checked)} className="accent-primary w-3.5 h-3.5" data-testid="loc-show-hidden-chk" />
+                {t('wms_show_hidden')}
+              </label>
+            )}
             <Btn onClick={() => window.open(`${API}/locations/print?ids=all`, '_blank')}>
               <Printer className="w-4 h-4"
       />

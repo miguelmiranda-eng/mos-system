@@ -166,6 +166,11 @@ export const InventoryModule = ({ initialCustomer = '', currentUser = null }) =>
   // esto solo evita ofrecer un botón que terminaría en 403.
   const { can } = useWms();
   const canAddManual = can('inventory.add_manual');
+  // Ubicaciones ocultas: solo el nivel 5 (misma acción que las configura) puede
+  // revelarlas con el toggle. El filtrado es server-side; el toggle solo manda
+  // show_hidden y el backend lo ignora si el usuario no tiene nivel.
+  const canSeeHidden = can('inventory.hide_locations');
+  const [showHidden, setShowHidden] = useState(false);
   const [inventory, setInventory] = useState([]);
   const [summary, setSummary] = useState({});
   const [filters, setFilters] = useState({ customers: [], categories: [], manufacturers: [], styles: [], countries: [], fabrics: [] });
@@ -311,13 +316,14 @@ export const InventoryModule = ({ initialCustomer = '', currentUser = null }) =>
     if (debouncedSearch) params.set('style', debouncedSearch);
     if (customerFilter) params.set('customer', customerFilter);
     if (categoryFilter) params.set('category', categoryFilter);
+    if (showHidden && canSeeHidden) params.set('show_hidden', 'true');
     // Per-column filters — el backend soporta cada uno como regex case-insensitive
     Object.entries(debouncedColFilters).forEach(([k, v]) => {
       const val = (v || '').trim();
       if (val) params.set(k, val);
     });
     return params;
-  }, [debouncedSearch, customerFilter, categoryFilter, debouncedColFilters]);
+  }, [debouncedSearch, customerFilter, categoryFilter, debouncedColFilters, showHidden, canSeeHidden]);
 
   // Cancellation token: increments whenever filters change so old chunks bail
   const loadGenRef = useRef(0);
@@ -422,6 +428,7 @@ export const InventoryModule = ({ initialCustomer = '', currentUser = null }) =>
   const exportExcel = () => {
     const params = new URLSearchParams();
     if (excludeHold) params.set('exclude_hold', 'true');
+    if (showHidden && canSeeHidden) params.set('show_hidden', 'true');
     const cust = (colFilters.customer || customerFilter || '').trim();
     if (cust) params.set('customer', cust);
     const qs = params.toString();
@@ -755,6 +762,12 @@ export const InventoryModule = ({ initialCustomer = '', currentUser = null }) =>
       />
             {t('wms_inv_exclude_hold')}
           </label>
+          {canSeeHidden && (
+            <label className="flex items-center gap-1.5 text-sm text-muted-foreground cursor-pointer select-none px-1" title={t('wms_show_hidden_title')}>
+              <input type="checkbox" checked={showHidden} onChange={e => setShowHidden(e.target.checked)} className="accent-primary w-3.5 h-3.5" data-testid="show-hidden-chk" />
+              {t('wms_show_hidden')}
+            </label>
+          )}
           <Btn onClick={exportExcel} data-testid="export-inv-btn">
             <Download className="w-4 h-4" /> {t('action_export')}
           </Btn>

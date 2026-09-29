@@ -1858,6 +1858,94 @@ async def _assert_not_on_hold(user, *locations):
         )
 
 
+# ── Ubicaciones OCULTAS (config nivel 5) ──────────────────────────────────────
+# Lista curada de ubicaciones que NO deben aparecer en el WMS (inventario,
+# locaciones, surtido, dropdowns): buckets virtuales, retornos, material perdido,
+# zonas que ensucian la foto real del inventario. Se ocultan por NOMBRE exacto o
+# por PREFIJO. Vive en config_options.wms_hidden_locations y se edita desde
+# Sistema → Configuración → Ubicaciones ocultas (acción inventory.hide_locations,
+# default admin nivel 5). Un usuario nivel 5 puede REVELARLAS con el toggle
+# `show_hidden` de cada listado (mismo patrón que `exclude_hold`).
+#
+# Filtrar es AUTOMÁTICO y server-side para todos; el toggle solo lo respeta quien
+# tiene el nivel, para que ocultar no sea un permiso que cualquiera pueda saltar
+# mandando el query param.
+_HIDDEN_LOCS_CACHE = {"cfg": None, "at": 0.0}
+_HIDDEN_LOCS_TTL = 60.0
+
+
+async def get_hidden_locations(force: bool = False) -> dict:
+    """Config vigente de ubicaciones ocultas: {"names": [...], "prefixes": [...]}
+    en MAYÚSCULAS. Cacheada 60s; se invalida al guardar."""
+    import time as _t
+    c = _HIDDEN_LOCS_CACHE
+    if not force and c["cfg"] is not None and _t.monotonic() - c["at"] < _HIDDEN_LOCS_TTL:
+        return c["cfg"]
+    doc = await db.config_options.find_one(
+        {"config_id": "wms_hidden_locations"}, {"_id": 0, "names": 1, "prefixes": 1}) or {}
+    cfg = {
+        "names": sorted({str(n).strip().upper() for n in (doc.get("names") or []) if str(n).strip()}),
+        "prefixes": sorted({str(p).strip().upper() for p in (doc.get("prefixes") or []) if str(p).strip()}),
+    }
+    c.update({"cfg": cfg, "at": _t.monotonic()})
+    return cfg
+
+
+def _is_location_hidden(name, cfg) -> bool:
+    n = (name or "").strip().upper()
+    if not n:
+        return False
+    if n in set(cfg.get("names") or []):
+        return True
+    return any(n.startswith(p) for p in (cfg.get("prefixes") or []) if p)
+
+
+def _hidden_location_match(cfg, field: str = "location"):
+    """Fragmento Mongo que EXCLUYE las ubicaciones ocultas de `field`. None si no
+    hay nada oculto. Combina nombres exactos ($nin) y prefijos ($not ^regex) bajo
+    el mismo campo, así se mezcla con otros operadores del mismo campo."""
+    names = cfg.get("names") or []
+    prefixes = cfg.get("prefixes") or []
+    if not names and not prefixes:
+        return None
+    ops = {}
+    if names:
+        ops["$nin"] = list(names)
+    if prefixes:
+        rx = "^(" + "|".join(re.escape(p) for p in prefixes) + ")"
+        ops["$not"] = {"$regex": rx, "$options": "i"}
+    return {field: ops}
+
+
+def _can_see_hidden(user) -> bool:
+    """¿El usuario puede revelar ubicaciones ocultas (toggle show_hidden)? Mismo
+    nivel que la acción de configurarlas: admin ≥ 5 o supersu."""
+    if (user or {}).get("role") == "supersu":
+        return True
+    return wa.user_ladders(user)[0] >= 5
+
+
+async def _hidden_filter_for(user, show_hidden: bool, field: str = "location"):
+    """Devuelve el fragmento Mongo a mezclar en una query para ocultar
+    ubicaciones, o None si no aplica (no hay ocultas, o el usuario con nivel pidió
+    verlas). `field` = 'location' en inventario/cajas, 'name' en wms_locations."""
+    if show_hidden and _can_see_hidden(user):
+        return None
+    cfg = await get_hidden_locations()
+    return _hidden_location_match(cfg, field)
+
+
+def _merge_match(query: dict, frag: dict | None) -> dict:
+    """Mezcla un fragmento adicional en una query Mongo sin pisar el mismo campo:
+    si la clave ya existe, usa $and."""
+    if not frag:
+        return query
+    key = next(iter(frag))
+    if key in query:
+        return {"$and": [query, frag]}
+    return {**query, **frag}
+
+
 @router.get("/location-holds")
 async def list_location_holds(request: Request):
     """Read the hold list (any authenticated user — used by the UI badge and the
@@ -1966,19 +2054,22 @@ async def create_location(request: Request):
     return loc
 
 @router.get("/locations")
-async def list_locations(request: Request, summary: bool = True, skip: int = 0, limit: int = 20000):
+async def list_locations(request: Request, summary: bool = True, skip: int = 0, limit: int = 20000,
+                         show_hidden: bool = False):
     """List locations. Query params:
       - summary=false → skip the expensive inventory aggregation (use for dropdowns)
       - skip / limit  → paginate. Hard-capped at 20000 to prevent runaway
         responses while still fitting the full catalog (NARRO rack adds 6,688
         rows on top of the existing ~3k system slots).
+      - show_hidden=true → incluye ubicaciones ocultas (solo nivel 5).
     """
-    await require_auth(request)
+    user = await require_auth(request)
 
     skip = max(0, skip)
     limit = max(1, min(limit, 20000))
 
-    locs = await db.wms_locations.find({}, {"_id": 0}).sort("name", 1).skip(skip).limit(limit).to_list(limit)
+    loc_query = await _hidden_filter_for(user, show_hidden, field="name") or {}
+    locs = await db.wms_locations.find(loc_query, {"_id": 0}).sort("name", 1).skip(skip).limit(limit).to_list(limit)
 
     if not summary:
         return locs
@@ -2012,15 +2103,24 @@ async def list_locations(request: Request, summary: bool = True, skip: int = 0, 
                 "items": items,
             }
 
-        # Transit slots (CARRO <n> + UBICACION TEMPORAL) hold physical boxes that
-        # may have NO wms_inventory row yet: stock received straight into a cart,
-        # or a ledger row that drifted away while the boxes stayed put. Without
-        # this fallback a cart shows "Vacío" here while Putaway counts its boxes
-        # (e.g. CARRO 73: 0 inventory rows but 24 cajas). The picker/inventory
-        # report already reads boxes for these slots — mirror it. Inventory wins
-        # when a row exists for the slot, so we never double-count.
+        # LA CAJA MANDA también en el resumen del grid. El resumen se arma desde
+        # el LIBRO (wms_inventory) arriba, pero el libro DERIVA: una celda puede
+        # tener el renglón drifteado —units_on_hand=0 mientras las cajas físicas
+        # siguen ahí con stock— y entonces el grid pintaba "Vacío" aunque el modal
+        # (que lee cajas) y el surtido (que lee cajas) mostraran material. Caso
+        # confirmado 2026-09-29: RP01-C37, renglón 0u / total_boxes 2, contra 2
+        # cajas 'located' de 72 = 144u reales.
+        #
+        # Regla: las cajas VIVAS son la verdad física. Para toda ubicación con
+        # cajas vivas, el resumen se toma de las CAJAS (sobrescribe al libro). Las
+        # celdas SIN cajas conservan el número del libro (saldo legado de Excel
+        # sin cajas detrás, que debe seguir visible). Antes esto solo cubría
+        # tránsito (carros); ahora cubre CUALQUIER ubicación, incluidos los racks.
+        # Mismo filtro de status que _available_units/el surtido, para que grid,
+        # modal y picking no puedan contradecirse.
         box_pipeline = [
-            {"$match": {"location": _transit_loc_filter(), "units": {"$gt": 0}, "status": {"$ne": "depleted"}}},
+            {"$match": {"units": {"$gt": 0}, "status": {"$nin": list(_BOX_OUT_STATUSES)},
+                        "location": {"$nin": [None, ""]}}},
             {"$group": {
                 "_id": {"location": "$location", "style": {"$ifNull": ["$style", "$sku"]}},
                 "style_units": {"$sum": "$units"},
@@ -2033,9 +2133,8 @@ async def list_locations(request: Request, summary: bool = True, skip: int = 0, 
             }},
         ]
         async for doc in db.wms_boxes.aggregate(box_pipeline):
-            if doc["_id"] in loc_summary:
-                continue  # ledger already covers this slot — trust it, don't double-count
             items = sorted(doc["items"], key=lambda x: x["units"], reverse=True)[:5]
+            # Sobrescribe: las cajas vivas mandan sobre el libro (drift/fantasma).
             loc_summary[doc["_id"]] = {
                 "total_units": doc["total_units"],
                 "skus_count": doc["skus_count"],
@@ -2058,25 +2157,35 @@ _LOC_NAMES_TTL = 60.0
 
 
 @router.get("/locations/names")
-async def list_location_names(request: Request):
+async def list_location_names(request: Request, show_hidden: bool = False):
     """Lightweight location list for dropdowns / typeahead — only {name, zone}.
     The full /locations?summary=false ships ~8.8k COMPLETE docs to every module
     that merely needs names (Mover, Transit, Putaway, Inventory, Locations'
     relocate picker), which is a big slice of the WMS tab's RAM on the low-end
     warehouse PCs. This projection cuts payload + client heap to a fraction.
-    Cached 60s; the catalog rarely changes."""
-    await require_auth(request)
+    Cached 60s; the catalog rarely changes.
+
+    El caché guarda la lista COMPLETA; las ubicaciones ocultas se filtran en
+    memoria por request (barato) para que el toggle del nivel 5 no requiera un
+    caché por usuario."""
+    user = await require_auth(request)
     import time
     now = time.monotonic()
     cached = _LOC_NAMES_CACHE.get("data")
     if cached is not None and (now - _LOC_NAMES_CACHE["ts"]) < _LOC_NAMES_TTL:
-        return cached
-    rows = await db.wms_locations.find(
-        {}, {"_id": 0, "name": 1, "zone": 1}
-    ).sort("name", 1).to_list(30000)
-    _LOC_NAMES_CACHE["data"] = rows
-    _LOC_NAMES_CACHE["ts"] = now
-    return rows
+        rows = cached
+    else:
+        rows = await db.wms_locations.find(
+            {}, {"_id": 0, "name": 1, "zone": 1}
+        ).sort("name", 1).to_list(30000)
+        _LOC_NAMES_CACHE["data"] = rows
+        _LOC_NAMES_CACHE["ts"] = now
+    if show_hidden and _can_see_hidden(user):
+        return rows
+    cfg = await get_hidden_locations()
+    if not (cfg.get("names") or cfg.get("prefixes")):
+        return rows
+    return [r for r in rows if not _is_location_hidden(r.get("name"), cfg)]
 
 
 @router.get("/locations/lookup")
@@ -2140,7 +2249,9 @@ async def list_location_zones(request: Request):
     real del que sale el muestreo cuando no se incluyen vacias.
     Bajar /locations/names completo (~8.8k filas) solo para sacar la lista de
     zonas es tirar RAM en las PC del almacen; esto son ~30 filas."""
-    await require_auth(request)
+    user = await require_auth(request)
+    hidden_cfg = await get_hidden_locations()
+    can_hidden = _can_see_hidden(user)
     stocked = set(await db.wms_boxes.distinct("location", {"units": {"$gt": 0}}))
     by_zone: dict[str, dict] = {}
     async for d in db.wms_locations.find(
@@ -2148,6 +2259,8 @@ async def list_location_zones(request: Request):
     ):
         nm = (d.get("name") or "").strip()
         if not nm:
+            continue
+        if not can_hidden and _is_location_hidden(nm, hidden_cfg):
             continue
         z = (d.get("zone") or "").strip().upper() or "SIN ZONA"
         row = by_zone.setdefault(z, {"zone": z, "total": 0, "with_stock": 0})
@@ -4249,13 +4362,21 @@ async def _available_units(style, color, size, location=""):
     box_q = {**base, "units": {"$gt": 0}, "status": {"$nin": list(_BOX_OUT_STATUSES)}}
     if location:
         box_q["location"] = _ci_eq(location)
+    inv_q = dict(base)
+    if location:
+        inv_q["location"] = _ci_eq(location)
+    # Ubicaciones ocultas no cuentan como disponibles (coherente con que el
+    # surtido no las ofrece). Solo aplica cuando NO se pide una ubicación
+    # concreta; si se pide una específica, ya vino filtrada del size_locations.
+    if not location:
+        hidden_frag = _hidden_location_match(await get_hidden_locations())
+        if hidden_frag:
+            box_q = _merge_match(box_q, hidden_frag)
+            inv_q = _merge_match(inv_q, hidden_frag)
     box_units = 0
     for b in await db.wms_boxes.find(box_q, {"_id": 0, "units": 1, "qty": 1}).to_list(5000):
         box_units += int((b.get("units") if b.get("units") is not None else b.get("qty", 0)) or 0)
 
-    inv_q = dict(base)
-    if location:
-        inv_q["location"] = _ci_eq(location)
     inv_units = 0
     for r in await db.wms_inventory.find(inv_q, {"_id": 0, "units_on_hand": 1}).to_list(5000):
         inv_units += int(r.get("units_on_hand", 0) or 0)
@@ -4686,14 +4807,15 @@ async def get_inventory(
     customer: str = "", category: str = "", style: str = "",
     description: str = "", country_of_origin: str = "", fabric_content: str = "",
     paginated: bool = False, skip: int = 0, limit: int = 5000,
-    exclude_hold: bool = False,
+    exclude_hold: bool = False, show_hidden: bool = False,
 ):
     """List inventory rows.
       - Default (legacy): returns bare array, all rows up to 5000.
       - paginated=true   : returns { items, total, has_more } with skip/limit.
                             Allows the UI to load in chunks without freezing.
+      - show_hidden=true : incluye las ubicaciones ocultas (solo nivel 5).
     """
-    await require_auth(request)
+    user = await require_auth(request)
 
     # Escapar SIEMPRE el texto del usuario: el valor es una subcadena a buscar,
     # no un patrón. Sin esto, un style/sku con caracteres especiales de regex
@@ -4727,6 +4849,11 @@ async def get_inventory(
         held = await _hold_location_names()
         if held:
             query["location"] = {"$nin": list(held)}
+
+    # Ubicaciones ocultas (nivel 5): fuera del inventario salvo que un usuario con
+    # nivel pida verlas (show_hidden). Se mezcla con $and si ya hay filtro de
+    # `location` (columna o exclude_hold), sin pisarlo.
+    query = _merge_match(query, await _hidden_filter_for(user, show_hidden))
 
     skip = max(0, skip)
     limit = max(1, min(limit, 5000))
@@ -5696,6 +5823,10 @@ async def _compute_size_locations(style: str, color: str, sizes: dict, strategy:
     if cached and (_time.monotonic() - cached[0]) < _SIZE_LOCS_TTL:
         return cached[1]
 
+    # Ubicaciones ocultas: el surtido NUNCA las ofrece (el picker no puede
+    # revelarlas). El PUT de la config purga este caché para que el cambio pegue.
+    _hidden_cfg = await get_hidden_locations()
+
     async def _run(q):
         # Limite alto: un SKU muy fragmentado puede vivir en +50 ubicaciones
         # (5000 BLACK L estaba en 96). Con .to_list(50) el picker no veia el stock
@@ -5843,7 +5974,9 @@ async def _compute_size_locations(style: str, color: str, sizes: dict, strategy:
         locs = []
         for m in merged.values():
             m["country_of_origin"] = ", ".join(o for o in m.pop("_origins", []) if o)
-            if m["available"] > 0:
+            # Ubicaciones ocultas (nivel 5) NUNCA se ofrecen al surtir: el picker
+            # no puede revelarlas. Ver get_hidden_locations / Configuración.
+            if m["available"] > 0 and not _is_location_hidden(m.get("location"), _hidden_cfg):
                 locs.append(m)
         total = sum(l["available"] for l in locs)
         for l in locs:
@@ -8673,6 +8806,38 @@ async def wms_pick_priority_put(request: Request):
     return {"ok": True, "groups": await get_pick_priority(force=True)}
 
 
+@router.get("/hidden-locations")
+async def wms_hidden_locations_get(request: Request):
+    """Config de ubicaciones ocultas (nombres + prefijos). Solo quien puede
+    ocultar (inventory.hide_locations, default nivel 5) — la lista misma es
+    información de nivel 5."""
+    await require_action(request, "inventory.hide_locations")
+    return await get_hidden_locations()
+
+
+@router.put("/hidden-locations")
+async def wms_hidden_locations_put(request: Request):
+    """Guarda la lista de ubicaciones ocultas (nombres exactos + prefijos).
+    Gobernado por inventory.hide_locations (default nivel 5). Invalida el caché
+    propio, el de nombres de ubicación y el de surtido para que el cambio pegue
+    de inmediato en todo el WMS."""
+    user = await require_action(request, "inventory.hide_locations")
+    body = await request.json()
+    names = sorted({str(n).strip().upper() for n in (body.get("names") or []) if str(n).strip()})
+    prefixes = sorted({str(p).strip().upper() for p in (body.get("prefixes") or []) if str(p).strip()})
+    await db.config_options.update_one(
+        {"config_id": "wms_hidden_locations"},
+        {"$set": {"names": names, "prefixes": prefixes,
+                  "updated_at": now_iso(), "updated_by": user.get("email")}},
+        upsert=True)
+    _HIDDEN_LOCS_CACHE["cfg"] = None
+    _LOC_NAMES_CACHE["data"] = None      # la lista de dropdowns filtra en memoria
+    _SIZE_LOCS_CACHE.clear()             # el surtido ya no debe ofrecer lo oculto
+    await log_activity(user, "wms_hidden_locations_update",
+                       {"names": names, "prefixes": prefixes})
+    return {"ok": True, **(await get_hidden_locations(force=True))}
+
+
 # ==================== AUDITORIA ====================
 # Modulo de auditoria del flujo completo: salud/consistencia del sistema,
 # trazabilidad por caja, trazabilidad por SKU y busqueda de movimientos.
@@ -10947,8 +11112,9 @@ async def generate_location_labels(request: Request, location: str = ""):
 # ==================== EXPORT ====================
 
 @router.get("/export/inventory")
-async def export_inventory(request: Request, exclude_hold: bool = False, customer: str = ""):
-    await require_auth(request)
+async def export_inventory(request: Request, exclude_hold: bool = False, customer: str = "",
+                           show_hidden: bool = False):
+    user = await require_auth(request)
     # Filtro opcional por cliente (mismo patron que /export/receiving). Sin el,
     # el Excel trae los ~23k renglones de TODOS los clientes y una columna como
     # UPC —que hoy solo tiene SPEKTRUM— se ve casi vacia porque las filas del
@@ -10983,6 +11149,11 @@ async def export_inventory(request: Request, exclude_hold: bool = False, custome
     boxes = await db.wms_boxes.find(box_query, {"_id": 0}).sort([("location", 1), ("sku", 1)]).to_list(None)
     if exclude_hold and held:
         boxes = [b for b in boxes if (b.get("location") or "").strip().upper() not in held]
+    # Ubicaciones ocultas fuera del Excel salvo que un nivel 5 pida verlas.
+    if not (show_hidden and _can_see_hidden(user)):
+        _hcfg = await get_hidden_locations()
+        if _hcfg.get("names") or _hcfg.get("prefixes"):
+            boxes = [b for b in boxes if not _is_location_hidden(b.get("location"), _hcfg)]
 
     # Agregado por SKU + ubicacion DESDE LAS CAJAS (la unica verdad fisica).
     grupos = {}
