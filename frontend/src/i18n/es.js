@@ -5405,6 +5405,7 @@ const es = {
   plan_applied_revert: "Revertir",
   plan_applied_confirm_revert: "¿Regresar la orden {n} a {b}?",
   plan_applied_reverted_toast: "Orden {n} regresada a su tablero",
+  plan_reschedule: "Reprogramar",
 };
 
 export default es;

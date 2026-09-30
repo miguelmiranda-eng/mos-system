@@ -545,7 +545,7 @@ const MachineGrid = ({ run, onAdjust, tr }) => {
    tablero MAQUINA por el mismo camino que un movimiento manual del CRM
    (candado QC, guardas, bitácora, automatizaciones). Todo se puede revertir
    desde "Movimientos autorizados". */
-const MovesCard = ({ run, canEdit, onApply, tr }) => {
+const MovesCard = ({ run, canEdit, onApply, onAdjust, tr }) => {
   const moves = run.moves || [];
   const [sel, setSel] = useState([]);
   const [confirm, setConfirm] = useState(null);     // lista de movimientos a autorizar
@@ -603,9 +603,17 @@ const MovesCard = ({ run, canEdit, onApply, tr }) => {
                     {m.positions.map((p) => `${p.position} → ${p.machines.join(", ").replace(/MAQUINA/g, "M")}`).join(" · ")}
                   </td>
                   <td className="pr-4 tabular-nums text-slate-500">{dday(m.start)} {hhmm(m.start)}</td>
-                  <td>{canEdit && (
-                    <button onClick={() => setConfirm([m])}
-                      className="px-2.5 h-7 rounded-lg bg-blue-600 text-white text-xs font-bold hover:bg-blue-700">{tr("plan_auth_one")}</button>
+                  <td className="whitespace-nowrap">{canEdit && (
+                    <span className="inline-flex gap-1.5">
+                      <button onClick={() => onAdjust((run.jobs || []).find((j) => j.order_id === m.order_id) || {
+                        order_id: m.order_id, order_number: m.order_number, client: m.client, start: m.start,
+                        position: m.positions[0]?.position, machines: m.positions[0]?.machines || [] })}
+                        className="px-2.5 h-7 rounded-lg border border-slate-300 text-slate-700 text-xs font-bold inline-flex items-center gap-1 hover:border-blue-300 hover:text-blue-700">
+                        <SlidersHorizontal className="w-3.5 h-3.5" />{tr("plan_reschedule")}
+                      </button>
+                      <button onClick={() => setConfirm([m])}
+                        className="px-2.5 h-7 rounded-lg bg-blue-600 text-white text-xs font-bold hover:bg-blue-700">{tr("plan_auth_one")}</button>
+                    </span>
                   )}</td>
                 </tr>
               ))}
@@ -791,7 +799,7 @@ const ScheduleTab = ({ config, run, running, onRun, canEdit, onToggle, onAdjust,
         }}
         tr={tr} />
 
-      <MovesCard run={run} canEdit={canEdit} onApply={onApplyMoves} tr={tr} />
+      <MovesCard run={run} canEdit={canEdit} onApply={onApplyMoves} onAdjust={onAdjust} tr={tr} />
       <AppliedMovesCard rows={applied} canEdit={canEdit} onRevert={onRevertMove} lastResults={lastApply} tr={tr} />
 
       <Card className="p-4">

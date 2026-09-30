@@ -5591,6 +5591,7 @@ const en = {
   plan_applied_revert: "Revert",
   plan_applied_confirm_revert: "Send order {n} back to {b}?",
   plan_applied_reverted_toast: "Order {n} sent back to its board",
+  plan_reschedule: "Reschedule",
 };
 
 export default en;
