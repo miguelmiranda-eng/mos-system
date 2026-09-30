@@ -39,6 +39,20 @@ const planner = async (path, opts = {}) => {
   return data;
 };
 
+// Alta/baja de máquinas = alta/baja del tablero MAQUINA<n>. Reutiliza el CRUD de
+// tableros del CRM (invalida la caché de capacidad y, al borrar, manda las
+// órdenes de esa máquina a MASTER); el Planner no duplica esa lógica.
+const configApi = async (path, opts = {}) => {
+  const res = await fetch(`${API}/config${path}`, {
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    ...opts,
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+  return data;
+};
+
 const MISS_KEYS = ["contado", "cuadros", "label", "ejemplo"];
 
 const STATUS_STYLE = {
@@ -1578,6 +1592,27 @@ const MachinesTab = ({ cfgData, canEdit, onSaved, tr }) => {
     } catch (e) { toast.error(e.message); }
   };
 
+  const [busyMachine, setBusyMachine] = useState(false);
+  const addMachine = async () => {
+    const next = (rows.reduce((mx, m) => Math.max(mx, m.number || 0), 0)) + 1;
+    const name = `MAQUINA${next}`;
+    setBusyMachine(true);
+    try {
+      await configApi("/boards", { method: "POST", body: JSON.stringify({ name }) });
+      toast.success(tr("plan_machine_added", { m: name }));
+      onSaved();
+    } catch (e) { toast.error(e.message); } finally { setBusyMachine(false); }
+  };
+  const deleteMachine = async (m) => {
+    if (!window.confirm(tr("plan_machine_delete_confirm", { m: m.machine }))) return;
+    setBusyMachine(true);
+    try {
+      await configApi(`/boards/${encodeURIComponent(m.machine)}`, { method: "DELETE" });
+      toast.success(tr("plan_machine_deleted", { m: m.machine }));
+      onSaved();
+    } catch (e) { toast.error(e.message); } finally { setBusyMachine(false); }
+  };
+
   const active = rows.filter((m) => m.active).length;
   return (
     <div className="space-y-5">
@@ -1626,9 +1661,17 @@ const MachinesTab = ({ cfgData, canEdit, onSaved, tr }) => {
       </Card>
 
       <Card className="p-4">
-        <SectionTitle hint={tr("plan_machines_hint", { min: minHeads, max: maxHeads })}>
-          {tr("plan_machines_title")} · {tr("plan_active_of", { a: active, n: rows.length })}
-        </SectionTitle>
+        <div className="flex items-start justify-between gap-3">
+          <SectionTitle hint={tr("plan_machines_hint", { min: minHeads, max: maxHeads })}>
+            {tr("plan_machines_title")} · {tr("plan_active_of", { a: active, n: rows.length })}
+          </SectionTitle>
+          {canEdit && (
+            <button onClick={addMachine} disabled={busyMachine}
+              className="shrink-0 h-9 px-3 rounded-lg bg-blue-600 text-white text-sm font-bold inline-flex items-center gap-2 disabled:opacity-60">
+              {busyMachine ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}{tr("plan_add_machine")}
+            </button>
+          )}
+        </div>
         <div className="overflow-x-auto">
           <table className="min-w-full text-sm">
             <thead><tr className="text-left text-[11px] uppercase tracking-wider text-slate-400">
@@ -1660,10 +1703,16 @@ const MachinesTab = ({ cfgData, canEdit, onSaved, tr }) => {
                   </td>
                   <td>
                     {canEdit && (
+                      <div className="inline-flex items-center gap-1.5">
                       <button onClick={() => saveMachine(m, { heads: m.heads, preferred_client: m.preferred_client || "", notes: m.notes || "" })}
                         className="h-8 px-3 rounded-lg border border-slate-200 text-xs font-bold hover:border-blue-300 inline-flex items-center gap-1">
                         <Save className="w-3.5 h-3.5" />{tr("plan_save")}
                       </button>
+                      <button onClick={() => deleteMachine(m)} disabled={busyMachine} title={tr("plan_machine_delete")}
+                        className="h-8 px-2 rounded-lg border border-slate-200 text-red-600 hover:border-red-300 hover:bg-red-50 inline-flex items-center disabled:opacity-60">
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                      </div>
                     )}
                   </td>
                 </tr>
