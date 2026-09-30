@@ -5268,7 +5268,7 @@ const en = {
   plan_status_FUERA_DE_HORIZONTE: "Beyond horizon",
   plan_status_SIN_FECHA: "No date",
   plan_blocked_title: "Blocked (entry filter not met)",
-  plan_blocked_hint: "To enter the schedule they need counted/picked, screens and label ready.",
+  plan_blocked_hint: "To enter the schedule they need counted/picked, screens, label ready and, for new orders, an approved sample.",
   plan_req_counted: "Counted",
   plan_req_screens: "Screens",
   plan_req_label: "Label",
@@ -5602,6 +5602,11 @@ const en = {
   plan_search_in_plan_no_job: "In planning, no pending work (printed or no hits)",
   plan_search_engine_off: "In planning: turn on the engine to see its schedule",
   plan_search_confirm_auth: "Authorize moving order {n} to {b}? This DOES move it in the CRM.",
+  plan_cancel_range: "Cancel date:",
+  plan_range_overdue: "Overdue",
+  plan_range_week: "This week",
+  plan_range_next: "Next week",
+  plan_range_clear: "Clear dates",
 };
 
 export default en;

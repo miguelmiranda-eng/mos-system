@@ -715,6 +715,21 @@ const ScheduleTab = ({ config, run, running, onRun, canEdit, onToggle, onAdjust,
   const [miss, setMiss] = useState("");
   const [onlyThat, setOnlyThat] = useState(false);
   const [blockedSearch, setBlockedSearch] = useState("");
+  // Rango por CANCEL DATE (YYYY-MM-DD, se compara como texto).
+  const [dFrom, setDFrom] = useState("");
+  const [dTo, setDTo] = useState("");
+  const todayIso = () => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  };
+  const setQuick = (k) => {
+    const t = todayIso();
+    const mon = addDays(t, -weekdayIdx(t));
+    if (k === "overdue") { setDFrom(""); setDTo(addDays(t, -1)); }
+    if (k === "week") { setDFrom(mon); setDTo(addDays(mon, 6)); }
+    if (k === "next") { setDFrom(addDays(mon, 7)); setDTo(addDays(mon, 13)); }
+    if (k === "clear") { setDFrom(""); setDTo(""); }
+  };
 
   // Filtro de bloqueados por lo que les falta. "Sólo eso" = les falta
   // únicamente ese requisito (los que están a un paso de entrar).
@@ -730,9 +745,13 @@ const ScheduleTab = ({ config, run, running, onRun, canEdit, onToggle, onAdjust,
         if (onlyThat && MISS_KEYS.some((k) => k !== miss && lacks(b, k))) return false;
       }
       if (q && !String(b.order_number).toLowerCase().includes(q) && !String(b.client || "").toLowerCase().includes(q)) return false;
+      const cd = String(b.cancel_date || "").slice(0, 10);
+      if ((dFrom || dTo) && !cd) return false;
+      if (dFrom && cd < dFrom) return false;
+      if (dTo && cd > dTo) return false;
       return true;
     });
-  }, [blockedAll, miss, onlyThat, blockedSearch]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [blockedAll, miss, onlyThat, blockedSearch, dFrom, dTo]); // eslint-disable-line react-hooks/exhaustive-deps
   const on = config?.engine_mode === "shadow";
 
   if (!on) {
@@ -890,6 +909,20 @@ const ScheduleTab = ({ config, run, running, onRun, canEdit, onToggle, onAdjust,
                   {tr("plan_miss_only")}
                 </label>
               )}
+              <div className="w-full flex flex-wrap items-center gap-1.5 text-xs text-slate-500">
+                <span className="font-bold">{tr("plan_cancel_range")}</span>
+                <input type="date" value={dFrom} onChange={(e) => setDFrom(e.target.value)} className="h-8 px-2 rounded-lg border border-slate-200 text-xs" />
+                <span>—</span>
+                <input type="date" value={dTo} onChange={(e) => setDTo(e.target.value)} className="h-8 px-2 rounded-lg border border-slate-200 text-xs" />
+                {[["overdue", "plan_range_overdue"], ["week", "plan_range_week"], ["next", "plan_range_next"]].map(([k, l]) => (
+                  <button key={k} onClick={() => setQuick(k)} className="px-2 h-8 rounded-lg border border-slate-200 bg-white font-bold hover:border-slate-400">{tr(l)}</button>
+                ))}
+                {(dFrom || dTo) && (
+                  <button onClick={() => setQuick("clear")} className="px-2 h-8 rounded-lg text-slate-400 hover:text-red-600 inline-flex items-center gap-1">
+                    <X className="w-3.5 h-3.5" />{tr("plan_range_clear")}
+                  </button>
+                )}
+              </div>
               <input value={blockedSearch} onChange={(e) => setBlockedSearch(e.target.value)} placeholder={tr("plan_search_order_client")}
                 className="ml-auto h-8 px-2 rounded-lg border border-slate-200 text-xs w-52" />
               <span className="text-xs text-slate-500 tabular-nums w-full sm:w-auto">

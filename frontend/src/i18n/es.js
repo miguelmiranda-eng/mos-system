@@ -5082,7 +5082,7 @@ const es = {
   plan_status_FUERA_DE_HORIZONTE: "Fuera de horizonte",
   plan_status_SIN_FECHA: "Sin fecha",
   plan_blocked_title: "Bloqueados (no cumplen el filtro de entrada)",
-  plan_blocked_hint: "Para entrar al programa necesitan contado/surtido, cuadros y label listo.",
+  plan_blocked_hint: "Para entrar al programa necesitan contado/surtido, cuadros, label listo y, si es orden nueva, ejemplo aprobado.",
   plan_req_counted: "Contado",
   plan_req_screens: "Cuadros",
   plan_req_label: "Label",
@@ -5416,6 +5416,11 @@ const es = {
   plan_search_in_plan_no_job: "En planeación, sin trabajo pendiente (ya impresa o sin hits)",
   plan_search_engine_off: "En planeación: enciende el motor para ver su programa",
   plan_search_confirm_auth: "¿Autorizar mover la orden {n} a {b}? Esto sí la mueve en el CRM.",
+  plan_cancel_range: "Cancel date:",
+  plan_range_overdue: "Vencidas",
+  plan_range_week: "Esta semana",
+  plan_range_next: "Próxima semana",
+  plan_range_clear: "Limpiar fechas",
 };
 
 export default es;
