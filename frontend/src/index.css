@@ -644,6 +644,14 @@ html:not(.dark) .planner-page table th {
   backdrop-filter: none !important;
   box-shadow: none !important;
 }
+/* Encabezado congelado en tablas con scroll propio (p. ej. Bloqueados). No usa
+   la clase `sticky` para no chocar con las reglas globales `.dark th.sticky`;
+   el fondo sólido de arriba evita que las filas se transparenten al hacer scroll. */
+.planner-page thead.planner-freeze th {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+}
 .planner-page .planner-machine-cell {
   background: #f8fafc !important;
 }

@@ -3,8 +3,10 @@ import { useNavigate } from "react-router-dom";
 import {
   ArrowLeft, CalendarClock, Power, RefreshCw, Loader2, Cpu, TrendingUp,
   Settings2, CalendarDays, AlertTriangle, Trash2, Plus, Save, FlaskConical, Eye, Search,
-  Pin, ArrowUpDown, LogIn, PauseCircle, Undo2, X, SlidersHorizontal, BellRing, CheckCircle2,
+  Pin, ArrowUpDown, LogIn, PauseCircle, Undo2, X, SlidersHorizontal, BellRing, CheckCircle2, Download,
 } from "lucide-react";
+import * as XLSX from "xlsx";
+import { saveAs } from "file-saver";
 import { toast } from "sonner";
 import { useAuth } from "../App";
 import { API } from "../lib/constants";
@@ -768,6 +770,41 @@ const ScheduleTab = ({ config, run, running, onRun, canEdit, onToggle, onAdjust,
       return true;
     });
   }, [blockedAll, miss, onlyThat, blockedSearch, dFrom, dTo]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Exporta los bloqueados a Excel con UNA HOJA POR DEPARTAMENTO (lo que le
+  // falta a cada uno), para mandarles su pendiente. Cada hoja lista las órdenes
+  // a las que les falta ese requisito; además una hoja "Retenidas" y "Todos".
+  const exportBlocked = () => {
+    const head = [tr("plan_order"), tr("plan_position"), tr("plan_client"), tr("plan_kind_col"),
+                  tr("plan_board"), tr("plan_hits_left"), tr("plan_target"), tr("plan_missing")];
+    const missOf = (b) => (b.held ? tr("plan_ov_kind_hold")
+      : MISS_KEYS.filter((k) => lacks(b, k)).map((k) => tr(`plan_miss_${k}`)).join(", "));
+    const kindOf = (b) => tr(`plan_kind_${b.kind || "SIN_DATO"}`)
+      + (b.kind === "NUEVA" && b.sample_state && tr(`plan_sample_short_${b.sample_state}`)
+         ? ` · ${tr(`plan_sample_short_${b.sample_state}`)}` : "");
+    const row = (b) => [b.order_number, b.position, b.client, kindOf(b), b.board,
+                        b.remaining || 0, b.target_date || b.cancel_date || "", missOf(b)];
+    const sheet = (list) => {
+      const ws = XLSX.utils.aoa_to_sheet([head, ...list.map(row)]);
+      ws["!cols"] = [{ wch: 9 }, { wch: 10 }, { wch: 24 }, { wch: 18 }, { wch: 14 },
+                     { wch: 11 }, { wch: 12 }, { wch: 30 }];
+      return ws;
+    };
+    const wb = XLSX.utils.book_new();
+    let any = false;
+    MISS_KEYS.forEach((k) => {
+      const list = blockedAll.filter((b) => lacks(b, k));
+      if (list.length) { XLSX.utils.book_append_sheet(wb, sheet(list), tr(`plan_miss_${k}`).slice(0, 31)); any = true; }
+    });
+    const held = blockedAll.filter((b) => b.held);
+    if (held.length) { XLSX.utils.book_append_sheet(wb, sheet(held), tr("plan_ov_kind_hold").slice(0, 31)); any = true; }
+    if (blockedAll.length) XLSX.utils.book_append_sheet(wb, sheet(blockedAll), tr("plan_all").slice(0, 31));
+    if (!any && !blockedAll.length) { toast.error(tr("plan_export_empty")); return; }
+    const buf = XLSX.write(wb, { bookType: "xlsx", type: "array" });
+    saveAs(new Blob([buf], { type: "application/octet-stream" }),
+           `Planeacion_Bloqueados_${new Date().toISOString().slice(0, 10)}.xlsx`);
+  };
+
   const on = config?.engine_mode === "shadow";
 
   if (!on) {
@@ -909,7 +946,7 @@ const ScheduleTab = ({ config, run, running, onRun, canEdit, onToggle, onAdjust,
           </SectionTitle>
         </button>
         {showBlocked && (
-          <div className="overflow-x-auto">
+          <div>
             <div className="flex flex-wrap items-center gap-1.5 mb-3">
               {[["", tr("plan_all"), blockedAll.length], ...MISS_KEYS.map((k) => [k, tr(`plan_miss_${k}`), missCount(k)]),
                 ["held", tr("plan_ov_kind_hold"), blockedAll.filter((b) => b.held).length]].map(([k, label, n]) => (
@@ -941,12 +978,17 @@ const ScheduleTab = ({ config, run, running, onRun, canEdit, onToggle, onAdjust,
               </div>
               <input value={blockedSearch} onChange={(e) => setBlockedSearch(e.target.value)} placeholder={tr("plan_search_order_client")}
                 className="ml-auto h-8 px-2 rounded-lg border border-slate-200 text-xs w-52" />
+              <button onClick={exportBlocked} title={tr("plan_export_blocked_hint")}
+                className="h-8 px-3 rounded-lg bg-green-600 text-white text-xs font-bold inline-flex items-center gap-1.5 hover:bg-green-700">
+                <Download className="w-3.5 h-3.5" />{tr("plan_export_excel")}
+              </button>
               <span className="text-xs text-slate-500 tabular-nums w-full sm:w-auto">
                 {tr("plan_blocked_showing", { n: blockedRows.length, hits: fmt(blockedRows.reduce((a, b) => a + (b.remaining || 0), 0)) })}
               </span>
             </div>
+            <div className="overflow-auto max-h-[70vh]">
             <table className="min-w-full text-sm">
-              <thead><tr className="text-left text-[11px] uppercase tracking-wider text-slate-400">
+              <thead className="planner-freeze"><tr className="text-left text-[11px] uppercase tracking-wider text-slate-400">
                 <th className="py-2 pr-3">{tr("plan_order")}</th><th className="pr-3">{tr("plan_position")}</th>
                 <th className="pr-3">{tr("plan_client")}</th><th className="pr-3">{tr("plan_kind_col")}</th><th className="pr-3">{tr("plan_board")}</th>
                 <th className="pr-3 text-right">{tr("plan_hits_left")}</th><th className="pr-3">{tr("plan_target")}</th>
@@ -975,6 +1017,7 @@ const ScheduleTab = ({ config, run, running, onRun, canEdit, onToggle, onAdjust,
                 ))}
               </tbody>
             </table>
+            </div>
           </div>
         )}
       </Card>
