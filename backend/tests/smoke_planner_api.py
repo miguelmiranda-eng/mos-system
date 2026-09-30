@@ -70,7 +70,8 @@ CANCEL = (date.today() + timedelta(days=30)).isoformat()
 def sembrar():
     print(f"== Sembrando {SMOKE_DB} ==")
     for c in ["orders", "users", "user_sessions", "board_config", "production_logs",
-              "planner_config", "planner_machines", "planner_calendar", "planner_runs", "planner_overrides", "activity_logs", "sample_tasks"]:
+              "planner_config", "planner_machines", "planner_calendar", "planner_runs", "planner_overrides", "activity_logs", "sample_tasks",
+              "planner_applied", "automations", "notifications"]:
         sdb[c].delete_many({})
     sdb.board_config.insert_one({"config_id": "boards", "boards": [
         "SCHEDULING", "BLANKS", "SCREENS", "NECK", "MAQUINA1", "MAQUINA2", "MAQUINA3", "COMPLETOS"]})
@@ -111,6 +112,9 @@ def sembrar():
          "password_hash": bcrypt.hash("sup123"), "role": "supersu", "admin_level": 5, "active": True},
         {"user_id": "u_op", "email": "op@test.local", "name": "Operador",
          "password_hash": bcrypt.hash("op123"), "role": "operator", "active": True},
+        # admin (no supersu): el candado de QC SÍ le aplica.
+        {"user_id": "u_adm", "email": "adm@test.local", "name": "Admin Planeación",
+         "password_hash": bcrypt.hash("adm123"), "role": "admin", "admin_level": 5, "active": True},
     ])
 
 
@@ -309,6 +313,63 @@ async def main():
         g = next((x for x in al["printed_stale"] if x["order_id"] == "ord_g"), None)
         check("impresa hace 3 días sin avanzar de estatus -> alerta", g is not None and g["days"] >= 2.9, al)
         check("la impresa completa no queda en el programa", not any(j["order_id"] == "ord_g" for j in run3["jobs"]))
+
+        print("\n== Autorizar movimientos ==")
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://smoke") as adm:
+            r = await adm.post("/api/auth/login", json={"email": "adm@test.local", "password": "adm123"})
+            check("login admin", r.status_code == 200, r.status_code)
+            # Tiempo extra hoy y mañana para que haya trabajo arrancando YA,
+            # sin importar el día de la semana en que corra la prueba.
+            hoy = date.today()
+            await sup.post("/api/planner/calendar", json={"kind": "overtime", "date_from": (hoy - timedelta(days=1)).isoformat(),
+                                                          "date_to": (hoy + timedelta(days=1)).isoformat(),
+                                                          "shift": "AMBOS", "crews": 3})
+            run4 = (await sup.post("/api/planner/shadow-run")).json()
+            mv = run4.get("moves") or []
+            check("hay movimientos propuestos", len(mv) >= 2, len(mv))
+            m1, m2 = mv[0], mv[1]
+            r = await op.post("/api/planner/moves/apply", json={"run_id": run4["run_id"], "order_ids": [m1["order_id"]]})
+            check("operador NO autoriza movimientos", r.status_code == 403, r.status_code)
+            r = await sup.post("/api/planner/moves/apply", json={"run_id": "prun_viejo", "order_ids": [m1["order_id"]]})
+            check("corrida vieja -> 409 (recalcula primero)", r.status_code == 409, r.status_code)
+            antes_otras = {o["order_id"]: o["board"] for o in sdb.orders.find({"order_id": {"$ne": m1["order_id"]}}, {"_id": 0})}
+            r = await sup.post("/api/planner/moves/apply", json={"run_id": run4["run_id"], "order_ids": [m1["order_id"]]})
+            res = r.json()
+            check("aplicar 1 movimiento", r.status_code == 200 and res.get("applied") == 1, r.text[:300])
+            o1 = sdb.orders.find_one({"order_id": m1["order_id"]}, {"_id": 0})
+            check("la orden quedó en su máquina, en cola y con día", o1["board"] == m1["to_board"]
+                  and o1.get("queue_status") == "queued" and o1.get("scheduled_day"), o1.get("board"))
+            despues_otras = {o["order_id"]: o["board"] for o in sdb.orders.find({"order_id": {"$ne": m1["order_id"]}}, {"_id": 0})}
+            check("sólo se movió la autorizada", antes_otras == despues_otras)
+            check("bitácora del CRM (move_order)", sdb.activity_logs.count_documents(
+                {"action": "move_order", "details.order_id": m1["order_id"]}) == 1)
+            r = await sup.post("/api/planner/moves/apply", json={"run_id": run4["run_id"], "order_ids": [m1["order_id"]]})
+            check("aplicar dos veces no la vuelve a mover (ya no está en origen)",
+                  r.json()["results"][0]["result"] == "skipped", r.json())
+            # Candado de QC: el admin (no supersu) no puede mover una orden bloqueada.
+            sdb.orders.update_one({"order_id": m2["order_id"]}, {"$set": {"locked_by_qc": True}})
+            r = await adm.post("/api/planner/moves/apply", json={"run_id": run4["run_id"], "order_ids": [m2["order_id"]]})
+            check("candado de QC bloquea el movimiento", r.json()["results"][0]["result"] == "blocked"
+                  and sdb.orders.find_one({"order_id": m2["order_id"]})["board"] == m2["from_board"], r.json())
+            sdb.orders.update_one({"order_id": m2["order_id"]}, {"$unset": {"locked_by_qc": ""}})
+            # Revertir
+            ap = (await sup.get("/api/planner/moves/applied")).json()["rows"]
+            check("movimiento aplicado en la bitácora del módulo", len(ap) == 1 and ap[0]["status"] == "applied")
+            r = await op.post(f"/api/planner/moves/applied/{ap[0]['apply_id']}/revert")
+            check("operador NO revierte", r.status_code == 403, r.status_code)
+            r = await sup.post(f"/api/planner/moves/applied/{ap[0]['apply_id']}/revert")
+            o1b = sdb.orders.find_one({"order_id": m1["order_id"]}, {"_id": 0})
+            check("revertir regresa al tablero de origen", r.status_code == 200 and o1b["board"] == m1["from_board"], r.text[:200])
+            r = await sup.post(f"/api/planner/moves/applied/{ap[0]['apply_id']}/revert")
+            check("revertir dos veces -> 409", r.status_code == 409, r.status_code)
+            # No se revierte si alguien ya la movió a otro lado.
+            run5 = (await sup.post("/api/planner/shadow-run")).json()
+            m3 = next((m for m in run5["moves"] if m["order_id"] == m1["order_id"]), run5["moves"][0])
+            await sup.post("/api/planner/moves/apply", json={"run_id": run5["run_id"], "order_ids": [m3["order_id"]]})
+            sdb.orders.update_one({"order_id": m3["order_id"]}, {"$set": {"board": "NECK"}})
+            ap2 = (await sup.get("/api/planner/moves/applied")).json()["rows"][0]
+            r = await sup.post(f"/api/planner/moves/applied/{ap2['apply_id']}/revert")
+            check("si la movieron después, no se pisa (409)", r.status_code == 409, r.status_code)
 
         print("\n== Calidad de datos ==")
         r = await sup.get("/api/planner/data-quality")

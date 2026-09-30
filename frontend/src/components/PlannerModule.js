@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import {
   ArrowLeft, CalendarClock, Power, RefreshCw, Loader2, Cpu, TrendingUp,
   Settings2, CalendarDays, AlertTriangle, Trash2, Plus, Save, FlaskConical, Eye,
-  Pin, ArrowUpDown, LogIn, PauseCircle, Undo2, X, SlidersHorizontal, BellRing,
+  Pin, ArrowUpDown, LogIn, PauseCircle, Undo2, X, SlidersHorizontal, BellRing, CheckCircle2,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "../App";
@@ -540,7 +540,167 @@ const MachineGrid = ({ run, onAdjust, tr }) => {
   );
 };
 
-const ScheduleTab = ({ config, run, running, onRun, canEdit, onToggle, onAdjust, overrides, history, onUndo, tr }) => {
+/* ── Autorizar movimientos ─────────────────────────────────────────────────
+   El motor propone; un administrador autoriza. Autorizar mueve la orden a su
+   tablero MAQUINA por el mismo camino que un movimiento manual del CRM
+   (candado QC, guardas, bitácora, automatizaciones). Todo se puede revertir
+   desde "Movimientos autorizados". */
+const MovesCard = ({ run, canEdit, onApply, tr }) => {
+  const moves = run.moves || [];
+  const [sel, setSel] = useState([]);
+  const [confirm, setConfirm] = useState(null);     // lista de movimientos a autorizar
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { setSel([]); }, [run.run_id]);
+  const toggle = (id) => setSel(sel.includes(id) ? sel.filter((x) => x !== id) : [...sel, id]);
+  const allOn = moves.length > 0 && sel.length === moves.length;
+  const doApply = async () => {
+    setBusy(true);
+    try { await onApply(confirm.map((m) => m.order_id)); setConfirm(null); setSel([]); } finally { setBusy(false); }
+  };
+  return (
+    <Card className="p-4">
+      <div className="flex flex-wrap items-start gap-2">
+        <SectionTitle hint={canEdit ? tr("plan_moves_hint_auth") : tr("plan_moves_hint")}>
+          {tr("plan_moves_title")} ({moves.length})
+        </SectionTitle>
+        {canEdit && moves.length > 0 && (
+          <div className="ml-auto flex gap-2">
+            <button onClick={() => setConfirm(moves.filter((m) => sel.includes(m.order_id)))} disabled={!sel.length}
+              className="h-9 px-3 rounded-lg bg-blue-600 text-white text-sm font-bold inline-flex items-center gap-1.5 disabled:opacity-40">
+              <CheckCircle2 className="w-4 h-4" />{tr("plan_auth_selected", { n: sel.length })}
+            </button>
+            <button onClick={() => setConfirm(moves)}
+              className="h-9 px-3 rounded-lg border border-blue-300 text-blue-700 text-sm font-bold hover:bg-blue-50">
+              {tr("plan_auth_all", { n: moves.length })}
+            </button>
+          </div>
+        )}
+      </div>
+      {moves.length === 0 ? <Empty>{tr("plan_moves_empty")}</Empty> : (
+        <div className="overflow-x-auto">
+          <table className="min-w-full text-sm">
+            <thead><tr className="text-left text-[11px] uppercase tracking-wider text-slate-400">
+              {canEdit && (
+                <th className="py-2 pr-2">
+                  <input type="checkbox" checked={allOn} onChange={() => setSel(allOn ? [] : moves.map((m) => m.order_id))} className="w-4 h-4" />
+                </th>
+              )}
+              <th className="py-2 pr-4">{tr("plan_order")}</th><th className="pr-4">{tr("plan_client")}</th>
+              <th className="pr-4">{tr("plan_from")}</th><th className="pr-4">{tr("plan_to")}</th>
+              <th className="pr-4">{tr("plan_positions")}</th><th className="pr-4">{tr("plan_starts")}</th><th />
+            </tr></thead>
+            <tbody className="divide-y divide-slate-100">
+              {moves.map((m) => (
+                <tr key={m.order_id} className={sel.includes(m.order_id) ? "bg-blue-50/60" : ""}>
+                  {canEdit && (
+                    <td className="py-2 pr-2"><input type="checkbox" checked={sel.includes(m.order_id)} onChange={() => toggle(m.order_id)} className="w-4 h-4" /></td>
+                  )}
+                  <td className="py-2 pr-4 font-black">{m.order_number}</td>
+                  <td className="pr-4 text-slate-500">{m.client}</td>
+                  <td className="pr-4">{m.from_board}</td>
+                  <td className="pr-4 font-bold text-blue-700">{m.to_board}</td>
+                  <td className="pr-4 text-xs text-slate-500">
+                    {m.positions.map((p) => `${p.position} → ${p.machines.join(", ").replace(/MAQUINA/g, "M")}`).join(" · ")}
+                  </td>
+                  <td className="pr-4 tabular-nums text-slate-500">{dday(m.start)} {hhmm(m.start)}</td>
+                  <td>{canEdit && (
+                    <button onClick={() => setConfirm([m])}
+                      className="px-2.5 h-7 rounded-lg bg-blue-600 text-white text-xs font-bold hover:bg-blue-700">{tr("plan_auth_one")}</button>
+                  )}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {confirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4" onClick={() => !busy && setConfirm(null)}>
+          <div className="w-full max-w-lg bg-white rounded-2xl shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="px-5 py-4 border-b border-slate-200">
+              <div className="font-black text-slate-900">{tr("plan_auth_confirm_title", { n: confirm.length })}</div>
+              <div className="text-xs text-amber-700 mt-1 flex items-start gap-1.5">
+                <AlertTriangle className="w-4 h-4 shrink-0" />{tr("plan_auth_confirm_warn")}
+              </div>
+            </div>
+            <ul className="px-5 py-3 max-h-[45vh] overflow-y-auto divide-y divide-slate-100 text-sm">
+              {confirm.map((m) => (
+                <li key={m.order_id} className="py-1.5 flex gap-2">
+                  <b className="w-14">{m.order_number}</b>
+                  <span className="text-slate-500">{m.from_board}</span>→<b className="text-blue-700">{m.to_board}</b>
+                  <span className="ml-auto text-xs text-slate-400 tabular-nums">{dday(m.start)} {hhmm(m.start)}</span>
+                </li>
+              ))}
+            </ul>
+            <div className="px-5 py-4 border-t border-slate-200 flex justify-end gap-2">
+              <button onClick={() => setConfirm(null)} disabled={busy} className="h-9 px-3 rounded-lg border border-slate-200 text-sm font-bold">{tr("plan_otm_cancel")}</button>
+              <button onClick={doApply} disabled={busy}
+                className="h-9 px-4 rounded-lg bg-blue-600 text-white text-sm font-bold inline-flex items-center gap-1.5 disabled:opacity-50">
+                {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}{tr("plan_auth_confirm_btn")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </Card>
+  );
+};
+
+const AppliedMovesCard = ({ rows, canEdit, onRevert, lastResults, tr }) => {
+  const [open, setOpen] = useState(true);
+  const problems = (lastResults || []).filter((r) => r.result !== "applied");
+  return (
+    <Card className="p-4">
+      <button onClick={() => setOpen(!open)} className="w-full text-left">
+        <SectionTitle hint={tr("plan_applied_hint")}>{tr("plan_applied_title")} ({rows.length}) {open ? "▾" : "▸"}</SectionTitle>
+      </button>
+      {problems.length > 0 && (
+        <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+          <b>{tr("plan_auth_not_applied", { n: problems.length })}</b>
+          <ul className="mt-1 space-y-0.5">
+            {problems.map((r) => <li key={r.order_id}><b>{r.order_number || r.order_id}</b>: {r.reason}</li>)}
+          </ul>
+        </div>
+      )}
+      {open && (rows.length === 0 ? <div className="text-sm text-slate-400">{tr("plan_applied_empty")}</div> : (
+        <div className="overflow-x-auto">
+          <table className="min-w-full text-sm">
+            <thead><tr className="text-left text-[11px] uppercase tracking-wider text-slate-400">
+              <th className="py-2 pr-3">{tr("plan_order")}</th><th className="pr-3">{tr("plan_from")}</th><th className="pr-3">{tr("plan_to")}</th>
+              <th className="pr-3">{tr("plan_applied_when")}</th><th className="pr-3">{tr("plan_applied_who")}</th><th className="pr-3">{tr("plan_status")}</th><th />
+            </tr></thead>
+            <tbody className="divide-y divide-slate-100">
+              {rows.map((r) => (
+                <tr key={r.apply_id} className={r.status === "reverted" ? "opacity-50" : ""}>
+                  <td className="py-1.5 pr-3 font-black">{r.order_number}</td>
+                  <td className="pr-3 text-xs">{r.from_board}</td>
+                  <td className="pr-3 text-xs font-bold text-blue-700">{r.to_board}</td>
+                  <td className="pr-3 text-xs tabular-nums">{new Date(r.applied_at).toLocaleString("es-MX")}</td>
+                  <td className="pr-3 text-xs text-slate-500">{r.applied_by_name || r.applied_by}</td>
+                  <td className="pr-3">
+                    <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${r.status === "applied"
+                      ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-500"}`}>
+                      {r.status === "applied" ? tr("plan_applied_ok") : tr("plan_applied_reverted", { who: r.reverted_by || "" })}
+                    </span>
+                  </td>
+                  <td>{canEdit && r.status === "applied" && (
+                    <button onClick={() => onRevert(r)}
+                      className="px-2 h-7 rounded border border-slate-200 text-xs font-bold inline-flex items-center gap-1 hover:border-red-300 hover:text-red-700">
+                      <Undo2 className="w-3.5 h-3.5" />{tr("plan_applied_revert")}
+                    </button>
+                  )}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ))}
+    </Card>
+  );
+};
+
+const ScheduleTab = ({ config, run, running, onRun, canEdit, onToggle, onAdjust, overrides, history, onUndo,
+  onApplyMoves, applied, onRevertMove, lastApply, tr }) => {
   const [status, setStatus] = useState("");
   const [kindF, setKindF] = useState("");
   const [showBlocked, setShowBlocked] = useState(false);
@@ -631,34 +791,8 @@ const ScheduleTab = ({ config, run, running, onRun, canEdit, onToggle, onAdjust,
         }}
         tr={tr} />
 
-      <Card className="p-4">
-        <SectionTitle hint={tr("plan_moves_hint")}>{tr("plan_moves_title")} ({(run.moves || []).length})</SectionTitle>
-        {(run.moves || []).length === 0 ? <Empty>{tr("plan_moves_empty")}</Empty> : (
-          <div className="overflow-x-auto">
-            <table className="min-w-full text-sm">
-              <thead><tr className="text-left text-[11px] uppercase tracking-wider text-slate-400">
-                <th className="py-2 pr-4">{tr("plan_order")}</th><th className="pr-4">{tr("plan_client")}</th>
-                <th className="pr-4">{tr("plan_from")}</th><th className="pr-4">{tr("plan_to")}</th>
-                <th className="pr-4">{tr("plan_positions")}</th><th>{tr("plan_starts")}</th>
-              </tr></thead>
-              <tbody className="divide-y divide-slate-100">
-                {run.moves.map((m) => (
-                  <tr key={m.order_id}>
-                    <td className="py-2 pr-4 font-black">{m.order_number}</td>
-                    <td className="pr-4 text-slate-500">{m.client}</td>
-                    <td className="pr-4">{m.from_board}</td>
-                    <td className="pr-4 font-bold text-blue-700">{m.to_board}</td>
-                    <td className="pr-4 text-xs text-slate-500">
-                      {m.positions.map((p) => `${p.position} → ${p.machines.join(", ").replace(/MAQUINA/g, "M")}`).join(" · ")}
-                    </td>
-                    <td className="tabular-nums text-slate-500">{dday(m.start)} {hhmm(m.start)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </Card>
+      <MovesCard run={run} canEdit={canEdit} onApply={onApplyMoves} tr={tr} />
+      <AppliedMovesCard rows={applied} canEdit={canEdit} onRevert={onRevertMove} lastResults={lastApply} tr={tr} />
 
       <Card className="p-4">
         <SectionTitle hint={tr("plan_grid_hint")}>{tr("plan_grid_title")}</SectionTitle>
@@ -1969,6 +2103,35 @@ const PlannerModule = () => {
     return () => { clearTimeout(timer); try { ws?.close(); } catch { /* ya cerrado */ } };
   }, [autoOn, runEngine]);
 
+  // ── Autorizar movimientos (escribe en el CRM sólo con autorización) ──
+  const [applied, setApplied] = useState([]);
+  const [lastApply, setLastApply] = useState([]);
+  const loadApplied = useCallback(async () => {
+    try { setApplied((await planner("/moves/applied")).rows || []); } catch { /* no bloquea */ }
+  }, []);
+  useEffect(() => { loadApplied(); }, [loadApplied]);
+  const applyMoves = async (orderIds) => {
+    try {
+      const r = await planner("/moves/apply", { method: "POST", body: JSON.stringify({ run_id: run?.run_id, order_ids: orderIds }) });
+      setLastApply(r.results || []);
+      if (r.applied) toast.success(tr("plan_auth_done", { n: r.applied }));
+      if ((r.results || []).some((x) => x.result !== "applied")) toast.warning(tr("plan_auth_some_skipped"));
+    } catch (e) {
+      toast.error(e.message);
+    }
+    await loadApplied();
+    if (on) await runEngine("override");
+  };
+  const revertMove = async (row) => {
+    if (!window.confirm(tr("plan_applied_confirm_revert", { n: row.order_number, b: row.from_board }))) return;
+    try {
+      await planner(`/moves/applied/${row.apply_id}/revert`, { method: "POST" });
+      toast.success(tr("plan_applied_reverted_toast", { n: row.order_number }));
+    } catch (e) { toast.error(e.message); }
+    await loadApplied();
+    if (on) await runEngine("override");
+  };
+
   const undoOverride = async (id) => {
     try {
       await planner(`/overrides/${id}`, { method: "DELETE" });
@@ -2047,7 +2210,8 @@ const PlannerModule = () => {
           <>
             {tab === "schedule" && <ScheduleTab config={cfgData.config} run={run} running={running} onRun={() => runEngine("manual")} canEdit={canEdit}
               onToggle={toggleEngine} onAdjust={setAdjusting} overrides={ovData.active} history={ovData.history}
-              onUndo={undoOverride} tr={tr} />}
+              onUndo={undoOverride} onApplyMoves={applyMoves} applied={applied} onRevertMove={revertMove}
+              lastApply={lastApply} tr={tr} />}
             {tab === "projection" && <ProjectionTab canEdit={canEdit} run={run} onCalendarSaved={afterConfigChange} calendar={cfgData.calendar}
               hitsPerShift={cfgData.config.hits_per_shift} tr={tr} />}
             {tab === "machines" && <MachinesTab cfgData={cfgData} canEdit={canEdit} onSaved={afterConfigChange} tr={tr} />}

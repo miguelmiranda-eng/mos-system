@@ -715,7 +715,15 @@ async def update_order(order_id: str, order: OrderUpdate, request: Request):
 async def move_order(order_id: str, request: Request):
     user = await require_auth(request)
     body = await request.json()
-    target_board = body.get("board")
+    return await move_order_core(user, order_id, body.get("board"))
+
+
+async def move_order_core(user: dict, order_id: str, target_board: str, extra_set: dict = None):
+    """Mueve UNA orden de tablero con todas las reglas de MOS (candado QC,
+    tablero de CONTROL DE CALIDAD, guardas, bitácora, automatizaciones de
+    "move", notificación y broadcast). La usan el endpoint de arriba y el botón
+    "Aplicar" del módulo de Planeación: un solo camino para mover órdenes.
+    extra_set: campos adicionales en el mismo $set (p. ej. scheduled_day)."""
     boards = await get_dynamic_boards()
     if target_board not in boards and target_board != "PAPELERA DE RECICLAJE":
         raise HTTPException(status_code=400, detail=f"Invalid board")
@@ -735,7 +743,7 @@ async def move_order(order_id: str, request: Request):
                                     board_changing=True, new_board=target_board)
         if _block:
             raise HTTPException(status_code=422, detail=_block)
-    await db.orders.update_one({"order_id": order_id}, {"$set": {"board": target_board, "updated_at": datetime.now(timezone.utc).isoformat()}})
+    await db.orders.update_one({"order_id": order_id}, {"$set": {"board": target_board, "updated_at": datetime.now(timezone.utc).isoformat(), **(extra_set or {})}})
     updated = await db.orders.find_one({"order_id": order_id}, {"_id": 0})
     await log_activity(user, "move_order", {"order_id": order_id, "order_number": existing.get("order_number"), "from_board": old_board, "to_board": target_board}, previous_data={"order_id": order_id, "fields": {"board": old_board}})
     executed_automations = await _run_automations("move", updated, user, {"from_board": old_board, "to_board": target_board})

@@ -36,8 +36,15 @@ Endpoints (prefijo /api/planner):
   GET  /overrides               ajustes activos + historial
   POST /overrides               nuevo ajuste (admin)
   DELETE /overrides/{id}        deshacer un ajuste (admin)
+  POST /moves/apply             AUTORIZA movimientos de la última corrida (admin):
+                                mueve la orden a su MAQUINA por el mismo camino
+                                que el CRM (orders.move_order_core)
+  GET  /moves/applied           movimientos aplicados (bitácora)
+  POST /moves/applied/{id}/revert  regresa la orden a su tablero de origen (admin)
 
 Los ajustes aplican al PROGRAMA del módulo. No tocan la orden del CRM.
+El ÚNICO punto que escribe en `orders` es /moves/apply (y su revert), y sólo
+cuando un administrador autoriza movimientos concretos.
 """
 import uuid
 import zoneinfo
@@ -692,4 +699,109 @@ async def remove_override(override_id: str, request: Request):
         {"$set": {"active": False, "removed_at": datetime.now(timezone.utc).isoformat(),
                   "removed_by": user.get("email"), "removed_reason": "deshecho"}})
     await log_activity(user, "planner_override_remove", {"override_id": override_id}, before)
+    return {"ok": True}
+
+
+# ── Autorizar movimientos ──────────────────────────────────────────────────
+# El motor sigue en modo sombra: PROPONE. Aquí un administrador AUTORIZA
+# movimientos concretos de la última corrida y MOS los aplica por el mismo
+# camino que un movimiento manual del CRM (orders.move_order_core: candado QC,
+# guardas, bitácora, automatizaciones, avisos). Cada aplicación queda en
+# planner_applied con lo necesario para revertirla.
+WEEKDAY_EN = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+
+
+async def _latest_run(fields=None):
+    return await db.planner_runs.find_one({}, fields or {"_id": 0}, sort=[("created_at", -1)])
+
+
+@router.post("/moves/apply")
+async def apply_moves(request: Request):
+    """Cuerpo: {run_id, order_ids: [...]}. Sólo movimientos de la ÚLTIMA
+    corrida, y sólo si la orden sigue en el tablero de origen (si alguien ya la
+    movió, no se pisa). Resultado por orden: applied | skipped | blocked."""
+    from routers.orders import move_order_core   # import tardío: evita ciclo
+    user = await require_admin(request)
+    body = await request.json() or {}
+    run = await _latest_run({"_id": 0, "run_id": 1, "moves": 1, "created_at": 1})
+    if not run or run.get("run_id") != body.get("run_id"):
+        raise HTTPException(409, "Hay una corrida más nueva: recalcula y vuelve a revisar los movimientos")
+    wanted = set(body.get("order_ids") or [])
+    if not wanted:
+        raise HTTPException(400, "Indica qué órdenes aplicar")
+    moves = {m["order_id"]: m for m in run.get("moves") or [] if m["order_id"] in wanted}
+    results = []
+    for oid in wanted:
+        m = moves.get(oid)
+        if not m:
+            results.append({"order_id": oid, "result": "skipped", "reason": "No está en los movimientos propuestos"})
+            continue
+        order = await db.orders.find_one({"order_id": oid}, {"_id": 0, "board": 1, "order_number": 1,
+                                                             "scheduled_day": 1, "queue_status": 1})
+        if not order:
+            results.append({"order_id": oid, "order_number": m["order_number"], "result": "skipped",
+                            "reason": "La orden ya no existe"})
+            continue
+        if order.get("board") != m["from_board"]:
+            results.append({"order_id": oid, "order_number": m["order_number"], "result": "skipped",
+                            "reason": f"Ya no está en {m['from_board']} (ahora en {order.get('board')})"})
+            continue
+        # Día del arranque programado y en cola: el operador la activa al montarla.
+        try:
+            day = WEEKDAY_EN[datetime.fromisoformat(m["start"]).weekday()]
+        except (KeyError, ValueError, TypeError):
+            day = None
+        extra = {"queue_status": "queued"}
+        if day:
+            extra["scheduled_day"] = day
+        try:
+            await move_order_core(user, oid, m["to_board"], extra_set=extra)
+        except HTTPException as e:
+            results.append({"order_id": oid, "order_number": m["order_number"], "result": "blocked",
+                            "reason": str(e.detail)})
+            continue
+        doc = {"apply_id": f"pap_{uuid.uuid4().hex[:10]}", "run_id": run["run_id"], "order_id": oid,
+               "order_number": m["order_number"], "client": m.get("client"),
+               "from_board": m["from_board"], "to_board": m["to_board"], "start": m.get("start"),
+               "positions": m.get("positions"),
+               "previous": {"scheduled_day": order.get("scheduled_day"), "queue_status": order.get("queue_status")},
+               "status": "applied", "applied_at": datetime.now(timezone.utc).isoformat(),
+               "applied_by": user.get("email"), "applied_by_name": user.get("name")}
+        await db.planner_applied.insert_one(dict(doc))
+        results.append({"order_id": oid, "order_number": m["order_number"], "result": "applied",
+                        "apply_id": doc["apply_id"], "to_board": m["to_board"]})
+    await log_activity(user, "planner_moves_apply", {"run_id": run["run_id"], "results": results})
+    return {"results": results,
+            "applied": sum(1 for r in results if r["result"] == "applied")}
+
+
+@router.get("/moves/applied")
+async def applied_moves(request: Request, limit: int = 100):
+    await require_auth(request)
+    rows = [r async for r in db.planner_applied.find({}, {"_id": 0}).sort("applied_at", -1).limit(max(1, min(limit, 500)))]
+    return {"rows": rows}
+
+
+@router.post("/moves/applied/{apply_id}/revert")
+async def revert_move(apply_id: str, request: Request):
+    """Regresa la orden a su tablero de origen (con su día y cola de antes),
+    sólo si sigue donde la dejó el planeador: si alguien ya la movió, no se pisa."""
+    from routers.orders import move_order_core
+    user = await require_admin(request)
+    doc = await db.planner_applied.find_one({"apply_id": apply_id}, {"_id": 0})
+    if not doc:
+        raise HTTPException(404, "No existe")
+    if doc.get("status") != "applied":
+        raise HTTPException(409, "Ese movimiento ya se revirtió")
+    order = await db.orders.find_one({"order_id": doc["order_id"]}, {"_id": 0, "board": 1})
+    if not order or order.get("board") != doc["to_board"]:
+        raise HTTPException(409, f"La orden ya no está en {doc['to_board']}: no se revierte para no pisar otro cambio")
+    prev = doc.get("previous") or {}
+    await move_order_core(user, doc["order_id"], doc["from_board"],
+                          extra_set={"scheduled_day": prev.get("scheduled_day"), "queue_status": prev.get("queue_status")})
+    await db.planner_applied.update_one(
+        {"apply_id": apply_id},
+        {"$set": {"status": "reverted", "reverted_at": datetime.now(timezone.utc).isoformat(),
+                  "reverted_by": user.get("email")}})
+    await log_activity(user, "planner_move_revert", {"apply_id": apply_id, "order_number": doc["order_number"]}, doc)
     return {"ok": True}
