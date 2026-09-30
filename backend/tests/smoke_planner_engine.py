@@ -145,6 +145,9 @@ sj, siss = pe.build_jobs([
     order(307, 500, ["FRENTE"], aprobaciones=None, artwork_status="REORDER"),
     order(308, 500, ["FRENTE"], aprobaciones=None),
     order(310, 500, ["FRENTE"], aprobaciones="Ejemplo primero", sample="APR. POR FOTO"),
+    order(311, 500, ["FRENTE"], aprobaciones=None, sample="NO SAMPLE"),
+    order(312, 500, ["FRENTE"], aprobaciones="Ejemplo primero", sample="LICENCIA"),
+    order(313, 500, ["FRENTE"], aprobaciones="Ejemplo primero", sample="NO SAMPLE"),
 ], {}, cfg, cal, [], LUNES.date(), {"o302"})
 sb = {j["order_number"]: j for j in sj}
 check("reorden: no necesita ejemplo", sb["300"]["kind"] == "REORDEN" and sb["300"]["ready"]["ejemplo"])
@@ -155,6 +158,12 @@ check("nueva con sample = EJEMPLO APROBADO en el CRM: entra", sb["303"]["is_read
 check("aprobado para producción: entra", sb["304"]["is_ready"] and sb["304"]["sample_state"] == "APROBADO")
 check("aprobación en máquina (sin acentos): entra marcada", sb["305"]["is_ready"] and sb["305"]["sample_state"] == "EN_MAQUINA")
 check("aprobado por foto (columna Sample) cuenta como aprobado", sb["310"]["is_ready"])
+check("NO SAMPLE: no requiere ejemplo, entra", sb["311"]["is_ready"]
+      and sb["311"]["sample_state"] == "NO_APLICA")
+check("LICENCIA: necesita ejemplo con licencia, bloqueada", not sb["312"]["is_ready"]
+      and sb["312"]["sample_state"] == "PENDIENTE")
+check("NO SAMPLE gana al Approval Type que pediría ejemplo", sb["313"]["is_ready"]
+      and sb["313"]["sample_state"] == "NO_APLICA")
 check("hold: bloqueada", not sb["306"]["is_ready"] and sb["306"]["sample_state"] == "HOLD")
 check("sin Approval Type pero artwork REORDER: reorden", sb["307"]["kind"] == "REORDEN" and sb["307"]["is_ready"])
 check("sin dato: bloqueada y marcada en datos faltantes", not sb["308"]["is_ready"]

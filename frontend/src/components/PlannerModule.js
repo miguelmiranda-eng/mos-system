@@ -93,7 +93,9 @@ const KindBadge = ({ kind, state, tr }) => {
     <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded border text-[10px] font-bold whitespace-nowrap ${KIND_STYLE[kind] || KIND_STYLE.SIN_DATO}`}
       title={state ? tr(`plan_sample_${state}`) : ""}>
       {tr(`plan_kind_${kind}`)}
-      {kind === "NUEVA" && state && <span className="font-normal opacity-80">· {tr(`plan_sample_short_${state}`)}</span>}
+      {kind === "NUEVA" && state && tr(`plan_sample_short_${state}`) && (
+        <span className="font-normal opacity-80">· {tr(`plan_sample_short_${state}`)}</span>
+      )}
     </span>
   );
 };

@@ -89,6 +89,11 @@ DEFAULT_CONFIG = {
     "sample_hold_values": ["Hold"],
     # Columna Sample del CRM (`sample`) que cuenta como ejemplo aprobado.
     "sample_ok_values": ["EJEMPLO APROBADO", "APR. POR FOTO"],
+    # Columna Sample = "NO SAMPLE": la orden NO requiere ejemplo (no aplica),
+    # entra aunque sea nueva. Columna Sample = "LICENCIA": necesita ejemplo con
+    # licencia (Warner, etc.); esos tardan más y quedan PENDIENTE hasta aprobarse.
+    "sample_none_values": ["NO SAMPLE"],
+    "sample_license_values": ["LICENCIA"],
 }
 
 MACHINE_DEFAULTS = {"active": True, "heads": 16, "preferred_client": ""}
@@ -257,27 +262,41 @@ def sample_info(order: dict, cfg: dict, sample_approved: Optional[set] = None) -
     orders.sample = "EJEMPLO APROBADO").
 
     kind:  REORDEN | NUEVA | SIN_DATO
-    state: NO_APLICA (reorden) | APROBADO | EN_MAQUINA | PENDIENTE | HOLD | SIN_DATO
+    state: NO_APLICA (reorden / no requiere ejemplo) | APROBADO | EN_MAQUINA
+           | PENDIENTE | HOLD | SIN_DATO
     """
     ap = _norm(order.get("aprobaciones"))
     art = _norm(order.get("artwork_status"))
-    approved = (_norm(order.get("sample")) in {_norm(x) for x in cfg["sample_ok_values"]}
+    scol = _norm(order.get("sample"))
+    approved = (scol in {_norm(x) for x in cfg["sample_ok_values"]}
                 or (sample_approved is not None and order.get("order_id") in sample_approved))
+    none_required = scol in {_norm(x) for x in cfg["sample_none_values"]}
+    needs_license = scol in {_norm(x) for x in cfg["sample_license_values"]}
+    # Reorden nunca necesita ejemplo (el original ya se aprobó en su día).
     if ap in {_norm(x) for x in cfg["sample_reorder_values"]}:
         return {"kind": "REORDEN", "state": "NO_APLICA"}
+    # Hold en el Approval Type manda: no se produce, tenga o no ejemplo.
+    if ap in {_norm(x) for x in cfg["sample_hold_values"]}:
+        return {"kind": "NUEVA", "state": "HOLD"}
+    # La columna Sample del CRM es la señal directa del estado del ejemplo:
+    #   NO SAMPLE → no requiere ejemplo (entra aunque sea nueva).
+    #   aprobado  → ejemplo aprobado (columna o módulo de Ejemplos).
+    #   LICENCIA  → necesita ejemplo con licencia (Warner…): PENDIENTE, tarda más.
+    if none_required:
+        return {"kind": "NUEVA", "state": "NO_APLICA"}
+    if approved:
+        return {"kind": "NUEVA", "state": "APROBADO"}
+    if needs_license:
+        return {"kind": "NUEVA", "state": "PENDIENTE"}
     if ap in {_norm(x) for x in cfg["sample_approved_values"]}:
         return {"kind": "NUEVA", "state": "APROBADO"}
     if ap in {_norm(x) for x in cfg["sample_at_machine_values"]}:
         return {"kind": "NUEVA", "state": "EN_MAQUINA"}
-    if ap in {_norm(x) for x in cfg["sample_hold_values"]}:
-        return {"kind": "NUEVA", "state": "HOLD"}
     if ap in {_norm(x) for x in cfg["sample_required_values"]}:
-        return {"kind": "NUEVA", "state": "APROBADO" if approved else "PENDIENTE"}
+        return {"kind": "NUEVA", "state": "PENDIENTE"}
     # Sin Approval Type: el artwork_status desempata (REORDER = reorden).
     if not ap and art == "REORDER":
         return {"kind": "REORDEN", "state": "NO_APLICA"}
-    if approved:
-        return {"kind": "NUEVA", "state": "APROBADO"}
     return {"kind": "SIN_DATO", "state": "SIN_DATO"}
 
 
