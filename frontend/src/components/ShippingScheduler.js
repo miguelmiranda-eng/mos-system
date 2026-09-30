@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import {
   ChevronLeft, ChevronRight, Plus, Trash2, Copy, Download, RefreshCw, Loader2,
-  ExternalLink, FileSpreadsheet, Wand2, Search, GripVertical, X,
+  ExternalLink, FileSpreadsheet, Wand2, Search, GripVertical, X, RotateCcw, History, CalendarDays,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { toast } from "sonner";
@@ -130,6 +130,143 @@ const CRM_COLS = ['CANCEL DATE', 'DAYS COM.', 'PROD. STATUS', 'QTY PED. / EMB.',
 const CRM_W = [100, 80, 130, 110, 140, 200];
 const CRM_KEY = 'sch_show_crm';
 
+// ── Pestaña MOVIMIENTOS: bitácora con reversión ─────────────────────────────
+// Backend: GET /movements y POST /movements/{id}/revert
+// (services/shipping_journal.py). Revertir sólo se ofrece si nada de lo que
+// tocó el movimiento cambió después; si no, se explica por qué.
+const MOVE_ACTIONS = ['lines_add', 'lines_update', 'lines_move', 'lines_delete', 'export_create', 'export_update', 'export_delete', 'revert'];
+const MOVE_COLORS = {
+  lines_add: '#047857', lines_update: '#2563eb', lines_move: '#7c3aed', lines_delete: '#dc2626',
+  export_create: '#0d9488', export_update: '#0284c7', export_delete: '#b91c1c', revert: '#475569',
+};
+
+const MovementsPanel = ({ onReverted }) => {
+  const { t, lang } = useLang();
+  const [items, setItems] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [q, setQ] = useState('');
+  const [action, setAction] = useState('');
+  const [busy, setBusy] = useState(null);
+
+  const load = useCallback(async (reset = true, skipN = 0) => {
+    setLoading(true);
+    try {
+      const params = new URLSearchParams({ skip: String(reset ? 0 : skipN), limit: '50', q: q.trim(), action });
+      const res = await fetch(`${API}/movements?${params}`, { credentials: 'include' });
+      if (!res.ok) { toast.error(t('mov_load_err')); return; }
+      const d = await res.json();
+      setTotal(d.total || 0);
+      setItems((prev) => (reset ? d.items || [] : [...prev, ...(d.items || [])]));
+    } catch { toast.error(t('ceo_err_connection')); }
+    finally { setLoading(false); }
+  }, [q, action, t]);
+  useEffect(() => {
+    const h = setTimeout(() => load(true), 300);
+    return () => clearTimeout(h);
+  }, [load]);
+
+  const revert = async (m) => {
+    if (!window.confirm(t('mov_confirm', { summary: m.summary }))) return;
+    setBusy(m.movement_id);
+    try {
+      const res = await fetch(`${API}/movements/${m.movement_id}/revert`, { method: 'POST', credentials: 'include' });
+      const d = await res.json().catch(() => ({}));
+      if (res.ok) {
+        toast.success(t('mov_reverted'));
+        onReverted();
+      } else {
+        const reasons = d.detail?.reasons || [d.detail?.message || d.detail || t('mov_revert_err')];
+        toast.error(`${t('mov_cannot')}: ${reasons.join(' · ')}`);
+      }
+      load(true);
+    } catch { toast.error(t('ceo_err_connection')); }
+    finally { setBusy(null); }
+  };
+
+  const fmtWhen = (iso) => new Date(iso).toLocaleString(lang === 'en' ? 'en-US' : 'es-MX', {
+    day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+
+  return (
+    <div className="sch-sheet rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+      <div className="flex flex-wrap items-center gap-2 px-4 py-3 bg-slate-100 border-b border-slate-200">
+        <div className="flex items-center gap-1.5 sch-field rounded-lg px-2 py-1">
+          <Search className="w-3.5 h-3.5 text-slate-400" />
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={t('mov_search_ph')}
+            className="sch-cell w-64 text-[12px] font-bold outline-none !p-0" />
+        </div>
+        <select value={action} onChange={(e) => setAction(e.target.value)}
+          className="sch-field rounded-lg px-2 py-1 text-[12px] font-bold outline-none">
+          <option value="">{t('mov_all_actions')}</option>
+          {MOVE_ACTIONS.map((a) => <option key={a} value={a}>{t(`mov_action_${a}`)}</option>)}
+        </select>
+        <span className="text-[11px] font-bold text-slate-500">{t('mov_count', { n: total })}</span>
+        <button onClick={() => load(true)} disabled={loading}
+          className="ml-auto flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 text-slate-600 rounded-lg font-black text-[10px] uppercase tracking-widest hover:bg-slate-50 disabled:opacity-50">
+          <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} /> {t('ship_refresh')}
+        </button>
+      </div>
+      <p className="px-4 py-2 text-[11px] text-slate-500 border-b border-slate-100">{t('mov_hint')}</p>
+      <div className="overflow-x-auto">
+        <table className="w-full border-collapse text-[12px]">
+          <thead>
+            <tr className="text-[10px] font-black uppercase tracking-wider text-slate-700">
+              <th className="px-3 py-2 text-left w-40">{t('mov_when')}</th>
+              <th className="px-3 py-2 text-left w-36">{t('mov_user')}</th>
+              <th className="px-3 py-2 text-left w-36">{t('mov_action')}</th>
+              <th className="px-3 py-2 text-left">{t('mov_detail')}</th>
+              <th className="px-3 py-2 text-left w-64">{t('mov_state')}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.length === 0 && !loading && (
+              <tr><td colSpan={5} className="px-3 py-10 text-center text-[11px] font-black uppercase text-slate-300">{t('mov_empty')}</td></tr>
+            )}
+            {items.map((m) => (
+              <tr key={m.movement_id} data-st="none" className={`border-t border-slate-100 align-top ${m.reverted_at ? 'opacity-60' : ''}`}>
+                <td className="px-3 py-2 whitespace-nowrap text-slate-600 tabular-nums">{fmtWhen(m.at)}</td>
+                <td className="px-3 py-2 font-bold text-slate-700">{m.user_name || '—'}</td>
+                <td className="px-3 py-2">
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-black text-white whitespace-nowrap"
+                    style={{ background: MOVE_COLORS[m.action] || '#64748b' }}>{t(`mov_action_${m.action}`)}</span>
+                </td>
+                <td className="px-3 py-2 text-slate-700">
+                  <span className={m.reverted_at ? 'line-through' : ''}>{m.summary}</span>
+                </td>
+                <td className="px-3 py-2">
+                  {m.revert_of ? (
+                    <span className="text-[11px] font-bold text-slate-500">{t('mov_is_revert')}</span>
+                  ) : m.reverted_at ? (
+                    <span className="text-[11px] font-bold text-slate-500">{t('mov_reverted_by', { user: m.reverted_by_name || '—', when: fmtWhen(m.reverted_at) })}</span>
+                  ) : m.can_revert ? (
+                    <button onClick={() => revert(m)} disabled={busy === m.movement_id}
+                      className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-amber-500 text-white text-[10px] font-black uppercase tracking-wider hover:bg-amber-600 disabled:opacity-50">
+                      {busy === m.movement_id ? <Loader2 className="w-3 h-3 animate-spin" /> : <RotateCcw className="w-3 h-3" />} {t('mov_revert')}
+                    </button>
+                  ) : (
+                    <span className="block text-[11px] text-slate-500" title={(m.blockers || []).join('\n')}>
+                      <span className="font-black text-slate-600">{t('mov_cannot')}:</span> {(m.blockers || [])[0]}
+                      {(m.blockers || []).length > 1 ? ` (+${m.blockers.length - 1})` : ''}
+                    </span>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {items.length < total && (
+        <div className="p-3 flex justify-center border-t border-slate-100">
+          <button onClick={() => load(false, items.length)} disabled={loading}
+            className="px-4 py-1.5 rounded-lg bg-blue-600 text-white text-[10px] font-black uppercase tracking-widest hover:bg-blue-700 disabled:opacity-50">
+            {t('mov_more', { a: items.length, b: total })}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+};
+
 const ShippingScheduler = () => {
   const { t, lang } = useLang();
   const L = lang === 'en' ? 'en' : 'es';
@@ -137,6 +274,7 @@ const ShippingScheduler = () => {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [showWeekend, setShowWeekend] = useState(false);
+  const [view, setView] = useState('program');    // 'program' | 'moves'
   // Navegador Año → Mes (la semana abierta es weekStart). Arranca en el mes
   // del jueves de la semana (regla ISO: la semana es del mes donde cae su jueves).
   const [navYear, setNavYear] = useState(() => addDays(mondayOf(new Date()), 3).getFullYear());
@@ -875,6 +1013,19 @@ const ShippingScheduler = () => {
       <datalist id="sch-from">{(suggest.ship_from || []).map((v) => <option key={v} value={v} />)}</datalist>
       <datalist id="sch-carrier">{(suggest.carrier || []).map((v) => <option key={v} value={v} />)}</datalist>
 
+      {/* PROGRAMA | MOVIMIENTOS */}
+      <div className="flex items-center gap-1 bg-white rounded-xl p-1 border border-slate-200 shadow-sm w-fit">
+        {[['program', CalendarDays, t('mov_tab_program')], ['moves', History, t('mov_tab_moves')]].map(([k, Icon, label]) => (
+          <button key={k} onClick={() => setView(k)}
+            className={`flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-[11px] font-black uppercase tracking-widest transition-all ${view === k ? 'bg-slate-800 text-white' : 'text-slate-500 hover:bg-slate-100'}`}>
+            <Icon className="w-3.5 h-3.5" /> {label}
+          </button>
+        ))}
+      </div>
+
+      {view === 'moves' ? (
+        <MovementsPanel onReverted={() => { loadWeek(true); loadSummary(); }} />
+      ) : (<>
       {/* Barra de semana: navegación + "pestañas" de semanas como la hoja */}
       <div className="bg-white rounded-2xl px-4 py-3 shadow-sm border border-slate-200 space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1109,6 +1260,7 @@ const ShippingScheduler = () => {
             className="p-1 rounded-lg hover:bg-white/15"><X className="w-4 h-4" /></button>
         </div>
       )}
+      </>)}
     </main>
   );
 };

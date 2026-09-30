@@ -38,6 +38,8 @@ Endpoints (prefijo /api/scheduled-shipments):
   POST   "/lines/{shipment_id}/duplicate" → clona una línea (para partir un envío)
   POST   "/lines/move"               → mueve varias líneas (selección / arrastre) a un export o fecha, en una posición
   POST   "/lines/delete"             → quita varias líneas
+  GET    "/movements"                → bitácora de movimientos (con ¿se puede revertir? y por qué no)
+  POST   "/movements/{id}/revert"    → revierte un movimiento si nada de lo que tocó cambió después
   PUT    "/{shipment_id}"            → edita una línea (o la mueve de export / fecha)
   DELETE "/{shipment_id}"            → quita la línea
 """
@@ -49,6 +51,7 @@ from fastapi import APIRouter, Request, HTTPException
 
 from deps import db, require_auth, log_activity, require_api_customer
 from services.qty_embarcada import qty_embarcada, qty_embarcada_por_orden, entero_o_none
+from services import shipping_journal as jr
 
 # Extrae etiqueta|url de un comentario [file]etiqueta|url[/file] (packing_link_seed).
 _FILE_RE = re.compile(r"\[file\](.*?)\|(.*?)\[/file\]")
@@ -398,6 +401,17 @@ async def _new_export(user, day_iso: str, cutoff=None, export_time=None) -> dict
     return doc
 
 
+def _nums(orders, n=8) -> str:
+    """'#3352, #3353 +4' para los resúmenes de la bitácora."""
+    orders = [o for o in orders if o]
+    head = ", ".join(f"#{o}" for o in orders[:n])
+    return head + (f" +{len(orders) - n}" if len(orders) > n else "")
+
+
+async def _exp_label(export_id) -> str:
+    return jr.exp_label(await db.shipping_exports.find_one({"export_id": export_id}, {"_id": 0}))
+
+
 def _date_fields(day_iso: str) -> dict:
     """Campos de fecha que viajan con la línea. `scheduled_export_date` lo lee
     el Dashboard (reloj + dd/mm en la tarjeta de la orden)."""
@@ -576,6 +590,7 @@ async def create_export(request: Request):
                             _time(body.get("cutoff_time"), "cutoff_time"),
                             _time(body.get("export_time"), "export_time"))
     await log_activity(user, "create_shipping_export", {"export_id": doc["export_id"], "date": day_iso})
+    await jr.record(user, "export_create", f"Creó {jr.exp_label(doc)}", exports=[(doc["export_id"], None, doc)])
     return _export_out(doc)
 
 
@@ -609,13 +624,26 @@ async def update_export(export_id: str, request: Request):
     if not upd:
         raise HTTPException(status_code=400, detail="Nada que actualizar")
     upd["updated_at"] = _now()
+    lines_before = await jr.snap_lines(await db.scheduled_shipments.distinct(
+        "shipment_id", {"export_id": export_id})) if moved_to else {}
     await db.shipping_exports.update_one({"export_id": export_id}, {"$set": upd})
     if moved_to:
         # El día es del EXPORT: moverlo arrastra todas sus líneas.
         await db.scheduled_shipments.update_many(
             {"export_id": export_id}, {"$set": {**_date_fields(moved_to), "updated_at": upd["updated_at"]}})
     await log_activity(user, "update_shipping_export", {"export_id": export_id, **upd})
-    return _export_out(await _get_export(export_id))
+    after = await _get_export(export_id)
+
+    def _v(k, d):
+        return jr.val(jr.fecha(d.get(k)) if k == "date" else d.get(k))
+    cambios = [f"{lbl} {_v(k, exp)} → {_v(k, after)}"
+               for k, lbl in jr.EXPORT_FIELDS.items() if k in upd and exp.get(k) != after.get(k)]
+    if cambios:
+        lines_after = await jr.snap_lines(list(lines_before))
+        await jr.record(user, "export_update", f"Editó {jr.exp_label(exp)}: {'; '.join(cambios)}",
+                        lines=[(i, lines_before[i], lines_after.get(i)) for i in lines_before],
+                        exports=[(export_id, exp, after)])
+    return _export_out(after)
 
 
 @router.post("/exports/{export_id}/assign-number")
@@ -632,7 +660,11 @@ async def assign_export_number(export_id: str, request: Request):
     await db.shipping_exports.update_one(
         {"export_id": export_id, "export_no": None}, {"$set": {"export_no": nxt, "updated_at": _now()}})
     await log_activity(user, "assign_export_number", {"export_id": export_id, "export_no": nxt})
-    return _export_out(await _get_export(export_id))
+    after = await _get_export(export_id)
+    await jr.record(user, "export_update",
+                    f"Asignó EXPORT#{after.get('export_no')} al export del {jr.fecha(exp.get('date'))}",
+                    exports=[(export_id, exp, after)])
+    return _export_out(after)
 
 
 @router.delete("/exports/{export_id}")
@@ -642,11 +674,17 @@ async def delete_export(export_id: str, request: Request, cascade: bool = False)
     n = await db.scheduled_shipments.count_documents({"export_id": export_id})
     if n and not cascade:
         raise HTTPException(status_code=409, detail=f"El export tiene {n} línea(s); confirma para borrarlas también")
+    lines_before = await db.scheduled_shipments.find({"export_id": export_id}, {"_id": 0}).to_list(5000)
     if n:
         await db.scheduled_shipments.delete_many({"export_id": export_id})
     await db.shipping_exports.delete_one({"export_id": export_id})
     await log_activity(user, "delete_shipping_export",
                        {"export_id": export_id, "date": exp.get("date"), "export_no": exp.get("export_no"), "lines": n})
+    await jr.record(user, "export_delete",
+                    f"Borró {jr.exp_label(exp)}"
+                    + (f" con {n} orden(es): {_nums([x.get('order_number') for x in lines_before])}" if n else ""),
+                    lines=[(x["shipment_id"], x, None) for x in lines_before],
+                    exports=[(export_id, exp, None)])
     return {"message": "Export eliminado", "lines_deleted": n}
 
 
@@ -739,6 +777,9 @@ async def add_lines(request: Request):
         await log_activity(user, "add_shipping_lines", {
             "export_id": exp["export_id"], "date": exp["date"],
             "orders": [d["order_number"] for d in added]})
+        await jr.record(user, "lines_add",
+                        f"Agregó {_nums([d['order_number'] for d in added])} a {jr.exp_label(exp)}",
+                        lines=[(d["shipment_id"], None, d) for d in added])
     rows = await _rows(added, by_num, pl_by_num) if added else []
     return {"added": rows, "not_found": not_found, "duplicates": dup,
             "also_in": {k: v for k, v in also_in.items() if k in {d["order_number"] for d in added}}}
@@ -758,19 +799,24 @@ async def duplicate_line(shipment_id: str, request: Request):
     await db.scheduled_shipments.insert_one(dict(doc))
     await _renumber(src["export_id"])
     await log_activity(user, "duplicate_shipping_line", {"from": shipment_id, "order_number": src.get("order_number")})
-    return await _one_row(await db.scheduled_shipments.find_one({"shipment_id": doc["shipment_id"]}, {"_id": 0}))
+    new = await db.scheduled_shipments.find_one({"shipment_id": doc["shipment_id"]}, {"_id": 0})
+    await jr.record(user, "lines_add", f"Duplicó #{src.get('order_number')} en {await _exp_label(src['export_id'])}",
+                    lines=[(doc["shipment_id"], None, new)])
+    return await _one_row(new)
 
 
 async def _resolve_target(user, body) -> dict:
     """Export destino de un movimiento: `export_id`, o el primer export de
     `move_to_date` (si ese día no tiene, se crea uno con horarios default)."""
     if body.get("export_id"):
-        return await _get_export(body["export_id"])
+        return await _get_export(body["export_id"]), False
     if body.get("move_to_date"):
         day_iso = _req_date(body["move_to_date"], "move_to_date")
         target = await db.shipping_exports.find_one(
             {"date": day_iso}, {"_id": 0}, sort=[("position", 1), ("created_at", 1)])
-        return target or await _new_export(user, day_iso)
+        if target:
+            return target, False
+        return await _new_export(user, day_iso), True
     raise HTTPException(status_code=400, detail="export_id o move_to_date requerido")
 
 
@@ -791,7 +837,7 @@ async def move_lines(request: Request):
         {"shipment_id": {"$in": ids}, "export_id": {"$exists": True}}, {"_id": 0}).to_list(500)
     if len(moving) != len(ids):
         raise HTTPException(status_code=404, detail="Alguna línea no existe o no pertenece al programador")
-    target = await _resolve_target(user, body)
+    target, created = await _resolve_target(user, body)
     tid = target["export_id"]
     stay = await db.scheduled_shipments.find(
         {"export_id": tid, "shipment_id": {"$nin": ids}}, {"_id": 0, "shipment_id": 1, "position": 1, "created_at": 1},
@@ -816,6 +862,15 @@ async def move_lines(request: Request):
     await log_activity(user, "move_shipping_lines", {
         "to_export": tid, "date": target["date"], "index": idx,
         "orders": [m.get("order_number") for m in moving]})
+    after = await jr.snap_lines(ids)
+    by_id = {m["shipment_id"]: m for m in moving}
+    nums = _nums([by_id[i].get("order_number") for i in ids])
+    same_block = all(m["export_id"] == tid for m in moving)
+    await jr.record(user, "lines_move",
+                    f"Reacomodó {nums} en {jr.exp_label(target)}" if same_block
+                    else f"Movió {nums} a {jr.exp_label(target)}",
+                    lines=[(i, by_id[i], after.get(i)) for i in ids],
+                    exports=[(tid, None, target)] if created else [])
     return {"moved": len(ids), "export_id": tid, "date": target["date"]}
 
 
@@ -828,23 +883,18 @@ async def delete_lines(request: Request):
     if not ids:
         raise HTTPException(status_code=400, detail="shipment_ids requerido")
     lines = await db.scheduled_shipments.find(
-        {"shipment_id": {"$in": ids}, "export_id": {"$exists": True}},
-        {"_id": 0, "shipment_id": 1, "export_id": 1, "order_number": 1}).to_list(1000)
+        {"shipment_id": {"$in": ids}, "export_id": {"$exists": True}}, {"_id": 0}).to_list(1000)
     await db.scheduled_shipments.delete_many({"shipment_id": {"$in": [x["shipment_id"] for x in lines]}})
     for eid in {x["export_id"] for x in lines}:
         await _renumber(eid)
     await log_activity(user, "delete_shipping_lines", {"orders": [x.get("order_number") for x in lines]})
+    if lines:
+        await jr.record(user, "lines_delete", f"Quitó {_nums([x.get('order_number') for x in lines])}",
+                        lines=[(x["shipment_id"], x, None) for x in lines])
     return {"deleted": len(lines)}
 
 
-async def _renumber(export_id):
-    lines = await db.scheduled_shipments.find(
-        {"export_id": export_id}, {"_id": 0, "shipment_id": 1, "position": 1, "created_at": 1},
-    ).to_list(5000)
-    lines.sort(key=lambda s: (s.get("position") or 0, s.get("created_at") or ""))
-    for i, s in enumerate(lines):
-        if s.get("position") != i:
-            await db.scheduled_shipments.update_one({"shipment_id": s["shipment_id"]}, {"$set": {"position": i}})
+_renumber = jr.renumber
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -967,15 +1017,11 @@ async def update_scheduled(shipment_id: str, request: Request):
         allowed["manual_fields"] = mf
     # Mover de export (mismo u otro día) o a otra fecha (primer export de ese
     # día; si no hay, se crea uno con horarios default).
-    target = None
+    target, created = None, False
     if body.get("export_id") and body["export_id"] != sched0.get("export_id"):
         target = await _get_export(body["export_id"])
     elif body.get("move_to_date"):
-        day_iso = _req_date(body["move_to_date"], "move_to_date")
-        target = await db.shipping_exports.find_one(
-            {"date": day_iso}, {"_id": 0}, sort=[("position", 1), ("created_at", 1)])
-        if not target:
-            target = await _new_export(user, day_iso)
+        target, created = await _resolve_target(user, {"move_to_date": body["move_to_date"]})
     if target:
         n_target = await db.scheduled_shipments.count_documents({"export_id": target["export_id"]})
         allowed.update({"export_id": target["export_id"], "position": n_target, **_date_fields(target["date"])})
@@ -1001,6 +1047,26 @@ async def update_scheduled(shipment_id: str, request: Request):
     await log_activity(user, "update_scheduled_shipment", {
         "shipment_id": shipment_id, "order_number": sched0.get("order_number"),
         **{k: v for k, v in allowed.items() if k != "manual_fields"}})
+    if sched0.get("export_id"):
+        n = sched0.get("order_number")
+        if target:
+            resumen = f"Movió #{n} de {await _exp_label(sched0['export_id'])} a {jr.exp_label(target)}"
+        else:
+            def _v(k, d):
+                v = d.get(k)
+                if k == "status" and not v:
+                    return "AUTO"
+                if k == "priority" and v:
+                    return f"{v}ª"
+                return jr.val(v)
+            cambios = [f"{lbl} {_v(k, sched0)} → {_v(k, sched)}"
+                       for k, lbl in jr.LINE_FIELDS.items()
+                       if k != "export_id" and sched0.get(k) != sched.get(k)]
+            resumen = f"#{n}: {'; '.join(cambios)}" if cambios else None
+        if resumen:
+            await jr.record(user, "lines_move" if target else "lines_update", resumen,
+                            lines=[(shipment_id, sched0, sched)],
+                            exports=[(target["export_id"], None, target)] if created else [])
     return await _one_row(sched)
 
 
@@ -1024,4 +1090,32 @@ async def unschedule(shipment_id: str, request: Request):
     await log_activity(user, "unschedule_shipment", {
         "order_number": sched.get("order_number"), "export_id": sched.get("export_id"),
         "ship_date": sched.get("ship_date")})
+    if sched.get("export_id"):
+        await jr.record(user, "lines_delete",
+                        f"Quitó #{sched.get('order_number')} de {await _exp_label(sched['export_id'])}",
+                        lines=[(shipment_id, sched, None)])
     return {"message": "Envío desprogramado", "order_number": sched.get("order_number")}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Movimientos (bitácora con reversión) — services/shipping_journal.py
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.get("/movements")
+async def list_movements(request: Request, skip: int = 0, limit: int = 50, q: str = "", action: str = ""):
+    await require_auth(request)
+    return await jr.list_movements(max(0, skip), max(1, min(limit, 100)), q, action)
+
+
+@router.post("/movements/{movement_id}/revert")
+async def revert_movement(movement_id: str, request: Request):
+    """Revierte un movimiento si nada de lo que tocó cambió después."""
+    user = await require_auth(request)
+    try:
+        rev = await jr.revert(movement_id, user)
+    except LookupError:
+        raise HTTPException(status_code=404, detail="Movimiento no encontrado")
+    except jr.RevertBlocked as e:
+        raise HTTPException(status_code=409, detail={"message": "No se puede revertir", "reasons": e.reasons})
+    await log_activity(user, "revert_shipping_movement", {"movement_id": movement_id})
+    return {"ok": True, "movement_id": (rev or {}).get("movement_id")}

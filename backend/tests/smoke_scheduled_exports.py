@@ -73,7 +73,7 @@ LUNES_SIG = (LUNES + timedelta(days=7)).isoformat()
 def sembrar():
     print(f"== Sembrando {SMOKE_DB} ==")
     for c in ["orders", "users", "user_sessions", "scheduled_shipments", "shipping_exports",
-              "scheduled_week_envios", "activity_logs", "comments", "production_logs"]:
+              "scheduled_week_envios", "activity_logs", "comments", "production_logs", "shipping_movements"]:
         sdb[c].delete_many({})
     base = {"client": "GTS", "branding": "SPENCER GIFTS", "board": "COMPLETOS", "quantity": 280}
     sdb.orders.insert_many([
@@ -104,8 +104,9 @@ async def main():
     from httpx import ASGITransport, AsyncClient
     from server import app
 
-    global STATUSES_HOJA
+    global STATUSES_HOJA, jr_fecha
     from routers.scheduled_shipments import STATUSES as STATUSES_HOJA
+    from services.shipping_journal import fecha as jr_fecha
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://smoke") as c:
         r = await c.post("/api/auth/login", json={"email": "sup@test.local", "password": "sup123"})
@@ -307,6 +308,87 @@ async def main():
         check("línea inexistente → 404 (no mueve nada)", r.status_code == 404, r.status_code)
         r = await c.post(f"{API}/lines/delete", json={"shipment_ids": [sid["3352"], sid["3353"]]})
         check("quitar varias", r.json().get("deleted") == 2 and orden(eB["export_id"]) == [], orden(eB["export_id"]))
+
+        print("\n== Movimientos y reversión ==")
+        sdb.shipping_movements.delete_many({})
+
+        async def movs(**params):
+            return (await c.get(f"{API}/movements", params=params)).json()["items"]
+
+        async def revertir(mid):
+            return await c.post(f"{API}/movements/{mid}/revert")
+        eM = (await c.post(f"{API}/exports", json={"date": MARTES})).json()
+        eid = eM["export_id"]
+        add = (await c.post(f"{API}/lines", json={"export_id": eid, "order_numbers": "3352 3353"})).json()["added"]
+        s52, s53 = add[0]["shipment_id"], add[1]["shipment_id"]
+        await c.put(f"{API}/{s52}", json={"status": "READY TO SHIP", "pcs": 250})
+        viernes = (LUNES + timedelta(days=4)).isoformat()
+        sdb.shipping_exports.delete_many({"date": viernes})
+        await c.put(f"{API}/{s53}", json={"move_to_date": viernes})
+        await c.delete(f"{API}/{s52}")
+        m = await movs()
+        check("bitácora registra cada acción (más reciente primero)",
+              [x["action"] for x in m] == ["lines_delete", "lines_move", "lines_update", "lines_add", "export_create"],
+              [x["action"] for x in m])
+        check("resumen legible del cambio", "STATUS AUTO → READY TO SHIP" in m[2]["summary"] and "PCS 280 → 250" in m[2]["summary"],
+              m[2]["summary"])
+        check("filtro por orden", {x["action"] for x in await movs(q="3353")} == {"lines_add", "lines_move"},
+              [x["action"] for x in await movs(q="3353")])
+        check("lo más reciente es revertible; lo que otro cambio pisó, no (con motivo)",
+              m[0]["can_revert"] and not m[2]["can_revert"] and "#3352 ya no existe" in m[2]["blockers"]
+              and any("#3353 cambió después (export)" in b for b in m[3]["blockers"]), [x["blockers"] for x in m])
+
+        r = await revertir(m[0]["movement_id"])
+        back = sdb.scheduled_shipments.find_one({"shipment_id": s52})
+        check("revertir borrado regresa la orden con sus datos", r.status_code == 200 and back
+              and back["status"] == "READY TO SHIP" and back["pcs"] == 250 and back["export_id"] == eid, r.text[:200])
+        r = await revertir(m[0]["movement_id"])
+        check("no se revierte dos veces", r.status_code == 409 and "Ya se revirtió" in str(r.json()), r.text[:200])
+        m2 = await movs()
+        check("la reversión queda registrada y no es revertible",
+              m2[0]["action"] == "revert" and not m2[0]["can_revert"] and m2[1]["reverted_at"], m2[0])
+        r = await revertir(m2[0]["movement_id"])
+        check("revertir una reversión → 409", r.status_code == 409, r.status_code)
+
+        r = await revertir(m[2]["movement_id"])
+        x = sdb.scheduled_shipments.find_one({"shipment_id": s52})
+        check("revertir edición regresa STATUS y PCS", r.status_code == 200 and x["status"] is None and x["pcs"] == 280, x)
+
+        nuevo = sdb.shipping_exports.find_one({"date": viernes})
+        r = await revertir(m[1]["movement_id"])
+        y = sdb.scheduled_shipments.find_one({"shipment_id": s53})
+        check("revertir movimiento regresa la orden a su export", r.status_code == 200 and y["export_id"] == eid
+              and y["ship_date"] == MARTES, y)
+        check("…y borra el export que ese movimiento creó",
+              nuevo and sdb.shipping_exports.count_documents({"export_id": nuevo["export_id"]}) == 0)
+
+        # Conflicto: lo que cambió después bloquea la reversión.
+        a80 = (await c.post(f"{API}/lines", json={"export_id": eid, "order_numbers": "2980"})).json()["added"][0]
+        await c.put(f"{API}/{a80['shipment_id']}", json={"pcs": 999})
+        m3 = await movs()
+        alta = next(x for x in m3 if x["action"] == "lines_add" and x["orders"] == ["2980"])
+        check("cambio posterior bloquea y explica", not alta["can_revert"]
+              and any("#2980 cambió después (PCS)" in b for b in alta["blockers"]), alta["blockers"])
+        r = await revertir(alta["movement_id"])
+        check("revertir bloqueado → 409 con motivos", r.status_code == 409 and r.json()["detail"]["reasons"], r.text[:200])
+        check("…y no deja el candado puesto", not sdb.shipping_movements.find_one({"movement_id": alta["movement_id"]})["reverted_at"])
+        await revertir(m3[0]["movement_id"])          # deshace el PCS 999
+        r = await revertir(alta["movement_id"])
+        check("deshaciendo en orden inverso sí se puede", r.status_code == 200
+              and not sdb.scheduled_shipments.find_one({"shipment_id": a80["shipment_id"]}), r.text[:200])
+
+        # Borrar un export con órdenes y revertirlo.
+        n_antes = sdb.scheduled_shipments.count_documents({"export_id": eid})
+        await c.delete(f"{API}/exports/{eid}", params={"cascade": "true"})
+        borrado = (await movs(action="export_delete"))[0]
+        r = await revertir(borrado["movement_id"])
+        check("revertir borrado de export restaura export y órdenes", r.status_code == 200
+              and sdb.shipping_exports.count_documents({"export_id": eid}) == 1
+              and sdb.scheduled_shipments.count_documents({"export_id": eid}) == n_antes, (n_antes, r.text[:200]))
+        # Un export creado no se puede "des-crear" si ya tiene órdenes ajenas.
+        crea = next(x for x in await movs(action="export_create") if x["summary"].endswith(jr_fecha(MARTES)))
+        check("export con órdenes agregadas después no se des-crea", not crea["can_revert"]
+              and any("tiene órdenes agregadas después" in b for b in crea["blockers"]), crea["blockers"])
 
 
 try:
