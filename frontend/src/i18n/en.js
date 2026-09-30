@@ -5592,6 +5592,16 @@ const en = {
   plan_applied_confirm_revert: "Send order {n} back to {b}?",
   plan_applied_reverted_toast: "Order {n} sent back to its board",
   plan_reschedule: "Reschedule",
+  plan_search_global: "Search order, PO, client…",
+  plan_search_loading: "Searching…",
+  plan_search_none: "No order matches.",
+  plan_search_missing: "missing {what}",
+  plan_search_move: "Proposed move",
+  plan_search_alert: "Printed but status not updated ({d} days)",
+  plan_search_out: "Outside planning",
+  plan_search_in_plan_no_job: "In planning, no pending work (printed or no hits)",
+  plan_search_engine_off: "In planning: turn on the engine to see its schedule",
+  plan_search_confirm_auth: "Authorize moving order {n} to {b}? This DOES move it in the CRM.",
 };
 
 export default en;

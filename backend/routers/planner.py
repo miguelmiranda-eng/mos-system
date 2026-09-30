@@ -559,6 +559,42 @@ async def latest_run(request: Request):
     return run or {}
 
 
+@router.get("/lookup")
+async def lookup(request: Request, q: str = ""):
+    """Buscador global del módulo: órdenes por número, PO de cliente, cliente,
+    branding o diseño, con la RAZÓN por la que están o no en la planeación
+    (sirve para "¿por qué no veo la 3215?"). Sólo lectura."""
+    import re
+    await require_auth(request)
+    q = (q or "").strip()
+    if len(q) < 2:
+        return {"rows": []}
+    rx = {"$regex": re.escape(q), "$options": "i"}
+    cfg = await _config()
+    machines = await get_machines()
+    demand = set(cfg["demand_boards"]) | set(machines)
+    printed = {s.upper() for s in cfg["printed_statuses"]}
+    cur = db.orders.find(
+        {"board": {"$ne": "PAPELERA DE RECICLAJE"},
+         "$or": [{"order_number": rx}, {"customer_po": rx}, {"client": rx}, {"branding": rx}, {"design_#": rx}]},
+        {"_id": 0, "order_id": 1, "order_number": 1, "customer_po": 1, "client": 1, "branding": 1,
+         "board": 1, "production_status": 1, "cancel_date": 1, "quantity": 1, "design_#": 1},
+    ).sort("order_number", -1).limit(25)
+    rows = []
+    async for o in cur:
+        status = str(o.get("production_status") or "").strip().upper()
+        if o.get("board") not in demand:
+            reason, code = f"Tablero {o.get('board')}: no cuenta como demanda", "board"
+        elif status in printed:
+            reason, code = f"Ya impresa ({o.get('production_status')})", "printed"
+        elif not pe.parse_date(o.get("cancel_date")):
+            reason, code = "Sin cancel date", "no_cancel"
+        else:
+            reason, code = "", "in_plan"
+        rows.append({**o, "design": o.pop("design_#", None), "reason": reason, "reason_code": code})
+    return {"rows": rows}
+
+
 @router.get("/data-quality")
 async def data_quality(request: Request):
     await require_auth(request)

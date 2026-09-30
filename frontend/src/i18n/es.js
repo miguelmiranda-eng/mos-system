@@ -5406,6 +5406,16 @@ const es = {
   plan_applied_confirm_revert: "¿Regresar la orden {n} a {b}?",
   plan_applied_reverted_toast: "Orden {n} regresada a su tablero",
   plan_reschedule: "Reprogramar",
+  plan_search_global: "Buscar orden, PO, cliente…",
+  plan_search_loading: "Buscando…",
+  plan_search_none: "Ninguna orden coincide.",
+  plan_search_missing: "falta {what}",
+  plan_search_move: "Movimiento propuesto",
+  plan_search_alert: "Impresa sin cambiar de estatus ({d} días)",
+  plan_search_out: "Fuera de la planeación",
+  plan_search_in_plan_no_job: "En planeación, sin trabajo pendiente (ya impresa o sin hits)",
+  plan_search_engine_off: "En planeación: enciende el motor para ver su programa",
+  plan_search_confirm_auth: "¿Autorizar mover la orden {n} a {b}? Esto sí la mueve en el CRM.",
 };
 
 export default es;

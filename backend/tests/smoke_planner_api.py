@@ -371,6 +371,19 @@ async def main():
             r = await sup.post(f"/api/planner/moves/applied/{ap2['apply_id']}/revert")
             check("si la movieron después, no se pisa (409)", r.status_code == 409, r.status_code)
 
+        print("\n== Buscador global ==")
+        r = await op.get("/api/planner/lookup", params={"q": "900"})
+        lk = {x["order_number"]: x for x in r.json()["rows"]}
+        check("buscador: cualquier sesión, por número", r.status_code == 200 and "9001" in lk, list(lk))
+        check("completada: explica que su tablero no cuenta", lk.get("9005", {}).get("reason_code") == "board", lk.get("9005"))
+        check("en planeación: sin motivo", lk.get("9002", {}).get("reason_code") == "in_plan")
+        r = await op.get("/api/planner/lookup", params={"q": "spencers"})
+        check("buscador por branding (sin mayúsculas)", len(r.json()["rows"]) >= 5)
+        r = await op.get("/api/planner/lookup", params={"q": "9"})
+        check("menos de 2 letras no busca", r.json()["rows"] == [])
+        r = await op.get("/api/planner/lookup", params={"q": "(.*"})
+        check("texto con símbolos no rompe (regex escapado)", r.status_code == 200)
+
         print("\n== Calidad de datos ==")
         r = await sup.get("/api/planner/data-quality")
         dq = r.json()

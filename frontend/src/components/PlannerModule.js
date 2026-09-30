@@ -2,7 +2,7 @@ import { Fragment, useState, useEffect, useCallback, useMemo, useRef } from "rea
 import { useNavigate } from "react-router-dom";
 import {
   ArrowLeft, CalendarClock, Power, RefreshCw, Loader2, Cpu, TrendingUp,
-  Settings2, CalendarDays, AlertTriangle, Trash2, Plus, Save, FlaskConical, Eye,
+  Settings2, CalendarDays, AlertTriangle, Trash2, Plus, Save, FlaskConical, Eye, Search,
   Pin, ArrowUpDown, LogIn, PauseCircle, Undo2, X, SlidersHorizontal, BellRing, CheckCircle2,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -1978,6 +1978,146 @@ const DataTab = ({ tr }) => {
 };
 
 /* ── Página ──────────────────────────────────────────────────────────────── */
+/* ── Buscador global del módulo ────────────────────────────────────────────
+   Número de orden, PO, cliente, branding o diseño. Por cada orden dice DÓNDE
+   está en la planeación: programada (máquina, horario, estatus), bloqueada
+   (qué le falta), movimiento propuesto (con Autorizar / Reprogramar), en
+   alerta, o fuera de la planeación y por qué (lo contesta /planner/lookup).
+   Ctrl+K lo enfoca; Esc lo cierra. */
+const GlobalSearch = ({ run, alerts, canEdit, onAdjust, onApply, onGoTab, tr }) => {
+  const [q, setQ] = useState("");
+  const [open, setOpen] = useState(false);
+  const [remote, setRemote] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const inputRef = useRef(null);
+  const boxRef = useRef(null);
+
+  useEffect(() => {
+    const onKey = (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") { e.preventDefault(); inputRef.current?.focus(); setOpen(true); }
+      if (e.key === "Escape") setOpen(false);
+    };
+    const onClick = (e) => { if (boxRef.current && !boxRef.current.contains(e.target)) setOpen(false); };
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("mousedown", onClick);
+    return () => { window.removeEventListener("keydown", onKey); window.removeEventListener("mousedown", onClick); };
+  }, []);
+
+  useEffect(() => {
+    const term = q.trim();
+    if (term.length < 2) { setRemote([]); return undefined; }
+    setLoading(true);
+    const id = setTimeout(async () => {
+      try { setRemote((await planner(`/lookup?q=${encodeURIComponent(term)}`)).rows || []); } catch { setRemote([]); }
+      setLoading(false);
+    }, 300);
+    return () => clearTimeout(id);
+  }, [q]);
+
+  const results = useMemo(() => {
+    const term = q.trim().toLowerCase();
+    if (term.length < 2) return [];
+    const hit = (x) => [x.order_number, x.client, x.branding].some((v) => String(v || "").toLowerCase().includes(term));
+    const by = new Map();
+    const get = (x) => {
+      if (!by.has(x.order_id)) {
+        by.set(x.order_id, { order_id: x.order_id, order_number: x.order_number, client: x.client, branding: x.branding,
+          cancel_date: x.cancel_date, jobs: [], blocked: [], move: null, alert: null, info: null });
+      }
+      return by.get(x.order_id);
+    };
+    (run?.jobs || []).filter(hit).forEach((j) => get(j).jobs.push(j));
+    (run?.blocked || []).filter(hit).forEach((b) => get(b).blocked.push(b));
+    (run?.moves || []).filter(hit).forEach((m) => { get(m).move = m; });
+    (alerts || []).filter(hit).forEach((a) => { get(a).alert = a; });
+    remote.forEach((r) => { const o = get(r); o.info = r; o.cancel_date = o.cancel_date || r.cancel_date; o.branding = o.branding || r.branding; });
+    return [...by.values()].sort((a, b) => String(b.order_number).localeCompare(String(a.order_number), undefined, { numeric: true })).slice(0, 25);
+  }, [q, run, alerts, remote]);
+
+  const missing = (ready) => ["contado", "cuadros", "label", "ejemplo"].filter((k) => ready && k in ready && !ready[k])
+    .map((k) => tr(`plan_miss_${k}`)).join(", ");
+
+  return (
+    <div ref={boxRef} className="relative w-full md:w-80">
+      <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+      <input ref={inputRef} value={q} onChange={(e) => { setQ(e.target.value); setOpen(true); }} onFocus={() => setOpen(true)}
+        placeholder={tr("plan_search_global")}
+        className="h-10 w-full pl-9 pr-14 rounded-xl border border-slate-200 bg-slate-50 text-sm focus:bg-white focus:border-blue-400 outline-none" />
+      <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-bold text-slate-400 border border-slate-200 rounded px-1">Ctrl K</span>
+      {open && q.trim().length >= 2 && (
+        <div className="absolute right-0 mt-2 w-[min(640px,92vw)] max-h-[70vh] overflow-y-auto bg-white border border-slate-200 rounded-xl shadow-2xl z-50">
+          {loading && results.length === 0 && <div className="p-4 text-sm text-slate-400 flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" />{tr("plan_search_loading")}</div>}
+          {!loading && results.length === 0 && <div className="p-4 text-sm text-slate-500">{tr("plan_search_none")}</div>}
+          {results.map((o) => {
+            const inPlan = o.jobs.length || o.blocked.length || o.move;
+            return (
+              <div key={o.order_id} className="px-4 py-3 border-b border-slate-100 last:border-0">
+                <div className="flex items-baseline gap-2">
+                  <span className="font-black text-slate-900">{o.order_number}</span>
+                  <span className="text-xs text-slate-500 truncate">{o.client}{o.branding ? ` · ${o.branding}` : ""}</span>
+                  {o.cancel_date && <span className="ml-auto text-[11px] text-slate-400 tabular-nums whitespace-nowrap">cancel {String(o.cancel_date).slice(0, 10)}</span>}
+                </div>
+                <div className="mt-1.5 space-y-1 text-xs">
+                  {o.jobs.map((j) => (
+                    <div key={j.job_id} className="flex flex-wrap items-center gap-1.5">
+                      <span className={`px-1.5 py-0.5 rounded border text-[10px] font-bold ${STATUS_STYLE[j.status] || ""}`}>{tr(`plan_status_${j.status}`)}</span>
+                      <span className="font-bold">{j.position}</span>
+                      <span className="text-slate-600">→ {(j.machines || []).join(", ").replace(/MAQUINA/g, "M") || "—"}</span>
+                      <span className="text-slate-400 tabular-nums">{j.start ? `${dday(j.start)} ${hhmm(j.start)}` : ""}{j.end ? ` – ${dday(j.end)} ${hhmm(j.end)}` : ""}</span>
+                      <span className="text-slate-400">· {fmt(j.remaining)} hits</span>
+                    </div>
+                  ))}
+                  {o.blocked.map((b) => (
+                    <div key={b.job_id} className="flex flex-wrap items-center gap-1.5">
+                      <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-600">{b.held ? tr("plan_ov_kind_hold") : tr("plan_status_BLOQUEADA")}</span>
+                      <span className="font-bold">{b.position}</span>
+                      {!b.held && <span className="text-red-600">{tr("plan_search_missing", { what: missing(b.ready) })}</span>}
+                    </div>
+                  ))}
+                  {o.move && (
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-blue-50 text-blue-700">{tr("plan_search_move")}</span>
+                      <span>{o.move.from_board} → <b className="text-blue-700">{o.move.to_board}</b> · {dday(o.move.start)} {hhmm(o.move.start)}</span>
+                    </div>
+                  )}
+                  {o.alert && (
+                    <button onClick={() => { onGoTab("alerts"); setOpen(false); }} className="flex items-center gap-1.5 text-red-700 hover:underline">
+                      <BellRing className="w-3.5 h-3.5" />{tr("plan_search_alert", { d: Math.floor(o.alert.days) })}
+                    </button>
+                  )}
+                  {!inPlan && o.info && (
+                    <div className="text-slate-500">
+                      {o.info.reason_code === "in_plan"
+                        ? (run?.run_id ? tr("plan_search_in_plan_no_job") : tr("plan_search_engine_off"))
+                        : `${tr("plan_search_out")}: ${o.info.reason}`}
+                      {o.info.production_status ? <span className="text-slate-400"> · {o.info.production_status}</span> : null}
+                    </div>
+                  )}
+                </div>
+                {canEdit && inPlan && (
+                  <div className="mt-2 flex gap-1.5">
+                    <button onClick={() => { onAdjust(o.jobs[0] || o.blocked[0] || { order_id: o.order_id, order_number: o.order_number,
+                      client: o.client, position: o.move?.positions?.[0]?.position, machines: o.move?.positions?.[0]?.machines || [] }); setOpen(false); }}
+                      className="px-2.5 h-7 rounded-lg border border-slate-300 text-xs font-bold inline-flex items-center gap-1 hover:border-blue-300 hover:text-blue-700">
+                      <SlidersHorizontal className="w-3.5 h-3.5" />{tr("plan_reschedule")}
+                    </button>
+                    {o.move && (
+                      <button onClick={async () => {
+                        if (!window.confirm(tr("plan_search_confirm_auth", { n: o.order_number, b: o.move.to_board }))) return;
+                        await onApply([o.order_id]); setOpen(false);
+                      }} className="px-2.5 h-7 rounded-lg bg-blue-600 text-white text-xs font-bold">{tr("plan_auth_one")}</button>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+};
+
 const TABS = [
   ["schedule", "plan_tab_schedule", CalendarClock],
   ["projection", "plan_tab_projection", TrendingUp],
@@ -2162,6 +2302,9 @@ const PlannerModule = () => {
             </h1>
             <span className="block text-xs text-slate-500 mt-1">{tr("plan_subtitle")}</span>
           </div>
+
+          <GlobalSearch run={run} alerts={alertData?.printed_stale} canEdit={canEdit} onAdjust={setAdjusting}
+            onApply={applyMoves} onGoTab={setTab} tr={tr} />
 
           {/* Interruptor del motor */}
           <div className={`flex items-center gap-3 px-3 py-2 rounded-xl border ${on ? "bg-emerald-50 border-emerald-200" : "bg-slate-50 border-slate-200"}`}>
