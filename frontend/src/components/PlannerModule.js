@@ -20,7 +20,7 @@ import { useLang } from "../contexts/LanguageContext";
    backend rechaza cualquier otro modo.
 
    Todo lo que define la capacidad es editable aquí: máquinas (activa,
-   cabezas 8–16, cliente preferido), cuadrillas por turno, personas por
+   cabezas 8–20, cliente preferido), cuadrillas por turno, personas por
    cuadrilla, calendario (festivos, tiempo extra, más o menos gente) y reglas.
    Leer lo puede cualquiera con sesión; editar y encender el motor, admin. */
 

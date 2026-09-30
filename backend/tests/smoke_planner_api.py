@@ -1,7 +1,7 @@
 """Smoke de la API del módulo de Planeación (/api/planner).
 
 Fija: permisos (leer = cualquier sesión, editar = admin), validaciones
-(cabezas 8–16, turnos, calendario), que el calendario cambia la capacidad de
+(cabezas 8–20, turnos, calendario), que el calendario cambia la capacidad de
 la proyección, que la simulación NO guarda nada, y que el motor en MODO
 SOMBRA no toca ninguna orden (board, fechas, status).
 
@@ -159,8 +159,12 @@ async def main():
               r.text[:200])
 
         print("\n== Máquinas ==")
+        r = await sup.put("/api/planner/machines/MAQUINA1", json={"heads": 25})
+        check("cabezas fuera de 8–20 -> 400", r.status_code == 400, r.status_code)
         r = await sup.put("/api/planner/machines/MAQUINA1", json={"heads": 20})
-        check("cabezas fuera de 8–16 -> 400", r.status_code == 400, r.status_code)
+        m1 = next(m for m in r.json()["machines"] if m["machine"] == "MAQUINA1")
+        check("cabezas 20 (máquina grande) -> ok", r.status_code == 200 and m1["heads"] == 20,
+              (r.status_code, m1.get("heads")))
         r = await sup.put("/api/planner/machines/MAQUINA9", json={"heads": 10})
         check("máquina que no es tablero -> 404", r.status_code == 404, r.status_code)
         r = await sup.put("/api/planner/machines/MAQUINA3", json={"active": False, "heads": 8,

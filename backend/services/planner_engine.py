@@ -22,7 +22,7 @@ LAS REGLAS (acordadas con el responsable de planeación, 2026-09-23)
 - Volumen: Bajo < 1,500, Medio 1,500–2,499, Alto ≥ 2,500 (por pieza del job).
   Mezcla: una máquina no recibe un segundo Alto en el turno mientras otra
   máquina que corre no tiene ninguno.
-- Cabezas: una máquina sólo toma trabajos con colores ≤ sus cabezas (8–16).
+- Cabezas: una máquina sólo toma trabajos con colores ≤ sus cabezas (8–20).
 - Cliente de máquina = preferencia, sólo desempata.
 - El motor NUNCA cambia el cancel date: sugiere uno nuevo.
 """
@@ -97,7 +97,7 @@ DEFAULT_CONFIG = {
 }
 
 MACHINE_DEFAULTS = {"active": True, "heads": 16, "preferred_client": ""}
-HEADS_MIN, HEADS_MAX = 8, 16
+HEADS_MIN, HEADS_MAX = 8, 20
 
 PRIORITY_RANK = {"SPECIAL RUSH": 0, "RUSH": 1, "OVERSOLD": 2, "PRIORITY 1": 3,
                  "EVENT": 4, "PRIORITY 2": 5}
