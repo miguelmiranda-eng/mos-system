@@ -33,7 +33,7 @@ const es = {
   admin: "Admin",
   
   // Header / Nav
-  search_placeholder: "Buscar órdenes...",
+  search_placeholder: "Filtra este tablero. Enter busca en todos.",
   global_search: "Buscar en todos los tableros...",
   new_order: "Nueva Orden",
   production: "Producción",

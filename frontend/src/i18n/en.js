@@ -33,7 +33,7 @@ const en = {
   admin: "Admin",
   
   // Header / Nav
-  search_placeholder: "Search orders...",
+  search_placeholder: "Filter this board. Enter searches all.",
   global_search: "Search across all boards...",
   new_order: "New Order",
   production: "Production",
