@@ -3247,15 +3247,30 @@ const Dashboard = () => {
                 <div style={{ width: '3px', height: '14px', backgroundColor: '#4169e1', borderRadius: '2px', boxShadow: '0 0 8px rgba(65,105,225,0.5)' }} />
                 <p style={{ fontSize: '10px', fontWeight: 900, color: isDark ? '#64748b' : '#475569', textTransform: 'uppercase', letterSpacing: '0.25em', margin: 0 }}>{t('dash_order_statuses')}</p>
               </div>
+              {/* Estados EDITABLES: mismas celdas que el grid (EditableCell), para
+                  cambiar estados desde el panel. Es la única vía de edición en
+                  iPad/móvil, que ya no usan el grid. Al guardar sincroniza el
+                  snapshot del panel para que el valor mostrado se actualice. */}
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-x-5 gap-y-6">
                 {columns
                   .filter(col => ['production_status', 'blank_status', 'trim_status', 'artwork_status', 'sample', 'shipping', 'priority', 'screens', 'betty_column'].includes(col.key))
                   .map(col => (
-                    <div key={col.key}>
+                    <div key={col.key} className="min-w-0">
                       <p style={{ fontSize: '8px', fontWeight: 900, color: isDark ? '#334155' : '#64748b', textTransform: 'uppercase', letterSpacing: '0.15em', marginBottom: '5px' }}>{col.label}</p>
-                      <p style={{ fontSize: '12px', fontWeight: 800, color: isDark ? '#e2e8f0' : '#1e293b', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {renderDetailValue(detailsOrder[col.key])}
-                      </p>
+                      <EditableCell
+                        orderId={detailsOrder.order_id}
+                        field={col.key}
+                        value={detailsOrder[col.key]}
+                        type={col.type}
+                        options={col.optionKey ? options[col.optionKey] : []}
+                        onUpdate={(orderId, field, value) => { handleCellUpdate(orderId, field, value); setDetailsOrder(prev => prev ? { ...prev, [field]: value } : prev); }}
+                        readOnly={!(isAdmin || (currentBoard !== 'MASTER' && currentBoard !== 'EJEMPLOS'))}
+                        isDark={isDark}
+                        allOrders={orders}
+                        order={detailsOrder}
+                        productionSummary={productionSummary}
+                        columns={visibleColumns}
+                      />
                     </div>
                   ))}
               </div>
