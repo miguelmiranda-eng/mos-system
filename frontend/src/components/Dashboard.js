@@ -1126,6 +1126,10 @@ const Dashboard = () => {
 
     const isHighlighted = highlightedOrderId === order.order_id;
     const canEditBoard = isAdmin || (currentBoard !== 'MASTER' && currentBoard !== 'EJEMPLOS');
+    // En MASTER/EJEMPLOS esta columna también pinta el badge del tablero en la
+    // misma fila que las señaléticas; necesita más ancho para que no se
+    // recorten los íconos de la derecha (playerita/camión).
+    const nameColW = (currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') ? 320 : 200;
 
     return (
       <React.Fragment key={order.order_id}>
@@ -1160,7 +1164,7 @@ const Dashboard = () => {
         {/* Order Number / Board (Sticky Column 3) */}
         <div
           className={`${ROW_H} px-2.5 sticky left-[112px] z-[30] border-r border-b border-border/40 group/order flex flex-row items-center gap-2 overflow-hidden ${isHighlighted ? (isDark ? 'bg-yellow-900/30' : 'bg-yellow-50') : rowBgClass}`}
-          style={{ width: 200, minWidth: 200, maxWidth: 200 }}
+          style={{ width: nameColW, minWidth: nameColW, maxWidth: nameColW }}
         >
           {/* Línea 1: número a la izquierda (ancla visual para barrer la lista)
               y a la derecha lo que antes iba debajo y estiraba la fila: la
@@ -2421,7 +2425,7 @@ const Dashboard = () => {
                 ) : (
                 <div role="table" className="text-sm isolate" style={{
                   display: 'grid',
-                  gridTemplateColumns: `48px 64px 200px ${visibleColumns.filter(c => c.key !== 'order_number').map(col => `${columnWidths[col.key] || col.width}px`).join(' ')} minmax(180px, 1fr) 110px`,
+                  gridTemplateColumns: `48px 64px ${(currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') ? 320 : 200}px ${visibleColumns.filter(c => c.key !== 'order_number').map(col => `${columnWidths[col.key] || col.width}px`).join(' ')} minmax(180px, 1fr) 110px`,
                   minWidth: '100%',
                   width: 'max-content'
                 }}>
@@ -2430,7 +2434,7 @@ const Dashboard = () => {
                   <div className={`py-4 px-1 sticky left-[48px] top-0 z-[50] border-r border-b border-border/40 ${isDark ? 'bg-card' : 'bg-gray-50'}`} style={{ width: 64, minWidth: 64, maxWidth: 64 }}></div>
 
                   {/* Column 3: Permanent Identifier (Sticky) */}
-                  <div className={`py-4 px-3 sticky left-[112px] top-0 z-[50] text-left text-[10px] font-bold tracking-[0.2em] uppercase border-r border-b border-border/40 ${isDark ? 'bg-card text-slate-300' : 'bg-gray-50 text-slate-700'}`} style={{ width: 200, minWidth: 200, maxWidth: 200 }}>
+                  <div className={`py-4 px-3 sticky left-[112px] top-0 z-[50] text-left text-[10px] font-bold tracking-[0.2em] uppercase border-r border-b border-border/40 ${isDark ? 'bg-card text-slate-300' : 'bg-gray-50 text-slate-700'}`} style={{ width: (currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') ? 320 : 200, minWidth: (currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') ? 320 : 200, maxWidth: (currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') ? 320 : 200 }}>
                     <div className="flex items-center justify-between gap-1">
                       <span className="truncate">{(currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') ? 'Board' : 'Order #'}</span>
                       <Popover open={openFilter === ((currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') ? '_board' : 'order_number')} onOpenChange={(val) => setOpenFilter(val ? ((currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') ? '_board' : 'order_number') : null)}>
