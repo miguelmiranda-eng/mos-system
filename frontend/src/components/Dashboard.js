@@ -1131,7 +1131,7 @@ const Dashboard = () => {
         {/* Selection Checkbox */}
         <div
           data-order-id={order.order_id}
-          className={`${ROW_H} px-2 sticky left-0 z-[30] border-r border-b border-border/5 flex items-center justify-center ${isSelected ? 'border-l-[4px] border-l-primary' : isHighlighted ? 'border-l-[4px] border-l-yellow-400' : 'border-l-[4px] border-l-transparent'} ${isHighlighted ? (isDark ? 'bg-yellow-900/30' : 'bg-yellow-50') : rowBgClass}`}
+          className={`${ROW_H} px-2 sticky left-0 z-[30] border-r border-b border-border/40 flex items-center justify-center ${isSelected ? 'border-l-[4px] border-l-primary' : isHighlighted ? 'border-l-[4px] border-l-yellow-400' : 'border-l-[4px] border-l-transparent'} ${isHighlighted ? (isDark ? 'bg-yellow-900/30' : 'bg-yellow-50') : rowBgClass}`}
           style={{ width: 48, minWidth: 48, maxWidth: 48 }}>
           <input
             type="checkbox"
@@ -1142,7 +1142,7 @@ const Dashboard = () => {
         </div>
 
         {/* Quick Actions (Sticky Column 2) */}
-        <div className={`${ROW_H} px-1 sticky left-[48px] z-[30] border-r border-b border-border/5 flex items-center justify-center ${isHighlighted ? (isDark ? 'bg-yellow-900/30' : 'bg-yellow-50') : rowBgClass}`} style={{ width: 64, minWidth: 64, maxWidth: 64 }}>
+        <div className={`${ROW_H} px-1 sticky left-[48px] z-[30] border-r border-b border-border/40 flex items-center justify-center ${isHighlighted ? (isDark ? 'bg-yellow-900/30' : 'bg-yellow-50') : rowBgClass}`} style={{ width: 64, minWidth: 64, maxWidth: 64 }}>
           <div className="flex flex-row gap-2 items-center justify-center">
             <button onClick={() => setCommentsOrder(order)} className="p-1 rounded-lg transition-all hover:bg-secondary hover:scale-110 active:scale-95 text-slate-500 dark:text-slate-400 hover:text-primary relative" title={t('comments')}>
               <MessageSquare className="w-4 h-4" />
@@ -1158,7 +1158,7 @@ const Dashboard = () => {
 
         {/* Order Number / Board (Sticky Column 3) */}
         <div
-          className={`${ROW_H} px-2.5 sticky left-[112px] z-[30] border-r border-b border-border/10 group/order flex flex-col justify-center gap-1 overflow-hidden ${isHighlighted ? (isDark ? 'bg-yellow-900/30' : 'bg-yellow-50') : rowBgClass}`}
+          className={`${ROW_H} px-2.5 sticky left-[112px] z-[30] border-r border-b border-border/40 group/order flex flex-col justify-center gap-1 overflow-hidden ${isHighlighted ? (isDark ? 'bg-yellow-900/30' : 'bg-yellow-50') : rowBgClass}`}
           style={{ width: 200, minWidth: 200, maxWidth: 200 }}
         >
           {/* Línea 1: número a la izquierda (ancla visual para barrer la lista)
@@ -1288,7 +1288,7 @@ const Dashboard = () => {
           return (
             <div
               key={col.key}
-              className={`${ROW_H} px-3 border-r border-b border-border/5 transition-colors flex items-center overflow-hidden ${col.type === 'checkbox' ? 'justify-center' : ''} ${isHighlighted ? (isDark ? 'bg-yellow-900/10' : 'bg-yellow-50/50') : ''} ${rowBgClass}`}
+              className={`${ROW_H} px-3 border-r border-b border-border/40 transition-colors flex items-center overflow-hidden ${col.type === 'checkbox' ? 'justify-center' : ''} ${isHighlighted ? (isDark ? 'bg-yellow-900/10' : 'bg-yellow-50/50') : ''} ${rowBgClass}`}
               style={{ width: width, minWidth: width, maxWidth: 'none' }}
             >
               {isProgressCol && typeof val === 'number' ? (
@@ -1297,7 +1297,7 @@ const Dashboard = () => {
                     <span className="text-[9px] font-black font-mono text-muted-foreground/70 uppercase">{val} {t('pieces')}</span>
                     <span className="text-[9px] font-black font-mono text-royal">{Math.min(100, Math.round(((order.quantity - val) / order.quantity) * 100 || 0))}%</span>
                   </div>
-                  <div className="w-full h-2 bg-muted/30 rounded-full overflow-hidden border border-border/5">
+                  <div className="w-full h-2 bg-muted/30 rounded-full overflow-hidden border border-border/40">
                     <div
                       className="h-full bg-royal transition-[width] duration-500"
                       style={{ width: `${Math.min(100, Math.round(((order.quantity - val) / order.quantity) * 100 || 0))}%` }}
@@ -1330,7 +1330,7 @@ const Dashboard = () => {
         })}
 
         {/* Action Buttons & Progress Bar */}
-        <div className={`${ROW_H} px-4 border-b border-border/5 flex flex-col justify-center gap-1 overflow-hidden ${rowBgClass}`} style={{ minWidth: 180 }}>
+        <div className={`${ROW_H} px-4 border-b border-border/40 flex flex-col justify-center gap-1 overflow-hidden ${rowBgClass}`} style={{ minWidth: 180 }}>
           {(() => {
             const prodData = productionSummary[order.order_number] || { total_produced: 0 };
             const total = order.quantity || 0;
@@ -1349,7 +1349,7 @@ const Dashboard = () => {
                   </span>
                 </div>
 
-                <div className="w-full h-2 bg-secondary rounded-full overflow-hidden border border-border/5 relative group/progress">
+                <div className="w-full h-2 bg-secondary rounded-full overflow-hidden border border-border/40 relative group/progress">
                   <div
                     className={`h-full transition-[width] duration-700 ease-out ${progress >= 100 ? 'bg-green-500' :
                       progress >= 50 ? 'bg-amber-500' :
@@ -1368,7 +1368,7 @@ const Dashboard = () => {
         </div>
 
         {/* Avance Neck — solo porcentaje (compacto) */}
-        <div className={`${ROW_H} px-3 border-b border-border/5 flex flex-col items-center justify-center ${rowBgClass}`} style={{ minWidth: 110 }} data-testid={`row-restante-neck-${order.order_id}`}>
+        <div className={`${ROW_H} px-3 border-b border-border/40 flex flex-col items-center justify-center ${rowBgClass}`} style={{ minWidth: 110 }} data-testid={`row-restante-neck-${order.order_id}`}>
           {(() => {
             const neckData = neckSummary?.[order.order_number] || { total_neck_cut: 0 };
             const total = order.quantity || 0;
@@ -2485,11 +2485,11 @@ const Dashboard = () => {
                   width: 'max-content'
                 }}>
 
-                  <div ref={colHeadRef} className={`py-4 px-2 sticky left-0 top-0 z-[50] border-r border-b border-border/10 flex items-center justify-center ${isDark ? 'bg-card' : 'bg-gray-50'}`} style={{ width: 48, minWidth: 48, maxWidth: 48 }}><input type="checkbox" checked={selectedOrders.length === orders.length && orders.length > 0} onChange={(e) => e.target.checked ? handleSelectAll() : handleDeselectAll()} className="w-4 h-4 rounded border-border bg-background transition-all" data-testid="select-all-checkbox" /></div>
-                  <div className={`py-4 px-1 sticky left-[48px] top-0 z-[50] border-r border-b border-border/10 ${isDark ? 'bg-card' : 'bg-gray-50'}`} style={{ width: 64, minWidth: 64, maxWidth: 64 }}></div>
+                  <div ref={colHeadRef} className={`py-4 px-2 sticky left-0 top-0 z-[50] border-r border-b border-border/40 flex items-center justify-center ${isDark ? 'bg-card' : 'bg-gray-50'}`} style={{ width: 48, minWidth: 48, maxWidth: 48 }}><input type="checkbox" checked={selectedOrders.length === orders.length && orders.length > 0} onChange={(e) => e.target.checked ? handleSelectAll() : handleDeselectAll()} className="w-4 h-4 rounded border-border bg-background transition-all" data-testid="select-all-checkbox" /></div>
+                  <div className={`py-4 px-1 sticky left-[48px] top-0 z-[50] border-r border-b border-border/40 ${isDark ? 'bg-card' : 'bg-gray-50'}`} style={{ width: 64, minWidth: 64, maxWidth: 64 }}></div>
 
                   {/* Column 3: Permanent Identifier (Sticky) */}
-                  <div className={`py-4 px-3 sticky left-[112px] top-0 z-[50] text-left text-[10px] font-bold tracking-[0.2em] uppercase border-r border-b border-border/10 ${isDark ? 'bg-card text-slate-300' : 'bg-gray-50 text-slate-700'}`} style={{ width: 200, minWidth: 200, maxWidth: 200 }}>
+                  <div className={`py-4 px-3 sticky left-[112px] top-0 z-[50] text-left text-[10px] font-bold tracking-[0.2em] uppercase border-r border-b border-border/40 ${isDark ? 'bg-card text-slate-300' : 'bg-gray-50 text-slate-700'}`} style={{ width: 200, minWidth: 200, maxWidth: 200 }}>
                     <div className="flex items-center justify-between gap-1">
                       <span className="truncate">{(currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') ? 'Board' : 'Order #'}</span>
                       <Popover open={openFilter === ((currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') ? '_board' : 'order_number')} onOpenChange={(val) => setOpenFilter(val ? ((currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') ? '_board' : 'order_number') : null)}>
@@ -2596,7 +2596,7 @@ const Dashboard = () => {
                     const isDate = col.type === 'date';
 
                     return (
-                      <div key={col.key} className={`py-4 ${idx === 0 ? 'pl-6 pr-3' : 'px-3'} text-left text-[10px] font-bold tracking-[0.2em] uppercase border-r border-b border-border/5 sticky top-0 z-20 ${isDark ? 'bg-card text-slate-300' : 'bg-gray-50 text-slate-700'} ${draggedCol === col.key ? 'opacity-50' : ''}`} style={{ width: width, minWidth: width, maxWidth: 'none' }} data-testid={`column-header-${col.key}`} draggable={canArrangeColumns} onDragStart={() => handleColumnDragStart(col.key)} onDragOver={(e) => handleColumnDragOver(e, col.key)} onDragEnd={handleColumnDragEnd}>
+                      <div key={col.key} className={`py-4 ${idx === 0 ? 'pl-6 pr-3' : 'px-3'} text-left text-[10px] font-bold tracking-[0.2em] uppercase border-r border-b border-border/40 sticky top-0 z-20 ${isDark ? 'bg-card text-slate-300' : 'bg-gray-50 text-slate-700'} ${draggedCol === col.key ? 'opacity-50' : ''}`} style={{ width: width, minWidth: width, maxWidth: 'none' }} data-testid={`column-header-${col.key}`} draggable={canArrangeColumns} onDragStart={() => handleColumnDragStart(col.key)} onDragOver={(e) => handleColumnDragOver(e, col.key)} onDragEnd={handleColumnDragEnd}>
                         <div className="flex items-center justify-between gap-1">
                           <div className={`flex items-center gap-1.5 select-none overflow-hidden ${canArrangeColumns ? 'cursor-grab active:cursor-grabbing' : ''}`}>
                             {(currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') && <svg className="w-3.5 h-3.5 flex-shrink-0 opacity-50" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 3H5a2 2 0 0 0-2 2v4m6-6h10a2 2 0 0 1 2 2v4M9 3v18m0 0h10a2 2 0 0 0 2-2v-4M9 21H5a2 2 0 0 1-2-2v-4m0-6v6m18-6v6" /></svg>}
@@ -2741,8 +2741,8 @@ const Dashboard = () => {
                       </div>
                     );
                   })}
-                  <div className={`py-4 px-3 text-left text-[10px] font-bold tracking-[0.2em] uppercase border-b border-border/5 sticky top-0 z-20 ${isDark ? 'bg-[hsl(220,30%,9%)] text-slate-300' : 'bg-gray-50 text-slate-700'}`} style={{ minWidth: 180 }} data-testid="column-header-restante">Remaining</div>
-                  <div className={`py-4 px-3 text-left text-[10px] font-bold tracking-[0.2em] uppercase border-b border-border/5 sticky top-0 z-20 ${isDark ? 'bg-[hsl(220,30%,9%)] text-pink-300' : 'bg-gray-50 text-pink-600'}`} style={{ minWidth: 110 }} data-testid="column-header-restante-neck">Neck %</div>
+                  <div className={`py-4 px-3 text-left text-[10px] font-bold tracking-[0.2em] uppercase border-b border-border/40 sticky top-0 z-20 ${isDark ? 'bg-[hsl(220,30%,9%)] text-slate-300' : 'bg-gray-50 text-slate-700'}`} style={{ minWidth: 180 }} data-testid="column-header-restante">Remaining</div>
+                  <div className={`py-4 px-3 text-left text-[10px] font-bold tracking-[0.2em] uppercase border-b border-border/40 sticky top-0 z-20 ${isDark ? 'bg-[hsl(220,30%,9%)] text-pink-300' : 'bg-gray-50 text-pink-600'}`} style={{ minWidth: 110 }} data-testid="column-header-restante-neck">Neck %</div>
                   {renderTableBody()}
                   {!debouncedSearchQuery && !(isDaySupportedBoard(currentBoard) && !groupByDate) && orders.length > displayLimit && (
                     <button
