@@ -1763,57 +1763,10 @@ const Dashboard = () => {
             <Menu className="w-6 h-6 text-muted-foreground" />
           </button>
         )}
-        {/* Contexto del tablero: nombre · vista · métricas. Una sola fuente
-            de verdad — antes el nombre y el conteo se repetían en una segunda
-            barra con una marca de agua gigante; eso se eliminó. */}
+        {/* Métricas del tablero. El chip de identidad se movió al toolbar de
+            la tabla (junto al selector de agrupación) y el selector de vistas
+            guardadas se retiró de la cabecera. */}
         <div className="hidden lg:flex items-center gap-2.5 shrink-0">
-          <span className="px-2.5 py-1 rounded-md text-xs font-black uppercase tracking-tight text-white whitespace-nowrap" style={{ backgroundColor: BOARD_COLORS[currentBoard]?.bg || '#1f2937' }}>{currentBoard}</span>
-          <DropdownMenu>
-            <DropdownMenuTrigger className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-border/40 bg-muted/20 hover:border-royal/50 hover:bg-muted/40 transition-all group outline-none max-w-[170px]" data-tour="saved-views">
-              <span className={cn("text-[11px] font-bold uppercase tracking-tight truncate", activeViewName ? "text-royal" : "text-muted-foreground")}>
-                {activeViewName || t('dash_default_view')}
-              </span>
-              <ChevronDown className="w-3.5 h-3.5 text-muted-foreground group-hover:text-royal transition-colors shrink-0" />
-            </DropdownMenuTrigger>
-            <DropdownMenuContent className="z-[100] min-w-[240px] bg-card/95 backdrop-blur-xl border-border rounded-lg shadow-2xl p-1 animate-in slide-in-from-top-2">
-              {currentBoardViews.length === 0 && <div className="p-4 text-center text-xs text-muted-foreground italic">{t('dash_no_saved_views')}</div>}
-
-              {pinnedViews.length > 0 && (
-                <div className="p-2 border-b border-border/50">
-                  <div className="text-[9px] font-bold uppercase tracking-[0.2em] text-royal mb-1 px-2">{t('dash_pinned_views')}</div>
-                  {pinnedViews.map(view => (
-                    <div key={view.view_id} className="flex items-center gap-1 group">
-                      <DropdownMenuItem onClick={() => handleApplyView(view)} className="flex-1 py-2 px-3 text-xs font-bold uppercase tracking-wider rounded-lg cursor-pointer hover:bg-muted">
-                        {view.name}
-                      </DropdownMenuItem>
-                      <button onClick={() => handleTogglePinView(view.view_id, view.pinned)} className="p-2 opacity-50 hover:opacity-100"><Pin className="w-3.5 h-3.5 text-royal fill-royal" /></button>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {unpinnedViews.length > 0 && (
-                <div className="p-2">
-                  <div className="text-[9px] font-bold uppercase tracking-[0.2em] text-muted-foreground mb-1 px-2">{t('all')}</div>
-                  {unpinnedViews.map(view => (
-                    <div key={view.view_id} className="flex items-center gap-1 group">
-                      <DropdownMenuItem onClick={() => handleApplyView(view)} className="flex-1 py-2 px-3 text-xs font-bold uppercase tracking-wider rounded-lg cursor-pointer hover:bg-muted">
-                        {view.name}
-                      </DropdownMenuItem>
-                      <button onClick={() => handleTogglePinView(view.view_id, view.pinned)} className="p-2 opacity-0 group-hover:opacity-100 transition-opacity"><Pin className="w-3.5 h-3.5" /></button>
-                      <button onClick={() => handleDeleteView(view.view_id)} className="p-2 opacity-0 group-hover:opacity-100 transition-opacity hover:text-red-500"><X className="w-3.5 h-3.5" /></button>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              <DropdownMenuSeparator className="bg-border/50" />
-              <DropdownMenuItem onClick={() => handleApplyView(null)} className="py-2.5 px-4 text-xs font-bold uppercase tracking-wider text-muted-foreground hover:bg-secondary flex items-center justify-between">
-                {t('dash_reset_view')} <RefreshCw className="w-3 h-3" />
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-          <div className="h-5 w-px bg-border/50" />
           <div className="flex items-center gap-1.5 text-xs whitespace-nowrap">
             <span className="font-bold text-foreground">{orders.length}</span>
             <span className="text-muted-foreground">{t('orders').toLowerCase()}</span>
@@ -2123,6 +2076,9 @@ const Dashboard = () => {
               </>
             )}
           </div>
+
+          {/* Identificador del tablero, junto al selector de agrupación */}
+          <span className="h-9 inline-flex items-center px-3 rounded-lg text-xs font-black uppercase tracking-tight text-white whitespace-nowrap mr-3" style={{ backgroundColor: BOARD_COLORS[currentBoard]?.bg || '#1f2937' }}>{currentBoard}</span>
 
           {/* Grouping Selector */}
           {!calendarMode && !readyCalendarMode && !blanksTrackingMode && (
