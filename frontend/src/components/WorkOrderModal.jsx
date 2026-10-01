@@ -271,7 +271,7 @@ export default function WorkOrderModal({ order, isOpen, onClose, isDark = false 
   return (
     <div className="fixed inset-0 z-[200] overflow-y-auto" role="dialog" aria-modal="true" aria-label={`Work order ${o.order_number}`}>
       <div className="absolute inset-0 bg-black/60" onClick={onClose} />
-      <div className={`relative mx-auto my-6 w-[min(1180px,96vw)] rounded-2xl shadow-2xl ${panel}`}>
+      <div className={`relative w-full min-h-screen ${panel}`}>
         {/* Encabezado */}
         <div className={`flex items-start gap-4 px-6 py-4 border-b ${isDark ? 'border-white/10' : 'border-gray-200'}`}>
           <div className="min-w-0">
