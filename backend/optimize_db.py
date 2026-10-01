@@ -52,6 +52,14 @@ WMS_INDEXES = [
     ("wms_pick_tickets", "order_id", {}),
     ("wms_pick_tickets", "status", {}),
     ("wms_movements", [("created_at", -1)], {}),
+    # Historial de caja/LPN (buscar_historial_caja): un $or sobre estas cuatro
+    # llaves. Basta UNA rama sin índice para que Mongo recorra la bitácora
+    # entera — medido 2026-10-01: 178k docs, 400-675 ms POR caja consultada.
+    # Con las cuatro indexadas el $or se resuelve como unión de índices.
+    ("wms_movements", "details.box_id", {}),
+    ("wms_movements", "details.box_ids", {}),
+    ("wms_movements", "details.physical_lpn", {}),
+    ("wms_movements", "details.receiving_id", {}),
     ("wms_tasks", [("task_type", 1), ("status", 1)], {}),
     ("wms_locations", "name", {}),
     ("wms_asn", "asn_id", {}),
@@ -161,6 +169,15 @@ CORE_INDEXES = [
     ("activity_logs", [("details.order_id", 1)], {}),
     ("activity_logs", [("details.order_number", 1)], {}),
     ("activity_logs", [("previous_data.order_ids", 1)], {}),
+    # El historial también busca por `details.order` (formato viejo). Esa sola
+    # rama sin índice volvía COLLSCAN el $or completo (218k docs, ~300 ms).
+    ("activity_logs", [("details.order", 1)], {}),
+    # Comentarios de una orden: se leen CADA vez que alguien abre una orden y
+    # no había índice (36k docs recorridos por apertura).
+    ("comments", [("order_id", 1), ("created_at", 1)], {}),
+    # Planeación: "última corrida" ordena por created_at; sin índice cargaba
+    # todas las corridas (~220 KB c/u) para ordenarlas en memoria.
+    ("planner_runs", [("created_at", -1)], {}),
     # Adjuntos de órdenes. GET /api/uploads busca por storage_key en CADA imagen
     # y el detalle de orden por order_id: sin índice eran COLLSCAN de ~69k docs
     # (300-560 ms por imagen, 76% del tiempo lento de Mongo el 2026-09-25).

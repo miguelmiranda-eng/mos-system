@@ -81,7 +81,10 @@ app.add_middleware(
 # Comprime respuestas grandes (los tableros pesan ~4.4 MB de JSON y cada
 # cambio de orden hace que TODOS los clientes conectados los re-descarguen;
 # gzip los deja en ~10%). minimum_size evita comprimir respuestas chicas.
-app.add_middleware(GZipMiddleware, minimum_size=1024)
+# compresslevel 6 (no el 9 por defecto): la compresión corre en el event loop
+# y se repite POR CLIENTE aunque el cuerpo venga de caché; el nivel 9 cuesta
+# ~2x CPU por apenas ~3% menos bytes en JSON.
+app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=6)
 
 # uploads/invoices ya NO es de facturas: el router de invoices se elimino por
 # no tener consumidor, pero la carpeta se queda porque el Inventario por Foto
@@ -312,6 +315,57 @@ app.include_router(tools_router)
 app.include_router(order_components_router)
 app.include_router(planner_router)
 
+# ==================== RETENCIÓN ====================
+# La limpieza vivía en startup_restore() (código muerto) y nunca corrió: se
+# acumularon ~20k sesiones vencidas y la bitácora desde abril.
+# Política (decidida 2026-10-01): activity_logs guarda SOLO los últimos 30
+# días. Ojo: el historial de cada orden ("registro de vida"), el "deshacer" y
+# el registro de descargas leen de aquí, así que también quedan en 30 días.
+# Corre al arrancar y cada 24 h, en segundo plano y por lotes para no disparar
+# un borrado masivo de golpe.
+ACTIVITY_RETENTION_DAYS = 30
+
+
+async def _purge_by_batches(coll, query, batch=5000, pause=0.5):
+    import asyncio as _asyncio
+    total = 0
+    while True:
+        ids = [d["_id"] async for d in coll.find(query, {"_id": 1}).limit(batch)]
+        if not ids:
+            return total
+        r = await coll.delete_many({"_id": {"$in": ids}})
+        total += r.deleted_count
+        await _asyncio.sleep(pause)  # respiro entre lotes
+
+
+async def purge_retention(database, now=None, pause=0.5):
+    """Borra sesiones vencidas y activity_logs de más de ACTIVITY_RETENTION_DAYS.
+    Devuelve {"sessions": n, "activity_logs": n}. Las fechas se guardan como
+    ISO UTC en texto, así que la comparación lexicográfica es cronológica."""
+    from datetime import timedelta
+    now = now or datetime.now(timezone.utc)
+    sessions = await _purge_by_batches(
+        database.user_sessions, {"expires_at": {"$lt": now.isoformat()}}, pause=pause)
+    cutoff = (now - timedelta(days=ACTIVITY_RETENTION_DAYS)).isoformat()
+    logs = await _purge_by_batches(
+        database.activity_logs, {"timestamp": {"$lt": cutoff}}, pause=pause)
+    return {"sessions": sessions, "activity_logs": logs}
+
+
+async def _retention_loop():
+    import asyncio as _asyncio
+    while True:
+        try:
+            r = await purge_retention(db)
+            if r["sessions"] or r["activity_logs"]:
+                logging.info(f"Retención: {r['sessions']} sesiones vencidas y "
+                             f"{r['activity_logs']} registros de activity_logs "
+                             f"> {ACTIVITY_RETENTION_DAYS} días purgados")
+        except Exception as e:
+            logging.error(f"Retención falló: {e}")
+        await _asyncio.sleep(24 * 3600)
+
+
 @app.on_event("startup")
 async def startup_event():
     logging.info("MOS SYSTEM BACKEND STARTING...")
@@ -338,6 +392,8 @@ async def startup_event():
     if os.environ.get("DISABLE_SCHEDULERS") == "1":
         logging.info("DISABLE_SCHEDULERS=1: schedulers apagados (instancia local de verificación).")
         return
+    import asyncio as _asyncio
+    _asyncio.create_task(_retention_loop())
     # Daily production report scheduler (no-op if disabled / apscheduler missing).
     start_report_scheduler()
     # Printavo invoice auto-sync poller (no-op if disabled / unconfigured).

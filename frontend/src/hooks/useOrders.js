@@ -109,6 +109,10 @@ export const useOrders = (currentBoard, boardFilters) => {
     setOrders(filtered);
   }, [currentBoard, boardFilters]);
 
+  // Texto crudo de la última respuesta por tablero: un refetch por WebSocket que
+  // trae EXACTAMENTE lo mismo no debe re-renderizar las ~3,000 celdas.
+  const _ordersPayloadRef = useRef({});
+
   const fetchOrders = useCallback(async (silent = false, forceRefresh = false) => {
     const cacheKey = currentBoard;
     const hasCache = boardDataCache[cacheKey];
@@ -139,7 +143,15 @@ export const useOrders = (currentBoard, boardFilters) => {
       params.append('limit', '50000');
       const res = await apiFetch(`${API}/orders?${params}`);
       if (res.ok) {
-        let data = await res.json();
+        const text = await res.text();
+        // Refetch silencioso (WebSocket) sin cambios: no tocar el estado.
+        if (silent && forceRefresh && boardDataCache[cacheKey]
+            && _ordersPayloadRef.current[cacheKey] === text) {
+          lastFetchedTime[cacheKey] = now;
+          return;
+        }
+        _ordersPayloadRef.current[cacheKey] = text;
+        let data = JSON.parse(text);
         data = data.filter(o => o.board !== 'PAPELERA DE RECICLAJE');
         
         boardDataCache[cacheKey] = data;
@@ -343,6 +355,9 @@ export const useOrders = (currentBoard, boardFilters) => {
   const selfUpdateRef = useRef(false);
 
   useEffect(() => { fetchOrdersRef.current = fetchOrders; }, [fetchOrders]);
+  // El socket se abre una sola vez; el tablero actual se lee por ref.
+  const currentBoardRef = useRef(currentBoard);
+  useEffect(() => { currentBoardRef.current = currentBoard; }, [currentBoard]);
   useEffect(() => { fetchProdRef.current = fetchProductionSummary; }, [fetchProductionSummary]);
   useEffect(() => { fetchNeckRef.current = fetchNeckSummary; }, [fetchNeckSummary]);
   useEffect(() => { fetchNotifsRef.current = fetchNotifications; }, [fetchNotifications]);
@@ -373,7 +388,15 @@ export const useOrders = (currentBoard, boardFilters) => {
               fetchProdRef.current();
               if (msg.type === 'neck_update') fetchNeckRef.current?.();
               if (msg.type === 'order_change') {
-                fetchOrdersRef.current(true, true); // Silent but forced refresh
+                // Solo recargar el tablero si el cambio lo toca. El backend manda
+                // en `boards` TODOS los tableros afectados (origen, destino y el
+                // final tras automatizaciones); sin `boards` (comentarios, links,
+                // imports…) se recarga como siempre. MASTER agrega casi todos.
+                const boards = msg.data?.boards;
+                const cb = currentBoardRef.current;
+                const touchesMine = !Array.isArray(boards) || boards.length === 0
+                  || cb === 'MASTER' || boards.includes(cb);
+                if (touchesMine) fetchOrdersRef.current(true, true); // Silent but forced refresh
                 if (msg.data?.action === 'add_comment') fetchNotifsRef.current();
               }
             }, jitter);

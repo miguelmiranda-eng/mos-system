@@ -75,12 +75,70 @@ def _invalidate_orders_cache(data):
         if isinstance(raw, (list, tuple)) and raw and all(
                 isinstance(b, str) and b.strip() for b in raw):
             boards = set(raw)
+    # El corpus de búsqueda abarca TODOS los tableros: cualquier cambio de orden
+    # lo invalida (se reconstruye perezosamente en la siguiente búsqueda).
+    _search_corpus["entries"] = None
     if boards is None:
         _orders_cache.clear()
         return
     for key in list(_orders_cache):
         if key[0] != "orders" or key[1] in (None, "MASTER") or key[1] in boards:
             del _orders_cache[key]
+
+
+# ==================== CORPUS DE BÚSQUEDA ====================
+# La búsqueda global compara el texto contra CUALQUIER campo de la orden
+# (incluidas columnas custom con nombres raros), en Python. Hacerlo por request
+# costaba ~0.44 s de CPU (traer ~3k órdenes + aplanar cada campo) y, como el
+# backend es un solo event loop, congelaba a TODOS los usuarios mientras tanto;
+# el autocompletado de Arte lo disparaba por tecla. Medido 2026-10-01.
+#
+# Ahora cada orden se aplana UNA vez por cambio de órdenes y se guarda aquí;
+# una búsqueda es solo un `in` sobre ~3k cadenas (milisegundos). Misma
+# semántica que antes: coincidencia por campo, exactas primero, y dentro de
+# cada grupo el orden por created_at desc. Se invalida junto con el caché de
+# listados (order_change) y tiene el mismo TTL de seguridad.
+_SEARCH_SKIP_KEY = re.compile(r"(_id$|_at$|^id$|created|updated|timestamp|^images$|^attachments$|^files$)", re.I)
+_SEARCH_SEP = "\x00"   # separa campos: una coincidencia nunca cruza de un campo a otro
+_search_corpus = {"entries": None, "ts": 0.0}
+_search_corpus_lock = asyncio.Lock()
+
+
+def _search_flat(v):
+    if v is None:
+        return ""
+    if isinstance(v, dict):
+        return " ".join(_search_flat(x) for x in v.values())
+    if isinstance(v, list):
+        return " ".join(_search_flat(x) for x in v)
+    return str(v).lower()
+
+
+def _search_entry(order):
+    parts, exact = [], set()
+    for k, v in order.items():
+        if _SEARCH_SKIP_KEY.search(k):
+            continue
+        parts.append(_search_flat(v))
+        if isinstance(v, (str, int, float)):
+            exact.add(str(v).strip().lower())
+    return order, _SEARCH_SEP.join(parts), exact
+
+
+async def _get_search_corpus(projection):
+    entries = _search_corpus["entries"]
+    if entries is not None and time.time() - _search_corpus["ts"] <= _ORDERS_CACHE_TTL:
+        return entries
+    async with _search_corpus_lock:
+        entries = _search_corpus["entries"]
+        if entries is not None and time.time() - _search_corpus["ts"] <= _ORDERS_CACHE_TTL:
+            return entries
+        raw = await db.orders.find({}, projection).sort("created_at", -1).to_list(None)
+        # El aplanado es CPU puro: en un hilo para no detener el event loop.
+        entries = await asyncio.to_thread(lambda: [_search_entry(o) for o in raw])
+        _search_corpus["entries"] = entries
+        _search_corpus["ts"] = time.time()
+        return entries
 
 # Intercepta ws_manager.broadcast para invalidar el caché de listados, pero
 # SOLO en eventos que cambian órdenes. production_update / neck_update se
@@ -149,12 +207,32 @@ async def _fetch_orders(board, search, limit, include_images, filtro_cliente=Non
     projection = {"_id": 0, "comments": 0, "activity_logs": 0, "history": 0, "sample_evidence": 0}
     if not include_images:
         projection["images"] = 0
-    if search:
+    if search and not include_images and not filtro_cliente:
+        # Camino normal de la UI: corpus precalculado (ver _get_search_corpus).
+        sq = search.strip().lower()
+        if board == "MASTER":
+            allowed = set(query["board"]["$in"])
+            in_board = lambda o: o.get("board") in allowed
+        elif board:
+            in_board = lambda o: o.get("board") == board
+        else:
+            in_board = lambda o: True
+        exact_hits, partial_hits = [], []
+        for o, blob, exact in await _get_search_corpus(projection):
+            if sq in blob and in_board(o):
+                (exact_hits if sq in exact else partial_hits).append(o)
+        ranked = exact_hits + partial_hits
+        if skip is None:
+            orders_raw = [dict(o) for o in ranked[:limit]]
+        else:
+            total = len(ranked)
+            orders_raw = [dict(o) for o in ranked[skip:skip + limit]]
+    elif search:
         # Global, dynamic-column-safe search: match the query against ANY field
         # value in Python — covers custom columns with odd names like
         # 'bpo_(blank_po#)' and 'store_po#' that a fixed $or list keeps missing.
-        # The orders collection is small (~1.6k) so this is cheap. Skips
-        # id/date/asset keys so digits don't match a timestamp or image hash.
+        # Skips id/date/asset keys so digits don't match a timestamp or image
+        # hash. Solo para include_images / llaves de API; la UI usa el corpus.
         sq = search.strip().lower()
         _skip_key = re.compile(r"(_id$|_at$|^id$|created|updated|timestamp|^images$|^attachments$|^files$)", re.I)
         def _flat(v):
@@ -506,7 +584,12 @@ async def internal_create_order(order: OrderCreate, user: dict) -> dict:
         logger.error(f"Error running automations after order creation: {e}")
         
     await _notify_all(user, "create", f"{user.get('name', 'Sistema')} creo orden {order.order_number}", order_id, order.order_number)
-    await ws_manager.broadcast("order_change", {"action": "create", "boards": [order.board]})
+    # + el tablero real tras las automatizaciones de "create" (pudieron moverla).
+    created_boards = [order_data.get("board") or order.board]
+    now_doc = await db.orders.find_one({"order_id": order_id}, {"_id": 0, "board": 1})
+    if now_doc and now_doc.get("board") and now_doc["board"] not in created_boards:
+        created_boards.append(now_doc["board"])
+    await ws_manager.broadcast("order_change", {"action": "create", "boards": created_boards})
     return created
 
 @router.post("")
@@ -708,6 +791,11 @@ async def update_order(order_id: str, order: OrderUpdate, request: Request):
     boards_affected = [old_board]
     if new_board and old_board != new_board:
         boards_affected.append(new_board)
+    # Una automatización puede haber movido la orden a un TERCER tablero en esta
+    # misma petición: ese también cambió (caché del server y clientes que lo ven).
+    final_board = (final_order or {}).get("board")
+    if final_board and final_board not in boards_affected:
+        boards_affected.append(final_board)
     await ws_manager.broadcast("order_change", {"action": "update", "order_id": order_id, "boards": boards_affected})
     return {**(_merge_custom_fields(final_order or updated)), "_automations_executed": executed_automations}
 
@@ -749,7 +837,12 @@ async def move_order_core(user: dict, order_id: str, target_board: str, extra_se
     executed_automations = await _run_automations("move", updated, user, {"from_board": old_board, "to_board": target_board})
     final_order = await db.orders.find_one({"order_id": order_id}, {"_id": 0})
     await _notify_all(user, "move", f"{user['name']} movio orden {existing.get('order_number', order_id)} de {old_board} a {target_board}", order_id, existing.get("order_number"))
-    await ws_manager.broadcast("order_change", {"action": "move", "boards": [old_board, target_board]})
+    # + el tablero final real: una automatización "move" pudo llevarla a otro.
+    moved_boards = [old_board, target_board]
+    final_board = (final_order or {}).get("board")
+    if final_board and final_board not in moved_boards:
+        moved_boards.append(final_board)
+    await ws_manager.broadcast("order_change", {"action": "move", "boards": moved_boards})
     return {**(_merge_custom_fields(final_order or updated)), "_automations_executed": executed_automations}
 
 @router.delete("/{order_id}")
@@ -1020,6 +1113,12 @@ async def bulk_move_orders(request: Request):
         executed_automations.extend(autos)
 
     affected_boards = list(set(original_boards.values())) + [target_board]
+    # + tableros finales reales: las automatizaciones "move" pudieron llevar
+    # alguna orden a otro tablero distinto del destino pedido.
+    if executed_automations:
+        async for d in db.orders.find({"order_id": {"$in": order_ids}}, {"_id": 0, "board": 1}):
+            if d.get("board") and d["board"] not in affected_boards:
+                affected_boards.append(d["board"])
     await _notify_all(user, "move", f"{user['name']} movio {len(order_ids)} ordenes a {target_board}", None, None)
     await ws_manager.broadcast("order_change", {"action": "bulk_move", "boards": affected_boards})
     return {"modified_count": result.modified_count, "guard_blocked": guard_blocked,

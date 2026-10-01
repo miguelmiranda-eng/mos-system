@@ -424,6 +424,23 @@ def _date_fields(day_iso: str) -> dict:
 # Lectura
 # ─────────────────────────────────────────────────────────────────────────────
 
+@router.get("/map")
+async def scheduled_map(request: Request):
+    """{order_number: scheduled_export_date} para pintar el reloj en las tarjetas
+    del tablero. El Dashboard lo pide al cambiar de tablero y en cada focus de
+    la ventana; antes usaba el listado completo (~1 MB, cruces con órdenes,
+    production_logs, comentarios y la bitácora del WMS, sin caché) solo para
+    construir este mapa. Mismo orden que el listado (created_at desc, la última
+    escritura gana) para no cambiar qué fecha se muestra."""
+    await require_auth(request)
+    m = {}
+    async for s in db.scheduled_shipments.find(
+            {}, {"_id": 0, "order_number": 1, "scheduled_export_date": 1}).sort("created_at", -1):
+        if s.get("order_number"):
+            m[s["order_number"]] = s.get("scheduled_export_date") or ""
+    return {"map": m}
+
+
 @router.get("")
 async def list_scheduled(request: Request, skip: int | None = None,
                          limit: int | None = None):

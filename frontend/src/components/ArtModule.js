@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { 
   Palette, Search, Clock, CheckCircle2, AlertCircle, 
   ChevronRight, ArrowLeft, Loader2, Tag, Layers, BarChart2,
@@ -107,25 +107,35 @@ const ArtModule = () => {
     fetchData();
   }, [fetchData, activeTab]);
 
-  const handleSearch = async (val) => {
+  // Autocompletado: antes pegaba una búsqueda POR TECLA al backend. Ahora espera
+  // a que el usuario deje de teclear (300 ms) y descarta respuestas viejas que
+  // lleguen después de una más nueva.
+  const searchTimerRef = useRef(null);
+  const searchSeqRef = useRef(0);
+  useEffect(() => () => clearTimeout(searchTimerRef.current), []);
+
+  const handleSearch = (val) => {
     setSearchQuery(val);
+    clearTimeout(searchTimerRef.current);
+    const seq = ++searchSeqRef.current;
     if (val.length < 3) {
       setSearchResults([]);
+      setIsSearching(false);
       return;
     }
-    
     setIsSearching(true);
-    try {
-      const res = await fetch(`${API}/orders?search=${val}&limit=5`, { credentials: 'include' });
-      if (res.ok) {
-        const data = await res.json();
-        setSearchResults(data);
+    searchTimerRef.current = setTimeout(async () => {
+      try {
+        const res = await fetch(`${API}/orders?search=${encodeURIComponent(val)}&limit=5`, { credentials: 'include' });
+        if (res.ok && seq === searchSeqRef.current) {
+          setSearchResults(await res.json());
+        }
+      } catch (error) {
+        console.error("Search failed", error);
+      } finally {
+        if (seq === searchSeqRef.current) setIsSearching(false);
       }
-    } catch (error) {
-      console.error("Search failed", error);
-    } finally {
-      setIsSearching(false);
-    }
+    }, 300);
   };
 
   const logWork = async (order, type) => {

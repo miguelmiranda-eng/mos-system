@@ -202,14 +202,12 @@ const Dashboard = () => {
   const [shipMap, setShipMap] = useState({});
   const loadShipMap = useCallback(async () => {
     try {
-      const res = await fetch(`${API}/scheduled-shipments`, { credentials: 'include' });
+      // /map trae solo {order_number: fecha}; el listado completo pesaba ~1 MB
+      // y se pedía en cada cambio de tablero y cada focus de la ventana.
+      const res = await fetch(`${API}/scheduled-shipments/map`, { credentials: 'include' });
       if (!res.ok) return;
       const data = await res.json();
-      const m = {};
-      (data.items || []).forEach(it => {
-        if (it.order_number) m[it.order_number] = it.scheduled_export_date || '';
-      });
-      setShipMap(m);
+      setShipMap(data.map || {});
     } catch { /* silent */ }
   }, []);
   useEffect(() => { loadShipMap(); }, [loadShipMap, currentBoard]);
