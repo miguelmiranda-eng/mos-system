@@ -526,7 +526,6 @@ export default function WorkOrderModal({ order, isOpen, onClose, isDark = false,
                 <Field label="Units total" mono>{qty}</Field>
                 <Field label="Tablero">{o.board}</Field>
                 <Field label="Trim box">{o.trim_box}</Field>
-                <Field label="Final bill">{fmtDate(o.final_bill)}</Field>
                 <Field label="Allowed shortage" mono>{wop.shortage}</Field>
                 <Field label="Samples">{wop.samples}</Field>
                 <Field label="Sample física">{o.sample_printavo}</Field>

@@ -266,7 +266,9 @@ async def get_wo_layout(request: Request):
     """Layout de la ficha de work order: qué secciones se muestran. Global."""
     await require_auth(request)
     config = await db.config_wo_layout.find_one({"config_id": "global"}, {"_id": 0})
-    return config or {"hidden": []}
+    # Default = igual que la maqueta: el Work Order Link vive en la TABLA, no en
+    # la hoja. Si supersu guarda su propia config, esa manda.
+    return config or {"hidden": ["wolink"]}
 
 
 @router.put("/wo-layout")
