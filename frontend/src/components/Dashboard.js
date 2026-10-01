@@ -1811,6 +1811,89 @@ const Dashboard = () => {
           );
         })()}
 
+          <div className="h-6 w-px bg-border mx-2" />
+          {/* Top-right action buttons */}
+          <div className="flex items-center gap-2 self-center">
+            {currentBoard === 'SCHEDULING' && canSweepBlanks && (
+              <button
+                onClick={toggleBlanksSweep}
+                title={blanksSweep?.enabled
+                  ? t('dash_sweep_title_on', { n: blanksSweep?.sweep_minutes || 10 })
+                  : t('dash_sweep_title_off')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-bold text-[10px] uppercase tracking-[0.15em] shadow-md transition-all whitespace-nowrap ${blanksSweep?.enabled ? 'bg-amber-500 text-white shadow-amber-500/20 hover:bg-amber-400' : 'bg-muted text-muted-foreground hover:bg-muted/70'}`}
+                data-testid="blanks-sweep-toggle"
+              >
+                <span className={`inline-block w-2 h-2 rounded-full ${blanksSweep?.enabled ? 'bg-white animate-pulse' : 'bg-muted-foreground/50'}`} />
+                Auto→Blanks {blanksSweep?.enabled ? 'ON' : 'OFF'}
+              </button>
+            )}
+            {currentBoard === 'SCHEDULING' && (
+              <button onClick={() => setShowNewOrder(true)} className="flex items-center gap-1.5 px-3 py-1.5 bg-royal text-white rounded-lg font-bold text-[10px] uppercase tracking-[0.15em] shadow-md shadow-royal/20 hover:bg-royal/90 hover:scale-[1.02] active:scale-[0.98] transition-all whitespace-nowrap">
+                <Plus className="w-3.5 h-3.5" />
+                {t('new_order')}
+              </button>
+            )}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  title={t('dash_capture')}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 text-white rounded-lg font-bold text-[10px] uppercase tracking-[0.15em] shadow-sm shadow-emerald-600/10 hover:bg-emerald-500 transition-all whitespace-nowrap"
+                  data-testid="captura-trigger"
+                >
+                  <Wrench className="w-3.5 h-3.5" />
+                  {t('dash_capture')}
+                  <ChevronDown className="w-3 h-3 opacity-80" />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="min-w-[180px]">
+                <DropdownMenuItem
+                  onClick={() => { setShowProduction(true); fetchAllOrders(); }}
+                  className="text-[11px] font-bold uppercase tracking-[0.15em] cursor-pointer"
+                  data-testid="captura-prd"
+                >
+                  <Factory className="w-3.5 h-3.5 mr-2 text-emerald-500" />
+                  {t('dash_capture_prd')}
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => { setShowNeckCapture(true); fetchAllOrders(); }}
+                  className="text-[11px] font-bold uppercase tracking-[0.15em] cursor-pointer"
+                  data-testid="captura-neck"
+                >
+                  <Scissors className="w-3.5 h-3.5 mr-2 text-pink-500" />
+                  {t('dash_capture_neck')}
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => setShowProductionScreen(true)}
+                  className="text-[11px] font-bold uppercase tracking-[0.15em] cursor-pointer"
+                  data-testid="herramientas-tv"
+                >
+                  <Monitor className="w-3.5 h-3.5 mr-2 text-emerald-500" />
+                  TV
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  onClick={() => setShowCapacityPlan(true)}
+                  className="text-[11px] font-bold uppercase tracking-[0.15em] cursor-pointer"
+                  data-testid="herramientas-plan"
+                >
+                  <TrendingUp className="w-3.5 h-3.5 mr-2 text-royal" />
+                  Plan
+                </DropdownMenuItem>
+                {/* Reporte de lo pintado en un rango. Sale de production_logs
+                    y agrupa por número de orden, así que una orden con varias
+                    capturas es UN renglón. Abre modal porque necesita las dos
+                    fechas antes de generar. */}
+                <DropdownMenuItem
+                  onClick={() => setShowPrintedReport(true)}
+                  className="text-[11px] font-bold uppercase tracking-[0.15em] cursor-pointer"
+                  data-testid="herramientas-pintadas"
+                >
+                  <FileDown className="w-3.5 h-3.5 mr-2 text-amber-500" />
+                  {t('dash_printed_orders')}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
         <div className="flex items-center gap-4 text-card-foreground">
           {/* Quick Actions */}
           <div className="flex items-center gap-1">
@@ -1972,88 +2055,6 @@ const Dashboard = () => {
 
           </div>
 
-          {/* Top-right action buttons */}
-          <div className="flex items-center gap-2 self-center">
-            {currentBoard === 'SCHEDULING' && canSweepBlanks && (
-              <button
-                onClick={toggleBlanksSweep}
-                title={blanksSweep?.enabled
-                  ? t('dash_sweep_title_on', { n: blanksSweep?.sweep_minutes || 10 })
-                  : t('dash_sweep_title_off')}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-bold text-[10px] uppercase tracking-[0.15em] shadow-md transition-all whitespace-nowrap ${blanksSweep?.enabled ? 'bg-amber-500 text-white shadow-amber-500/20 hover:bg-amber-400' : 'bg-muted text-muted-foreground hover:bg-muted/70'}`}
-                data-testid="blanks-sweep-toggle"
-              >
-                <span className={`inline-block w-2 h-2 rounded-full ${blanksSweep?.enabled ? 'bg-white animate-pulse' : 'bg-muted-foreground/50'}`} />
-                Auto→Blanks {blanksSweep?.enabled ? 'ON' : 'OFF'}
-              </button>
-            )}
-            {currentBoard === 'SCHEDULING' && (
-              <button onClick={() => setShowNewOrder(true)} className="flex items-center gap-1.5 px-3 py-1.5 bg-royal text-white rounded-lg font-bold text-[10px] uppercase tracking-[0.15em] shadow-md shadow-royal/20 hover:bg-royal/90 hover:scale-[1.02] active:scale-[0.98] transition-all whitespace-nowrap">
-                <Plus className="w-3.5 h-3.5" />
-                {t('new_order')}
-              </button>
-            )}
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <button
-                  title={t('dash_capture')}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 text-white rounded-lg font-bold text-[10px] uppercase tracking-[0.15em] shadow-sm shadow-emerald-600/10 hover:bg-emerald-500 transition-all whitespace-nowrap"
-                  data-testid="captura-trigger"
-                >
-                  <Wrench className="w-3.5 h-3.5" />
-                  {t('dash_capture')}
-                  <ChevronDown className="w-3 h-3 opacity-80" />
-                </button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="min-w-[180px]">
-                <DropdownMenuItem
-                  onClick={() => { setShowProduction(true); fetchAllOrders(); }}
-                  className="text-[11px] font-bold uppercase tracking-[0.15em] cursor-pointer"
-                  data-testid="captura-prd"
-                >
-                  <Factory className="w-3.5 h-3.5 mr-2 text-emerald-500" />
-                  {t('dash_capture_prd')}
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  onClick={() => { setShowNeckCapture(true); fetchAllOrders(); }}
-                  className="text-[11px] font-bold uppercase tracking-[0.15em] cursor-pointer"
-                  data-testid="captura-neck"
-                >
-                  <Scissors className="w-3.5 h-3.5 mr-2 text-pink-500" />
-                  {t('dash_capture_neck')}
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  onClick={() => setShowProductionScreen(true)}
-                  className="text-[11px] font-bold uppercase tracking-[0.15em] cursor-pointer"
-                  data-testid="herramientas-tv"
-                >
-                  <Monitor className="w-3.5 h-3.5 mr-2 text-emerald-500" />
-                  TV
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem
-                  onClick={() => setShowCapacityPlan(true)}
-                  className="text-[11px] font-bold uppercase tracking-[0.15em] cursor-pointer"
-                  data-testid="herramientas-plan"
-                >
-                  <TrendingUp className="w-3.5 h-3.5 mr-2 text-royal" />
-                  Plan
-                </DropdownMenuItem>
-                {/* Reporte de lo pintado en un rango. Sale de production_logs
-                    y agrupa por número de orden, así que una orden con varias
-                    capturas es UN renglón. Abre modal porque necesita las dos
-                    fechas antes de generar. */}
-                <DropdownMenuItem
-                  onClick={() => setShowPrintedReport(true)}
-                  className="text-[11px] font-bold uppercase tracking-[0.15em] cursor-pointer"
-                  data-testid="herramientas-pintadas"
-                >
-                  <FileDown className="w-3.5 h-3.5 mr-2 text-amber-500" />
-                  {t('dash_printed_orders')}
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
         </div>
       </div>
 
