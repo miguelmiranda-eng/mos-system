@@ -8,7 +8,7 @@ import {
   Download, Sun, Moon, GripVertical, PlusCircle,
   BarChart3, UserPlus, Bell, Eye, EyeOff, CalendarDays, CalendarCheck, Pin, Save, Table2, Undo2,
   Factory, GanttChart, TrendingUp, Languages, Monitor, MessageSquare, Loader2, History, Zap, AtSign, AlertTriangle, Users, ClipboardList, DatabaseBackup, Warehouse, ImageDown, ImageUp, FileJson, ArrowRightLeft, Wrench, Scissors,
-  ChevronDown, ChevronUp, Check, FileDown, Home, ExternalLink, Menu, ArrowLeft, Link2, Truck, Clock, Shirt
+  ChevronDown, ChevronUp, Check, FileDown, Home, ExternalLink, Menu, ArrowLeft, Link2, Truck, Clock, Shirt, FileText
 } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue, SelectGroup, SelectLabel, SelectSeparator } from "./ui/select";
 import {
@@ -36,6 +36,7 @@ import { ColoredBadge } from "./dashboard/ColoredBadge";
 import { EditableCell } from "./dashboard/EditableCell";
 import SearchBox from "./dashboard/SearchBox";
 import GuidedTour from "./GuidedTour";
+import WorkOrderModal from "./WorkOrderModal";
 import { CommentsModal } from "./dashboard/CommentsModal";
 import { NewOrderModal } from "./dashboard/NewOrderModal";
 import { AddColumnModal } from "./dashboard/AddColumnModal";
@@ -160,6 +161,7 @@ const Dashboard = () => {
   const searchInputRef = useRef(null); // focused from the mobile bottom-nav "Buscar"
   const [showAutomations, setShowAutomations] = useState(false);
   const [commentsOrder, setCommentsOrder] = useState(null);
+  const [workOrderObj, setWorkOrderObj] = useState(null);  // ficha de work order (solo lectura)
   const [evidenceOrder, setEvidenceOrder] = useState(null);  // modal de evidencia de sample (playerita)
   const [historyOrder, setHistoryOrder] = useState(null);
   const [highlightedOrderId, setHighlightedOrderId] = useState(null);
@@ -1145,6 +1147,9 @@ const Dashboard = () => {
             <button onClick={() => setCommentsOrder(order)} className="p-1 rounded-lg transition-all hover:bg-secondary hover:scale-110 active:scale-95 text-slate-500 dark:text-slate-400 hover:text-primary relative" title={t('comments')}>
               <MessageSquare className="w-4 h-4" />
               {order._comments_count > 0 && <span className="absolute -top-0.5 -right-0.5 w-2 h-2 bg-royal rounded-full border border-background" />}
+            </button>
+            <button onClick={() => setWorkOrderObj(order)} className="p-1 rounded-lg transition-all hover:bg-secondary hover:scale-110 active:scale-95 text-slate-500 dark:text-slate-400 hover:text-primary" title="Work order">
+              <FileText className="w-4 h-4" />
             </button>
             {isAdmin && (
               <button onClick={() => setHistoryOrder(order)} className="p-1 rounded-lg transition-all hover:bg-secondary hover:scale-110 active:scale-95 text-slate-500 dark:text-slate-400 hover:text-primary" title={t('dash_extended_history')}>
@@ -2759,6 +2764,7 @@ const Dashboard = () => {
       {/* Modals */}
       <NewOrderModal isOpen={showNewOrder} onClose={() => setShowNewOrder(false)} onCreate={(order) => { setOrders(prev => [order, ...prev]); }} options={options} groupConfig={groupConfig} columns={columns} />
       <CommentsModal order={commentsOrder} isOpen={!!commentsOrder} onClose={() => { setCommentsOrder(null); setHighlightedCommentId(null); }} currentUser={user} highlightedCommentId={highlightedCommentId} />
+      <WorkOrderModal order={workOrderObj} isOpen={!!workOrderObj} onClose={() => setWorkOrderObj(null)} isDark={isDark} />
       {evidenceOrder && <SampleEvidenceModal order={evidenceOrder} onClose={() => setEvidenceOrder(null)} />}
       <AutomationsModal isOpen={showAutomations} onClose={() => setShowAutomations(false)} options={options} columns={columns} dynamicBoards={activeBoards} />
       {isAdmin && <FormFieldsManagerModal isOpen={showFormFields} onClose={() => setShowFormFields(false)} columns={columns} />}
