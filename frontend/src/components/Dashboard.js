@@ -1491,49 +1491,6 @@ const Dashboard = () => {
   };
 
 
-  // Vista de LISTA para teléfono/tablet (iPad): una orden por renglón, compacta.
-  // Toca el renglón para abrir el panel de detalle (donde se editan los estados).
-  // Reemplaza a las tarjetas, que en iPad quedaban altas y pesadas.
-  const renderMobileOrderRow = (order) => {
-    const isSelected = selectedOrders.includes(order.order_id);
-    const prodData = productionSummary[order.order_number] || { total_produced: 0 };
-    const total = order.quantity || 0;
-    const produced = prodData.total_produced || 0;
-    const progress = total > 0 ? Math.min(100, Math.round((produced / total) * 100)) : 0;
-    const done = total > 0 && produced >= total;
-    const accent = done ? 'bg-green-500' : progress > 0 ? 'bg-amber-500' : 'bg-royal';
-    const showBoard = currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS';
-    return (
-      <button
-        key={order.order_id}
-        onClick={() => setDetailsOrder(order)}
-        className={`w-full flex items-center gap-3 px-4 py-3 border-b text-left transition-colors active:bg-muted/40 ${isSelected ? 'bg-royal/5' : ''} ${isDark ? 'border-white/5' : 'border-gray-100'}`}
-        data-testid={`order-row-${order.order_id}`}
-      >
-        <span className={`w-1 h-9 rounded-full flex-shrink-0 ${accent}`} />
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="font-mono font-bold text-[15px] text-primary leading-none">#{order.order_number}</span>
-            {order.scheduled_day && <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-sky-500/10 text-sky-500 border border-sky-500/20 uppercase tracking-wide leading-none">{order.scheduled_day}</span>}
-            {showBoard && <span className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wide leading-none text-white" style={{ backgroundColor: BOARD_COLORS[order.board]?.accent || '#666' }}>{order.board}</span>}
-          </div>
-          <div className="text-[11px] text-muted-foreground uppercase tracking-wide truncate mt-1">{order.client || '—'}</div>
-        </div>
-        <div className="flex items-center gap-3 flex-shrink-0">
-          {total > 0 && (
-            <div className="flex flex-col items-end gap-1 w-16">
-              <span className={`text-[11px] font-black ${done ? 'text-green-500' : 'text-primary'}`}>{progress}%</span>
-              <div className="w-full h-1.5 bg-secondary rounded-full overflow-hidden">
-                <div className={`h-full rounded-full ${done ? 'bg-green-500' : 'bg-primary'}`} style={{ width: `${progress}%` }} />
-              </div>
-            </div>
-          )}
-          <ChevronDown className="w-4 h-4 -rotate-90 text-muted-foreground/40" />
-        </div>
-      </button>
-    );
-  };
-
   const renderTableBody = () => {
     const _allOrders = (orders && Array.isArray(orders) ? orders : []);
     // Estilo para congelar una cabecera de grupo bajo el encabezado de columnas.
@@ -1552,7 +1509,7 @@ const Dashboard = () => {
         ? _allOrders
         : _allOrders.slice(0, displayLimit);
 
-    if (isMobile || isTablet) {
+    if (isMobile) {
       return (
         <div className="flex flex-col pb-24">
           {/* Encabezado de tablero — siempre visible, indica dónde estás y deja cambiar */}
@@ -1568,9 +1525,8 @@ const Dashboard = () => {
               {t('dash_mobile_board_hint', { n: visibleOrders.length })} <ChevronDown className="w-4 h-4" />
             </span>
           </button>
-          {/* Vista de LISTA (no tarjetas): una orden por renglón, compacta. */}
-          <div className="pt-1">
-            {visibleOrders.slice(0, mobileLimit).map(renderMobileOrderRow)}
+          <div className="pt-2">
+            {visibleOrders.slice(0, mobileLimit).map(renderMobileOrderCard)}
           </div>
           {visibleOrders.length > mobileLimit && (
             <button
@@ -2463,11 +2419,11 @@ const Dashboard = () => {
           readyCalendarMode && currentBoard === 'SCHEDULING' ? <CalendarView orders={readyOrders} allOrders={allOrders} isDark={isDark} fetchOrders={fetchOrders} handleBulkMove={handleBulkMove} columns={columns} label="Ready To Scheduled" /> :
             blanksTrackingMode && currentBoard === 'SCHEDULING' ? <BlanksTrackingView orders={blanksOrders} isDark={isDark} options={options} readOnly /> : (
               <>
-                {(isMobile || isTablet) ? (
-                  // Teléfonos Y tablets (iPad) usan la lista de tarjetas, no el
-                  // grid de escritorio: en una pantalla táctil de ~768-1023px el
-                  // grid deja las columnas sticky (48+64+320) comiéndose media
-                  // pantalla y el resto en scroll horizontal, inusable al tacto.
+                {isMobile ? (
+                  // Solo teléfonos usan las tarjetas. Las tablets (iPad) usan el
+                  // grid con columnas (filas + columnas, lo que se pidió), con
+                  // scroll horizontal; la búsqueda ya es usable por la barra
+                  // inferior que ahora también sale en iPad.
                   renderTableBody()
                 ) : (
                 <div role="table" className="text-sm isolate" style={{
@@ -2851,8 +2807,8 @@ const Dashboard = () => {
             </DialogTitle>
           </DialogHeader>
           <div className="flex-1 overflow-auto px-4 sm:px-6 pb-6">
-            {(isMobile || isTablet) ? (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+            {isMobile ? (
+              <div className="flex flex-col gap-2.5">
                 {searchResults?.map(order => (
                   <div
                     key={order.order_id}
