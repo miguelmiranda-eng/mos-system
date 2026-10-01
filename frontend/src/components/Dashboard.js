@@ -1509,7 +1509,7 @@ const Dashboard = () => {
         ? _allOrders
         : _allOrders.slice(0, displayLimit);
 
-    if (isMobile) {
+    if (isMobile || isTablet) {
       return (
         <div className="flex flex-col pb-24">
           {/* Encabezado de tablero — siempre visible, indica dónde estás y deja cambiar */}
@@ -1525,7 +1525,9 @@ const Dashboard = () => {
               {t('dash_mobile_board_hint', { n: visibleOrders.length })} <ChevronDown className="w-4 h-4" />
             </span>
           </button>
-          <div className="pt-2">
+          {/* 1 columna en teléfono; 2 en tablet (iPad, md=768-1023) para
+              aprovechar el ancho con las mismas tarjetas. */}
+          <div className="pt-2 grid grid-cols-1 md:grid-cols-2 items-start">
             {visibleOrders.slice(0, mobileLimit).map(renderMobileOrderCard)}
           </div>
           {visibleOrders.length > mobileLimit && (
@@ -2417,10 +2419,11 @@ const Dashboard = () => {
           readyCalendarMode && currentBoard === 'SCHEDULING' ? <CalendarView orders={readyOrders} allOrders={allOrders} isDark={isDark} fetchOrders={fetchOrders} handleBulkMove={handleBulkMove} columns={columns} label="Ready To Scheduled" /> :
             blanksTrackingMode && currentBoard === 'SCHEDULING' ? <BlanksTrackingView orders={blanksOrders} isDark={isDark} options={options} readOnly /> : (
               <>
-                {isMobile ? (
-                  // On phones, skip the desktop grid entirely and render the
-                  // card list at full width (the grid squeezed cards into the
-                  // 48px first column, leaving only the accent bar visible).
+                {(isMobile || isTablet) ? (
+                  // Teléfonos Y tablets (iPad) usan la lista de tarjetas, no el
+                  // grid de escritorio: en una pantalla táctil de ~768-1023px el
+                  // grid deja las columnas sticky (48+64+320) comiéndose media
+                  // pantalla y el resto en scroll horizontal, inusable al tacto.
                   renderTableBody()
                 ) : (
                 <div role="table" className="text-sm isolate" style={{
@@ -2804,8 +2807,8 @@ const Dashboard = () => {
             </DialogTitle>
           </DialogHeader>
           <div className="flex-1 overflow-auto px-4 sm:px-6 pb-6">
-            {isMobile ? (
-              <div className="flex flex-col gap-2.5">
+            {(isMobile || isTablet) ? (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
                 {searchResults?.map(order => (
                   <div
                     key={order.order_id}
