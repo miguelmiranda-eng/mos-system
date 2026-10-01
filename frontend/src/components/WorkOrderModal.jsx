@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { X, Image as ImageIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import { API } from '../lib/constants';
@@ -194,6 +194,46 @@ export default function WorkOrderModal({ order, isOpen, onClose, isDark = false 
     return () => { alive = false; };
   }, [isOpen, order]);
 
+  // Mocks del diseño: reusa el endpoint existente POST /orders/{id}/images
+  // (guarda a disco + order.images) y los muestra como galería.
+  const [mocks, setMocks] = useState([]);
+  const [uploading, setUploading] = useState(false);
+  const fileRef = useRef(null);
+  useEffect(() => { setMocks(Array.isArray(order?.images) ? order.images : []); }, [order]);
+
+  const toBase64 = (file) => new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result);
+    r.onerror = reject;
+    r.readAsDataURL(file);
+  });
+  const subirMocks = async (fileList) => {
+    if (!order?.order_id || !fileList || !fileList.length) return;
+    setUploading(true);
+    try {
+      for (const file of Array.from(fileList)) {
+        if (!file.type.startsWith('image/')) continue;
+        const data = await toBase64(file); // eslint-disable-line no-await-in-loop
+        const res = await fetch(`${API}/orders/${order.order_id}/images`, { // eslint-disable-line no-await-in-loop
+          method: 'POST', credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ image_data: data, filename: file.name }),
+        });
+        if (res.ok) {
+          const d = await res.json(); // eslint-disable-line no-await-in-loop
+          setMocks((m) => [...m, { filename: d.filename, url: d.url }]);
+        } else {
+          toast.error(`No se pudo subir ${file.name}`);
+        }
+      }
+      toast.success('Mock(s) subido(s)');
+    } catch {
+      toast.error('Error al subir el mock');
+    } finally {
+      setUploading(false);
+    }
+  };
+
   if (!isOpen || !order) return null;
 
   const o = order;
@@ -263,14 +303,31 @@ export default function WorkOrderModal({ order, isOpen, onClose, isDark = false 
           <div className="space-y-4">
             <div>
               <h3 className="text-[10px] font-bold uppercase tracking-[0.15em] text-slate-400 mb-2">Mock del diseño</h3>
-              <div className={`rounded-xl border-2 border-dashed ${isDark ? 'border-white/10' : 'border-gray-200'} p-6 flex flex-col items-center text-center gap-2`}>
-                <ImageIcon className="w-10 h-10 text-slate-300" strokeWidth={1.5} />
-                <p className="text-[13px] text-slate-400">Sin mocks para <b className="text-slate-500">{design || 'este diseño'}</b>.</p>
-                <p className="text-[12px] text-slate-400 max-w-[280px]">Arrastra una o varias imágenes aquí, súbelas, o tráelas del invoice de Printavo.</p>
-                <div className="flex gap-2 mt-1">
-                  <button type="button" onClick={() => toast('Carga de mocks: próximamente')} className="px-3 py-1.5 rounded-lg bg-blue-600 text-white text-[12px] font-bold hover:bg-blue-500">Subir imágenes</button>
+              <div
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={(e) => { e.preventDefault(); subirMocks(e.dataTransfer.files); }}
+                className={`rounded-xl border-2 border-dashed ${isDark ? 'border-white/10' : 'border-gray-200'} p-4`}
+              >
+                {mocks.length > 0 ? (
+                  <div className="grid grid-cols-3 gap-2 mb-3">
+                    {mocks.map((m, i) => (
+                      <a key={m.url || i} href={m.url} target="_blank" rel="noreferrer" className={`block aspect-square rounded-lg overflow-hidden border ${isDark ? 'border-white/10' : 'border-gray-200'}`}>
+                        <img src={m.url} alt={m.filename || 'mock'} className="w-full h-full object-cover" />
+                      </a>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="flex flex-col items-center text-center gap-2 py-4">
+                    <ImageIcon className="w-10 h-10 text-slate-300" strokeWidth={1.5} />
+                    <p className="text-[13px] text-slate-400">Sin mocks para <b className="text-slate-500">{design || 'este diseño'}</b>.</p>
+                    <p className="text-[12px] text-slate-400 max-w-[280px]">Arrastra una o varias imágenes aquí, súbelas, o tráelas del invoice de Printavo.</p>
+                  </div>
+                )}
+                <div className="flex gap-2 justify-center">
+                  <button type="button" onClick={() => fileRef.current && fileRef.current.click()} disabled={uploading} className="px-3 py-1.5 rounded-lg bg-blue-600 text-white text-[12px] font-bold hover:bg-blue-500 disabled:opacity-60">{uploading ? 'Subiendo…' : 'Subir imágenes'}</button>
                   <button type="button" onClick={() => toast('Traer de Printavo: próximamente')} className={`px-3 py-1.5 rounded-lg border text-[12px] font-bold ${isDark ? 'border-white/15 hover:bg-white/5' : 'border-gray-300 hover:bg-gray-50'}`}>Traer de Printavo</button>
                 </div>
+                <input ref={fileRef} type="file" accept="image/*" multiple hidden onChange={(e) => { subirMocks(e.target.files); e.target.value = ''; }} />
               </div>
               <p className="text-[11px] text-slate-400 mt-2">El mock llega por carga manual o desde Printavo.</p>
             </div>
