@@ -17,7 +17,7 @@ import { API } from '../lib/constants';
  */
 
 const STAGES = [
-  ['SCHEDULING', 'Programación'], ['BLANKS', 'Blancos'], ['SCREENS', 'Mallas'],
+  ['SCHEDULING', 'Programación'], ['BLANKS', 'Blanks'], ['SCREENS', 'Screens'],
   ['LABEL', 'Neck'], ['PRODUCTION', 'Producción'], ['PACKING', 'Empaque'], ['SHIPPED', 'Enviada'],
 ];
 const RANK = Object.fromEntries(STAGES.map((s, i) => [s[0], i]));
