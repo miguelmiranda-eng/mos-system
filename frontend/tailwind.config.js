@@ -5,7 +5,7 @@ module.exports = {
   theme: {
     extend: {
       fontFamily: {
-        sans: ['Blinker', 'Inter', 'sans-serif'],
+        sans: ['JetBrains Mono', 'ui-monospace', 'monospace'],
         blinker: ['Blinker', 'sans-serif'],
         inter: ['Inter', 'sans-serif'],
         mono: ['JetBrains Mono', 'monospace'],
