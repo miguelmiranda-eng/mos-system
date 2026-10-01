@@ -261,6 +261,34 @@ async def save_home_layout(request: Request):
     )
     return {"message": "Home layout saved"}
 
+@router.get("/wo-layout")
+async def get_wo_layout(request: Request):
+    """Layout de la ficha de work order: qué secciones se muestran. Global."""
+    await require_auth(request)
+    config = await db.config_wo_layout.find_one({"config_id": "global"}, {"_id": 0})
+    return config or {"hidden": []}
+
+
+@router.put("/wo-layout")
+async def save_wo_layout(request: Request):
+    # Qué aparece DENTRO de la ficha es decisión de supersu y aplica a todos.
+    await require_supersu(request)
+    body = await request.json()
+    hidden = body.get("hidden", [])
+    if not isinstance(hidden, list):
+        hidden = []
+    await db.config_wo_layout.update_one(
+        {"config_id": "global"},
+        {"$set": {
+            "config_id": "global",
+            "hidden": [str(k) for k in hidden],
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }},
+        upsert=True,
+    )
+    return {"message": "WO layout saved", "hidden": hidden}
+
+
 @router.get("/board-layout/{board_name}")
 async def get_board_layout(board_name: str, request: Request):
     # El layout de columnas es UNO para todo el sistema. Antes se leía primero

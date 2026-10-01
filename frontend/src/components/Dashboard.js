@@ -2764,7 +2764,7 @@ const Dashboard = () => {
       {/* Modals */}
       <NewOrderModal isOpen={showNewOrder} onClose={() => setShowNewOrder(false)} onCreate={(order) => { setOrders(prev => [order, ...prev]); }} options={options} groupConfig={groupConfig} columns={columns} />
       <CommentsModal order={commentsOrder} isOpen={!!commentsOrder} onClose={() => { setCommentsOrder(null); setHighlightedCommentId(null); }} currentUser={user} highlightedCommentId={highlightedCommentId} />
-      <WorkOrderModal order={workOrderObj} isOpen={!!workOrderObj} onClose={() => setWorkOrderObj(null)} isDark={isDark} />
+      <WorkOrderModal order={workOrderObj} isOpen={!!workOrderObj} onClose={() => setWorkOrderObj(null)} isDark={isDark} canDesign={isSuperAdmin} />
       {evidenceOrder && <SampleEvidenceModal order={evidenceOrder} onClose={() => setEvidenceOrder(null)} />}
       <AutomationsModal isOpen={showAutomations} onClose={() => setShowAutomations(false)} options={options} columns={columns} dynamicBoards={activeBoards} />
       {isAdmin && <FormFieldsManagerModal isOpen={showFormFields} onClose={() => setShowFormFields(false)} columns={columns} />}

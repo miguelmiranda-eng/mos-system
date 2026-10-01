@@ -98,6 +98,20 @@ const daysTo = (s) => {
   if (!m) return null;
   return Math.round((new Date(`${m[1]}-${m[2]}-${m[3]}`) - new Date(new Date().toISOString().slice(0, 10))) / 86400000);
 };
+// Secciones de la ficha que supersu puede mostrar/ocultar (configurador Diseño).
+const WO_FIELDS = [
+  ['mock', 'Mock del diseño'],
+  ['print_where', 'Dónde se imprime'],
+  ['front', 'Front print / finishing'],
+  ['wolink', 'Work order link'],
+  ['sizes', 'Corrida de tallas'],
+  ['avance', 'Avance de producción'],
+  ['estados', 'Estados'],
+  ['notas', 'Notas de la orden'],
+  ['invoice', 'Invoice de Printavo'],
+  ['empaque', 'Instrucciones de empaque'],
+];
+
 const stripHtml = (s) => String(s || '').replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]+>/g, ' ').replace(/\s+\n/g, '\n').replace(/[ \t]+/g, ' ').trim();
 const firstUrl = (s) => { const m = String(s || '').match(/https?:\/\/[^\s"'<>]+/); return m ? m[0] : ''; };
 
@@ -209,7 +223,7 @@ function Tees({ pos, color }) {
   );
 }
 
-export default function WorkOrderModal({ order, isOpen, onClose, isDark = false }) {
+export default function WorkOrderModal({ order, isOpen, onClose, isDark = false, canDesign = false }) {
   useEffect(() => {
     if (!isOpen) return undefined;
     const onKey = (e) => { if (e.key === 'Escape') onClose(); };
@@ -269,7 +283,34 @@ export default function WorkOrderModal({ order, isOpen, onClose, isDark = false 
     }
   };
 
+  // Layout de la ficha (configurador Diseño, global): qué secciones se ocultan.
+  const [hidden, setHidden] = useState([]);
+  const [designOpen, setDesignOpen] = useState(false);
+  useEffect(() => {
+    if (!isOpen) return undefined;
+    let alive = true;
+    fetch(`${API}/config/wo-layout`, { credentials: 'include' })
+      .then((r) => (r.ok ? r.json() : {}))
+      .then((d) => { if (alive) setHidden(Array.isArray(d.hidden) ? d.hidden : []); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [isOpen]);
+
   if (!isOpen || !order) return null;
+
+  const show = (k) => !hidden.includes(k);
+  const toggleField = async (k) => {
+    const next = hidden.includes(k) ? hidden.filter((x) => x !== k) : [...hidden, k];
+    setHidden(next);
+    try {
+      const r = await fetch(`${API}/config/wo-layout`, {
+        method: 'PUT', credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ hidden: next }),
+      });
+      if (!r.ok) throw new Error('bad');
+    } catch { toast.error('No se pudo guardar el diseño'); }
+  };
 
   const o = order;
   const sizes = (o.sizes && typeof o.sizes === 'object') ? o.sizes : {};
@@ -333,14 +374,29 @@ export default function WorkOrderModal({ order, isOpen, onClose, isDark = false 
             <div className="text-[11px] text-slate-400">{dueIn !== null ? `en ${dueIn} días · ` : ''}cancel {fmtDate(o.cancel_date)}</div>
             {o.priority && <div className="text-[11px] text-slate-400">Prioridad {String(o.priority).toLowerCase()}</div>}
           </div>
+          {canDesign && (
+            <button onClick={() => setDesignOpen((v) => !v)} className={`px-2.5 py-1 rounded-lg border text-[11px] font-bold ${designOpen ? 'bg-blue-600 text-white border-blue-600' : (isDark ? 'border-white/15 hover:bg-white/5' : 'border-gray-300 hover:bg-gray-50')}`} title="Diseño: qué secciones aparecen en la ficha (solo supersu, aplica a todos)">Diseño</button>
+          )}
           <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-slate-500/10" aria-label="Cerrar la work order"><X className="w-5 h-5" /></button>
         </div>
+        {designOpen && canDesign && (
+          <div className={`fixed top-16 right-6 z-[210] w-64 rounded-xl border shadow-2xl p-3 ${isDark ? 'bg-[hsl(220,30%,11%)] border-white/10 text-slate-100' : 'bg-white border-gray-200 text-slate-800'}`}>
+            <div className="text-[11px] font-bold uppercase tracking-[0.12em] text-slate-400 mb-1">Diseño de la ficha</div>
+            <p className="text-[10px] text-slate-400 mb-2">Qué secciones se muestran. Aplica a todos.</p>
+            {WO_FIELDS.map(([k, label]) => (
+              <label key={k} className="flex items-center gap-2 py-1 text-[12px] cursor-pointer">
+                <input type="checkbox" checked={show(k)} onChange={() => toggleField(k)} className="w-3.5 h-3.5" />
+                <span>{label}</span>
+              </label>
+            ))}
+          </div>
+        )}
 
         {/* Tres columnas */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 p-5">
           {/* Columna A: mock + dónde se imprime */}
           <div className="space-y-4">
-            <div>
+            <div className={show('mock') ? undefined : 'hidden'}>
               <h3 className="text-[10px] font-bold uppercase tracking-[0.15em] text-slate-400 mb-2">Mock del diseño</h3>
               <div
                 onDragOver={(e) => e.preventDefault()}
@@ -370,7 +426,7 @@ export default function WorkOrderModal({ order, isOpen, onClose, isDark = false 
               </div>
               <p className="text-[11px] text-slate-400 mt-2">El mock llega por carga manual o desde Printavo.</p>
             </div>
-            <div>
+            <div className={show('print_where') ? undefined : 'hidden'}>
               <h3 className="text-[10px] font-bold uppercase tracking-[0.15em] text-slate-400 mb-2">Dónde se imprime{pos ? ` · ${pos}` : ''}</h3>
               <div className="flex gap-4 items-start">
                 <Tees pos={pos} color={o.color} />
@@ -382,11 +438,11 @@ export default function WorkOrderModal({ order, isOpen, onClose, isDark = false 
                   {check(o.is_preorder, 'Preorden')}
                 </div>
               </div>
-              {wop.front && (
+              {wop.front && show('front') && (
                 <pre className={`mt-3 text-[12px] font-mono whitespace-pre-wrap rounded-lg border p-2.5 ${card}`}>{wop.front}</pre>
               )}
             </div>
-            {woLink && woLink.url && (
+            {woLink && woLink.url && show('wolink') && (
               <div className={`rounded-lg border p-3 ${card}`}>
                 <div className="text-[9px] font-bold uppercase tracking-[0.15em] text-slate-400 mb-1">Work order link</div>
                 <a href={woLink.url} target="_blank" rel="noreferrer" className="text-[12px] text-blue-500 underline break-all">{woLink.desc || woLink.url}</a>
@@ -396,7 +452,7 @@ export default function WorkOrderModal({ order, isOpen, onClose, isDark = false 
 
           {/* Columna B: tallas, estados, notas */}
           <div className="space-y-4">
-            <div>
+            <div className={show('sizes') ? undefined : 'hidden'}>
               <div className="flex items-center justify-between mb-2">
                 <h3 className="text-[10px] font-bold uppercase tracking-[0.15em] text-slate-400">Corrida de tallas</h3>
                 <span className="text-[11px]">{sizeSum} de {qty} <span className={cuadra ? 'text-emerald-500 font-bold' : 'text-rose-500 font-bold'}>{cuadra ? 'cuadra' : `descuadre de ${Math.abs(qty - sizeSum)}`}</span></span>
@@ -417,7 +473,7 @@ export default function WorkOrderModal({ order, isOpen, onClose, isDark = false 
               ) : <div className="text-[12px] text-slate-400">Sin desglose de tallas.</div>}
             </div>
 
-            <div>
+            <div className={show('avance') ? undefined : 'hidden'}>
               <div className="flex items-center justify-between mb-1.5">
                 <h3 className="text-[10px] font-bold uppercase tracking-[0.15em] text-slate-400">Avance de producción</h3>
                 <span className="text-[11px]">{pct}% impreso · <span className="text-slate-400">{totalProduced} de {qty}</span></span>
@@ -438,7 +494,7 @@ export default function WorkOrderModal({ order, isOpen, onClose, isDark = false 
               ) : <p className="text-[12px] text-slate-400 mt-1.5">Sin capturas de producción todavía.</p>}
             </div>
 
-            <div>
+            <div className={show('estados') ? undefined : 'hidden'}>
               <h3 className="text-[10px] font-bold uppercase tracking-[0.15em] text-slate-400 mb-2">Estados</h3>
               <div className="flex flex-wrap gap-1.5">
                 {estados.map(([lbl, val]) => (
@@ -449,7 +505,7 @@ export default function WorkOrderModal({ order, isOpen, onClose, isDark = false 
               </div>
             </div>
 
-            {o.notes && (
+            {o.notes && show('notas') && (
               <div>
                 <h3 className="text-[10px] font-bold uppercase tracking-[0.15em] text-slate-400 mb-1">Notas de la orden</h3>
                 <p className="text-[12.5px] whitespace-pre-wrap">{o.notes}</p>
@@ -459,7 +515,7 @@ export default function WorkOrderModal({ order, isOpen, onClose, isDark = false 
 
           {/* Columna C: invoice + empaque */}
           <div className="space-y-4">
-            <div>
+            <div className={show('invoice') ? undefined : 'hidden'}>
               <h3 className="text-[10px] font-bold uppercase tracking-[0.15em] text-slate-400 mb-2">Invoice de Printavo · #{o.order_number}</h3>
               <div className="grid grid-cols-2 gap-x-4 gap-y-2.5">
                 <Field label="Customer PO" mono>{o.customer_po}</Field>
@@ -480,7 +536,7 @@ export default function WorkOrderModal({ order, isOpen, onClose, isDark = false 
               </div>
             </div>
 
-            <div>
+            <div className={show('empaque') ? undefined : 'hidden'}>
               <h3 className="text-[10px] font-bold uppercase tracking-[0.15em] text-slate-400 mb-2">Instrucciones de empaque</h3>
               {!hasWO ? (
                 <p className="text-[12px] text-slate-400">Aún sin datos del work order. Se poblará con el sync (órdenes nuevas) y el backfill (históricas).</p>
