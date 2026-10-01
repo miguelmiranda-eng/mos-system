@@ -176,6 +176,7 @@ const Sidebar = ({
       )}
 
       <aside
+        data-tour="sidebar"
         className={cn(
           "flex flex-col transition-all duration-300 flex-shrink-0 overflow-hidden bg-card transform-gpu",
           (isMobile || isTablet)

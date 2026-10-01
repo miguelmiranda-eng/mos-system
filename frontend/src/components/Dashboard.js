@@ -35,6 +35,7 @@ import { LoadingOverlay } from "./dashboard/LoadingOverlay";
 import { ColoredBadge } from "./dashboard/ColoredBadge";
 import { EditableCell } from "./dashboard/EditableCell";
 import SearchBox from "./dashboard/SearchBox";
+import GuidedTour from "./GuidedTour";
 import { CommentsModal } from "./dashboard/CommentsModal";
 import { NewOrderModal } from "./dashboard/NewOrderModal";
 import { AddColumnModal } from "./dashboard/AddColumnModal";
@@ -1754,7 +1755,7 @@ const Dashboard = () => {
             <Menu className="w-6 h-6 text-muted-foreground" />
           </button>
         )}
-        <div className="flex items-center gap-4 flex-1">
+        <div className="flex items-center gap-4 flex-1" data-tour="search">
           <SearchBox
             ref={searchInputRef}
             onDebouncedChange={handleSearchDebounced}
@@ -3339,6 +3340,9 @@ const Dashboard = () => {
           </div>
         </div>
       )}
+
+      {/* Tour guiado (overlay aditivo, no toca funciones) */}
+      <GuidedTour lang={lang} isDark={isDark} />
 
       {/* Command Palette */}
       <CommandPalette
