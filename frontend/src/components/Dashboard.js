@@ -8,7 +8,7 @@ import {
   Download, Sun, Moon, GripVertical, PlusCircle,
   BarChart3, UserPlus, Bell, Eye, EyeOff, CalendarDays, CalendarCheck, Pin, Save, Table2, Undo2,
   Factory, GanttChart, TrendingUp, Languages, Monitor, MessageSquare, Loader2, History, Zap, AtSign, AlertTriangle, Users, ClipboardList, DatabaseBackup, Warehouse, ImageDown, ImageUp, FileJson, ArrowRightLeft, Wrench, Scissors,
-  ChevronDown, ChevronUp, Check, FileDown, Home, ExternalLink, Menu, ArrowLeft, Link2, Truck, Clock, Shirt, FileText
+  ChevronDown, ChevronUp, Check, FileDown, Home, ExternalLink, Menu, ArrowLeft, Link2, Truck, Clock, Shirt
 } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue, SelectGroup, SelectLabel, SelectSeparator } from "./ui/select";
 import {
@@ -1148,9 +1148,6 @@ const Dashboard = () => {
               <MessageSquare className="w-4 h-4" />
               {order._comments_count > 0 && <span className="absolute -top-0.5 -right-0.5 w-2 h-2 bg-royal rounded-full border border-background" />}
             </button>
-            <button onClick={() => setWorkOrderObj(order)} className="p-1 rounded-lg transition-all hover:bg-secondary hover:scale-110 active:scale-95 text-slate-500 dark:text-slate-400 hover:text-primary" title="Work order">
-              <FileText className="w-4 h-4" />
-            </button>
             {isAdmin && (
               <button onClick={() => setHistoryOrder(order)} className="p-1 rounded-lg transition-all hover:bg-secondary hover:scale-110 active:scale-95 text-slate-500 dark:text-slate-400 hover:text-primary" title={t('dash_extended_history')}>
                 <ClipboardList className="w-4 h-4" />
@@ -1179,7 +1176,10 @@ const Dashboard = () => {
             const hasShip = !!shipRaw;
             return (
               <div className="flex items-center justify-between gap-1.5 min-w-0">
-                <span className={`font-black text-[22px] tracking-tight leading-none text-slate-800 dark:text-slate-100 truncate ${isSearchMatch ? 'text-primary' : ''}`}>
+                <span
+                  onClick={(e) => { e.stopPropagation(); setWorkOrderObj(order); }}
+                  title="Abrir work order"
+                  className={`font-black text-[22px] tracking-tight leading-none text-slate-800 dark:text-slate-100 truncate cursor-pointer hover:text-primary hover:underline ${isSearchMatch ? 'text-primary' : ''}`}>
                   {order.order_number}
                 </span>
                 <div className="flex items-center gap-1 shrink-0">
