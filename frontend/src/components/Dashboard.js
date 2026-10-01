@@ -1226,29 +1226,29 @@ const Dashboard = () => {
                     toast.success(`Twin: ${twin.order_number} → ${twin.board}`);
                   } catch { toast.error(t('dash_twin_search_err')); }
                 }}
-                className="px-1.5 py-0.5 rounded-full text-[9px] font-extrabold tracking-wide leading-none bg-fuchsia-100 text-fuchsia-600 dark:bg-fuchsia-950/40 dark:text-fuchsia-400 border border-fuchsia-200/20 hover:bg-fuchsia-500 hover:text-white transition-all cursor-pointer"
+                className="px-1.5 py-0.5 rounded text-[9px] font-extrabold tracking-wide leading-none bg-fuchsia-100 text-fuchsia-600 dark:bg-fuchsia-950/40 dark:text-fuchsia-400 border border-fuchsia-200/20 hover:bg-fuchsia-500 hover:text-white transition-all cursor-pointer"
                 title={t('dash_twin_title', { n: order.twin_order_number })}
               >
                 TWIN
               </button>
             ) : (
-              <span className="px-1.5 py-0.5 rounded-full text-[9px] font-extrabold tracking-wide leading-none bg-slate-100/50 text-slate-300 dark:bg-slate-800/40 dark:text-slate-600 border border-transparent" title="No Twin Order linked">
-                TWIN
+              <span className="px-1.5 py-0.5 rounded text-[9px] font-extrabold tracking-wide leading-none text-slate-400 dark:text-slate-500 border border-dashed border-slate-300 dark:border-slate-600" title="No Twin Order linked">
+                —
               </span>
             )}
 
             {/* NECK Badge */}
-            <span className={`px-1.5 py-0.5 rounded-full text-[9px] font-extrabold tracking-wide leading-none border transition-all ${order.art_neck_status
+            <span className={`px-1.5 py-0.5 rounded text-[9px] font-extrabold tracking-wide leading-none border transition-all ${order.art_neck_status
               ? 'bg-blue-100 text-blue-600 dark:bg-blue-950/40 dark:text-blue-400 border-blue-200/20'
-              : 'bg-slate-100/50 text-slate-300 dark:bg-slate-800/40 dark:text-slate-600 border-transparent'
+              : 'text-slate-400 dark:text-slate-500 border-dashed border-slate-300 dark:border-slate-600'
               }`} title={order.art_neck_status ? t('dash_neck_ready') : t('dash_neck_pending')}>
-              NECK
+              NK
             </span>
 
             {/* SEP Badge */}
-            <span className={`px-1.5 py-0.5 rounded-full text-[9px] font-extrabold tracking-wide leading-none border transition-all ${order.art_sep_status
+            <span className={`px-1.5 py-0.5 rounded text-[9px] font-extrabold tracking-wide leading-none border transition-all ${order.art_sep_status
               ? 'bg-emerald-100 text-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-400 border-emerald-200/20'
-              : 'bg-slate-100/50 text-slate-300 dark:bg-slate-800/40 dark:text-slate-600 border-transparent'
+              : 'text-slate-400 dark:text-slate-500 border-dashed border-slate-300 dark:border-slate-600'
               }`} title={order.art_sep_status ? t('dash_sep_ready') : t('dash_sep_pending')}>
               SEP
             </span>
@@ -1258,9 +1258,11 @@ const Dashboard = () => {
                 o si la orden aún no trae el dato (viejas, sin sincronizar). */}
             <button type="button"
               onClick={(e) => { e.stopPropagation(); setEvidenceOrder(order); }}
-              className={`px-1.5 py-0.5 rounded-full leading-none border transition-all inline-flex items-center cursor-pointer hover:brightness-110 hover:scale-110 ${order.sample_printavo === 'SI'
+              className={`px-1.5 py-0.5 rounded leading-none border transition-all inline-flex items-center cursor-pointer hover:brightness-110 hover:scale-110 ${order.sample_printavo === 'SI'
               ? 'bg-violet-100 text-violet-600 dark:bg-violet-950/40 dark:text-violet-400 border-violet-200/20'
-              : 'bg-slate-100/50 text-slate-300 dark:bg-slate-800/40 dark:text-slate-600 border-transparent'
+              : order.sample_printavo === 'NO'
+              ? 'bg-rose-100 text-rose-600 dark:bg-rose-950/40 dark:text-rose-400 border-rose-200/40'
+              : 'text-slate-400 dark:text-slate-500 border-dashed border-slate-300 dark:border-slate-600'
               }`}
               title={`${order.sample_printavo === 'SI' ? t('dash_sample_yes') : order.sample_printavo === 'NO' ? t('dash_sample_no') : t('dash_sample_unknown')} — clic para ver/agregar evidencia`}
               data-testid={`order-sample-badge-${order.order_id}`}>
@@ -1269,9 +1271,9 @@ const Dashboard = () => {
 
             {/* PL / Packing importado — se enciende cuando la orden tiene el enlace
                 del packing sembrado (icono de camion). */}
-            <span className={`px-1.5 py-0.5 rounded-full leading-none border transition-all inline-flex items-center ${order.packing_link
+            <span className={`px-1.5 py-0.5 rounded leading-none border transition-all inline-flex items-center ${order.packing_link
               ? 'bg-amber-100 text-amber-600 dark:bg-amber-950/40 dark:text-amber-400 border-amber-200/20'
-              : 'bg-slate-100/50 text-slate-300 dark:bg-slate-800/40 dark:text-slate-600 border-transparent'
+              : 'text-slate-400 dark:text-slate-500 border-dashed border-slate-300 dark:border-slate-600'
               }`} title={order.packing_link ? `${t('dash_packing_imported')}${order.packing_link_label ? `: ${order.packing_link_label}` : ''}` : t('dash_no_packing')}
               data-testid={`order-pl-badge-${order.order_id}`}>
               <Truck className="w-2.5 h-2.5" />
