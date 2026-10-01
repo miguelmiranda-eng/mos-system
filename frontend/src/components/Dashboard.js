@@ -1104,7 +1104,7 @@ const Dashboard = () => {
   // board + fila de badges que se partía en dos) y llegaba a ~100px; las demás
   // celdas ponían una línea de 14px en medio de todo ese aire. Con altura
   // fija ninguna celda puede estirar la fila: lo que no cabe se recorta.
-  const ROW_H = 'h-14';
+  const ROW_H = 'h-11';
 
   const renderOrderRow = useCallback((order) => {
     const sq = debouncedSearchQuery.toLowerCase();
@@ -1158,7 +1158,7 @@ const Dashboard = () => {
 
         {/* Order Number / Board (Sticky Column 3) */}
         <div
-          className={`${ROW_H} px-2.5 sticky left-[112px] z-[30] border-r border-b border-border/40 group/order flex flex-col justify-center gap-1 overflow-hidden ${isHighlighted ? (isDark ? 'bg-yellow-900/30' : 'bg-yellow-50') : rowBgClass}`}
+          className={`${ROW_H} px-2.5 sticky left-[112px] z-[30] border-r border-b border-border/40 group/order flex flex-row items-center gap-2 overflow-hidden ${isHighlighted ? (isDark ? 'bg-yellow-900/30' : 'bg-yellow-50') : rowBgClass}`}
           style={{ width: 200, minWidth: 200, maxWidth: 200 }}
         >
           {/* Línea 1: número a la izquierda (ancla visual para barrer la lista)
@@ -1175,11 +1175,11 @@ const Dashboard = () => {
             const shipDm = p.length === 3 ? `${p[2]}/${p[1]}` : '';
             const hasShip = !!shipRaw;
             return (
-              <div className="flex items-center justify-between gap-1.5 min-w-0">
+              <div className="flex items-center gap-1.5 min-w-0 shrink-0">
                 <span
                   onClick={(e) => { e.stopPropagation(); setWorkOrderObj(order); }}
                   title="Abrir work order"
-                  className={`font-black text-[22px] tracking-tight leading-none text-slate-800 dark:text-slate-100 truncate cursor-pointer hover:text-primary hover:underline ${isSearchMatch ? 'text-primary' : ''}`}>
+                  className={`font-bold text-[15px] tracking-tight leading-none text-slate-800 dark:text-slate-100 truncate cursor-pointer hover:text-primary hover:underline shrink-0 ${isSearchMatch ? 'text-primary' : ''}`}>
                   {order.order_number}
                 </span>
                 <div className="flex items-center gap-1 shrink-0">
@@ -1209,7 +1209,7 @@ const Dashboard = () => {
               envolver. Padding de 6px (no 8) para que las cinco piezas quepan
               en los 180px útiles; si algún día no caben, se recortan por
               overflow en vez de partir la fila. */}
-          <div className="flex flex-row flex-nowrap items-center gap-1 w-full shrink-0 overflow-hidden">
+          <div className="flex flex-row flex-nowrap items-center gap-1 shrink-0 overflow-hidden">
             {/* TWIN Badge */}
             {order.twin_order_number ? (
               <button
