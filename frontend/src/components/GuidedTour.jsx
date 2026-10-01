@@ -61,8 +61,7 @@ const STEPS = [
   },
 ];
 
-export default function GuidedTour({ lang = 'es', isDark = false }) {
-  const [open, setOpen] = useState(false);
+export default function GuidedTour({ lang = 'es', isDark = false, open = false, onOpenChange = () => {} }) {
   const [idx, setIdx] = useState(0);
   const [rect, setRect] = useState(null); // bounding rect del ancla, o null = centrado
   const holeRef = useRef(null);
@@ -75,17 +74,19 @@ export default function GuidedTour({ lang = 'es', isDark = false }) {
     let seen = false;
     try { seen = !!localStorage.getItem(SEEN_KEY); } catch { /* storage bloqueado: lo tratamos como no visto */ }
     if (!seen) {
-      const t = setTimeout(() => setOpen(true), 700);
+      const t = setTimeout(() => onOpenChange(true), 700);
       return () => clearTimeout(t);
     }
     return undefined;
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const start = useCallback(() => { setIdx(0); setOpen(true); }, []);
+  // Al abrir, arranca desde el primer paso.
+  useEffect(() => { if (open) setIdx(0); }, [open]);
+
   const stop = useCallback(() => {
-    setOpen(false);
+    onOpenChange(false);
     try { localStorage.setItem(SEEN_KEY, '1'); } catch { /* no crítico */ }
-  }, []);
+  }, [onOpenChange]);
   const next = useCallback(() => setIdx((i) => (i < STEPS.length - 1 ? i + 1 : i)), []);
   const prev = useCallback(() => setIdx((i) => (i > 0 ? i - 1 : 0)), []);
 
@@ -120,23 +121,8 @@ export default function GuidedTour({ lang = 'es', isDark = false }) {
   }, [open, idx, next, prev, stop]);
 
   const step = STEPS[idx];
-  const launchBtn = (
-    <button
-      type="button"
-      onClick={start}
-      aria-label={lang === 'en' ? 'Open the guided tutorial' : 'Abrir el tutorial guiado'}
-      style={{
-        position: 'fixed', right: 16, bottom: 16, zIndex: Z - 2, border: 0, cursor: 'pointer',
-        display: 'inline-flex', alignItems: 'center', gap: 7, padding: '11px 15px', borderRadius: 999,
-        font: '600 13px/1 system-ui,-apple-system,Segoe UI,Roboto,sans-serif', color: '#fff',
-        background: '#2563eb', boxShadow: '0 6px 20px rgba(2,8,23,.28)',
-      }}
-    >
-      🎓 {lang === 'en' ? 'Tutorial' : 'Tutorial'}
-    </button>
-  );
 
-  if (!open) return launchBtn;
+  if (!open) return null;
 
   // Colores del card según tema.
   const cardBg = isDark ? '#0f172a' : '#ffffff';
@@ -168,7 +154,6 @@ export default function GuidedTour({ lang = 'es', isDark = false }) {
 
   return (
     <>
-      {launchBtn}
       {/* captura de clics (bloquea la UI mientras el tour está activo) */}
       <div style={{ position: 'fixed', inset: 0, zIndex: Z, background: 'transparent' }} />
       {/* spotlight: un hueco con sombra enorme alrededor */}

@@ -162,6 +162,7 @@ const Dashboard = () => {
   const [showAutomations, setShowAutomations] = useState(false);
   const [commentsOrder, setCommentsOrder] = useState(null);
   const [workOrderObj, setWorkOrderObj] = useState(null);  // ficha de work order (solo lectura)
+  const [tourOpen, setTourOpen] = useState(false);  // tutorial guiado (botón junto al nombre del tablero)
   const [evidenceOrder, setEvidenceOrder] = useState(null);  // modal de evidencia de sample (playerita)
   const [historyOrder, setHistoryOrder] = useState(null);
   const [highlightedOrderId, setHighlightedOrderId] = useState(null);
@@ -1961,6 +1962,8 @@ const Dashboard = () => {
               {currentBoard}
             </div>
 
+            <button type="button" onClick={() => setTourOpen(true)} title={lang === 'en' ? 'Guided tutorial' : 'Tutorial guiado'} className="ml-2 self-center inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-bold text-white bg-blue-600 hover:bg-blue-500 whitespace-nowrap shadow-sm">🎓 Tutorial</button>
+
           </div>
 
           {/* Top-right action buttons */}
@@ -3348,7 +3351,7 @@ const Dashboard = () => {
       )}
 
       {/* Tour guiado (overlay aditivo, no toca funciones) */}
-      <GuidedTour lang={lang} isDark={isDark} />
+      <GuidedTour lang={lang} isDark={isDark} open={tourOpen} onOpenChange={setTourOpen} />
 
       {/* Command Palette */}
       <CommandPalette
