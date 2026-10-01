@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
-import { X } from 'lucide-react';
+import { X, Image as ImageIcon } from 'lucide-react';
+import { toast } from 'sonner';
 
 /*
  * Ficha de WORK ORDER a pantalla completa (solo lectura). Aditiva: es un modal
@@ -106,6 +107,63 @@ function Field({ label, children, mono, full }) {
   );
 }
 
+// Playeras FRENTE/ESPALDA con las zonas de impresion (porteadas de la maqueta).
+const GARMENT_HEX = {
+  'VINTAGE WHITE': '#f3efe6', WHITE: '#fbfbfb', IVORY: '#f2ead8', 'HEATHER DUST': '#ded2c4',
+  'SPORT GREY': '#b9bcbe', BLACK: '#2a2a2c', 'MIDNIGHT NAVY': '#232f45', 'TRUE RED': '#b8232d',
+};
+const TEE_PATH = 'M42,10 C48,22 72,22 78,10 L90,14 L112,36 L96,54 L92,46 L92,132 L28,132 L28,46 L24,54 L8,36 L30,14 Z';
+const zoneStyle = (on) => (on
+  ? { fill: '#2563eb22', stroke: '#2563eb', strokeWidth: 2 }
+  : { fill: 'none', stroke: '#cbd5e1', strokeWidth: 1.5, strokeDasharray: '3 2' });
+const zoneText = (on) => (on ? '#2563eb' : '#94a3b8');
+
+function Tee({ front, zones, hex }) {
+  return (
+    <figure className="m-0 flex flex-col items-center">
+      <svg viewBox="0 0 120 142" width="76" role="img" aria-label={front ? 'Frente' : 'Espalda'}>
+        <path d={TEE_PATH} fill={hex} stroke="#e2e8f0" strokeWidth="1.5" />
+        <path d="M30,14 L34,26 M90,14 L86,26" stroke="#cbd5e1" strokeWidth="1" fill="none" />
+        {front ? (
+          <>
+            <path d="M42,10 C48,22 72,22 78,10" stroke="#cbd5e1" strokeWidth="1" fill="none" />
+            <rect x="41" y="46" width="38" height="36" rx="2" {...zoneStyle(zones.frente)} />
+            <text x="60" y="68" textAnchor="middle" fontSize="7" fontWeight="700" fill={zoneText(zones.frente)}>FRENTE</text>
+            <rect x="15" y="28" width="15" height="12" rx="2" {...zoneStyle(zones.manga)} />
+            <text x="22" y="48" textAnchor="middle" fontSize="5" fontWeight="700" fill={zoneText(zones.manga)}>MANGA</text>
+          </>
+        ) : (
+          <>
+            <path d="M43,11 C49,18 71,18 77,11" stroke="#cbd5e1" strokeWidth="1" fill="none" />
+            <rect x="41" y="42" width="38" height="46" rx="2" {...zoneStyle(zones.espalda)} />
+            <text x="60" y="68" textAnchor="middle" fontSize="7" fontWeight="700" fill={zoneText(zones.espalda)}>ESPALDA</text>
+            <rect x="50" y="20" width="20" height="9" rx="1.5" {...zoneStyle(zones.cuello)} />
+            <text x="60" y="36" textAnchor="middle" fontSize="4.5" fontWeight="700" fill={zoneText(zones.cuello)}>CUELLO</text>
+          </>
+        )}
+      </svg>
+      <figcaption className="text-[10px] text-slate-400 mt-1">{front ? 'Frente' : 'Espalda'}</figcaption>
+    </figure>
+  );
+}
+
+function Tees({ pos, color }) {
+  const p = String(pos || '').toLowerCase();
+  const zones = {
+    frente: /frente|front/.test(p),
+    espalda: /espalda|back/.test(p),
+    manga: /manga|sleeve/.test(p),
+    cuello: /cuello|neck/.test(p),
+  };
+  const hex = GARMENT_HEX[String(color || '').toUpperCase()] || '#fbfbfb';
+  return (
+    <div className="flex gap-3 shrink-0">
+      <Tee front zones={zones} hex={hex} />
+      <Tee front={false} zones={zones} hex={hex} />
+    </div>
+  );
+}
+
 export default function WorkOrderModal({ order, isOpen, onClose, isDark = false }) {
   useEffect(() => {
     if (!isOpen) return undefined;
@@ -177,16 +235,32 @@ export default function WorkOrderModal({ order, isOpen, onClose, isDark = false 
 
         {/* Tres columnas */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 p-5">
-          {/* Columna A: dónde se imprime */}
+          {/* Columna A: mock + dónde se imprime */}
           <div className="space-y-4">
             <div>
+              <h3 className="text-[10px] font-bold uppercase tracking-[0.15em] text-slate-400 mb-2">Mock del diseño</h3>
+              <div className={`rounded-xl border-2 border-dashed ${isDark ? 'border-white/10' : 'border-gray-200'} p-6 flex flex-col items-center text-center gap-2`}>
+                <ImageIcon className="w-10 h-10 text-slate-300" strokeWidth={1.5} />
+                <p className="text-[13px] text-slate-400">Sin mocks para <b className="text-slate-500">{design || 'este diseño'}</b>.</p>
+                <p className="text-[12px] text-slate-400 max-w-[280px]">Arrastra una o varias imágenes aquí, súbelas, o tráelas del invoice de Printavo.</p>
+                <div className="flex gap-2 mt-1">
+                  <button type="button" onClick={() => toast('Carga de mocks: próximamente')} className="px-3 py-1.5 rounded-lg bg-blue-600 text-white text-[12px] font-bold hover:bg-blue-500">Subir imágenes</button>
+                  <button type="button" onClick={() => toast('Traer de Printavo: próximamente')} className={`px-3 py-1.5 rounded-lg border text-[12px] font-bold ${isDark ? 'border-white/15 hover:bg-white/5' : 'border-gray-300 hover:bg-gray-50'}`}>Traer de Printavo</button>
+                </div>
+              </div>
+              <p className="text-[11px] text-slate-400 mt-2">El mock llega por carga manual o desde Printavo.</p>
+            </div>
+            <div>
               <h3 className="text-[10px] font-bold uppercase tracking-[0.15em] text-slate-400 mb-2">Dónde se imprime{pos ? ` · ${pos}` : ''}</h3>
-              <div className="space-y-1.5">
-                {check(o.art_sep_status, 'Separaciones listas')}
-                {check(o.screens, 'Mallas listas')}
-                {check(o.art_neck_status, 'Neck label listo')}
-                {check(!!o.packing_link, 'Packing list importado')}
-                {check(o.is_preorder, 'Preorden')}
+              <div className="flex gap-4 items-start">
+                <Tees pos={pos} color={o.color} />
+                <div className="space-y-1.5">
+                  {check(o.art_sep_status, 'Separaciones listas')}
+                  {check(o.screens, 'Mallas listas')}
+                  {check(o.art_neck_status, 'Neck label listo')}
+                  {check(!!o.packing_link, 'Packing list importado')}
+                  {check(o.is_preorder, 'Preorden')}
+                </div>
               </div>
             </div>
             {woLink && woLink.url && (
