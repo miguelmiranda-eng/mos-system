@@ -1825,9 +1825,11 @@ const Dashboard = () => {
           );
         })()}
 
-          <div className="h-6 w-px bg-border mx-2" />
-          {/* Top-right action buttons */}
-          <div className="flex items-center gap-2 self-center">
+          <div className="hidden lg:block h-6 w-px bg-border mx-2" />
+          {/* Top-right action buttons — ocultos en móvil/tablet para dejar aire
+              a la búsqueda; "Nueva" vive en la barra inferior. Captura/Auto→Blanks
+              quedan solo en ≥lg por ahora. */}
+          <div className="hidden lg:flex items-center gap-2 self-center">
             {currentBoard === 'SCHEDULING' && canSweepBlanks && (
               <button
                 onClick={toggleBlanksSweep}
@@ -1909,19 +1911,19 @@ const Dashboard = () => {
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
-          <div className="h-6 w-px bg-border mx-2" />
+          <div className="hidden lg:block h-6 w-px bg-border mx-2" />
         <div className="flex items-center gap-4 text-card-foreground">
           {/* Quick Actions */}
           <div className="flex items-center gap-1">
-            <button onClick={toggleTheme} className="p-2 rounded hover:bg-muted/50 transition-all text-muted-foreground hover:text-foreground" title={isDark ? t('light_mode') : t('dark_mode')}>
+            <button onClick={toggleTheme} className="hidden lg:inline-flex p-2 rounded hover:bg-muted/50 transition-all text-muted-foreground hover:text-foreground" title={isDark ? t('light_mode') : t('dark_mode')}>
               {isDark ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
             </button>
-            {!isMobile && <button onClick={() => window.location.href = '/wms'} title="WMS" className="p-2 rounded hover:bg-muted/50 text-muted-foreground hover:text-foreground transition-all"><Warehouse className="w-4 h-4" /></button>}
+            {!isMobile && <button onClick={() => window.location.href = '/wms'} title="WMS" className="hidden lg:inline-flex p-2 rounded hover:bg-muted/50 text-muted-foreground hover:text-foreground transition-all"><Warehouse className="w-4 h-4" /></button>}
             {/* Visible también en móvil: si no, el usuario de celular no puede cambiar idioma. */}
             <button onClick={toggleLang} className="p-2 rounded hover:bg-muted/50 text-[10px] font-bold flex items-center gap-1 text-muted-foreground hover:text-foreground">
               <Languages className="w-4 h-4" /> {lang === 'es' ? 'EN' : 'ES'}
             </button>
-            <button onClick={() => setTourOpen(true)} data-tour="tutorial" title={lang === 'en' ? 'Guided tutorial' : 'Tutorial guiado'} className="p-2 rounded hover:bg-muted/50 text-muted-foreground hover:text-foreground transition-all">
+            <button onClick={() => setTourOpen(true)} data-tour="tutorial" title={lang === 'en' ? 'Guided tutorial' : 'Tutorial guiado'} className="hidden lg:inline-flex p-2 rounded hover:bg-muted/50 text-muted-foreground hover:text-foreground transition-all">
               <GraduationCap className="w-4 h-4" />
             </button>
             <div className="relative">
@@ -1974,7 +1976,7 @@ const Dashboard = () => {
           <div className="h-6 w-px bg-border mx-2" />
 
           <div className="flex items-center gap-3">
-            <div className="text-right hidden sm:block">
+            <div className="text-right hidden lg:block">
               <p className="text-xs font-bold leading-none">{user?.name}</p>
               <p className="text-[10px] text-muted-foreground uppercase tracking-widest mt-1">{user?.role || 'User'}</p>
             </div>
@@ -3052,7 +3054,7 @@ const Dashboard = () => {
       {/* Enterprise Side-Drawer Detail View */}
       {/* Barra de navegación inferior — solo móvil. Cada acción usa lo que ya existe. */}
       <nav
-        className="md:hidden fixed bottom-0 inset-x-0 z-40 flex items-end justify-around px-1 pt-2.5 bg-card border-t border-border"
+        className="lg:hidden fixed bottom-0 inset-x-0 z-40 flex items-end justify-around px-1 pt-2.5 bg-card border-t border-border"
         style={{ paddingBottom: 'max(12px, env(safe-area-inset-bottom))' }}
       >
         {[
