@@ -8,7 +8,7 @@ import {
   Download, Sun, Moon, GripVertical, PlusCircle,
   BarChart3, UserPlus, Bell, Eye, EyeOff, CalendarDays, CalendarCheck, Pin, Save, Table2, Undo2,
   Factory, GanttChart, TrendingUp, Languages, Monitor, MessageSquare, Loader2, History, Zap, AtSign, AlertTriangle, Users, ClipboardList, DatabaseBackup, Warehouse, ImageDown, ImageUp, FileJson, ArrowRightLeft, Wrench, Scissors,
-  ChevronDown, ChevronUp, Check, FileDown, Home, ExternalLink, Menu, ArrowLeft, Link2, Truck, Clock, Shirt
+  ChevronDown, ChevronUp, Check, FileDown, Home, ExternalLink, Menu, ArrowLeft, Link2, Truck, Clock, Shirt, GraduationCap
 } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue, SelectGroup, SelectLabel, SelectSeparator } from "./ui/select";
 import {
@@ -1754,7 +1754,7 @@ const Dashboard = () => {
         <LoadingOverlay isLoading={operationLoading} message={t('processing')} />
 
         {/* Header - Cleaned up version */}
-      <header className="h-16 px-4 flex items-center justify-between z-40 bg-card text-card-foreground border-b border-border shadow-sm">
+      <header className="h-14 px-4 flex items-center gap-3 z-40 bg-card text-card-foreground border-b border-border shadow-sm">
         {(isMobile || isTablet) && (
           <button
             onClick={() => setIsMobileMenuOpen(true)}
@@ -1763,9 +1763,64 @@ const Dashboard = () => {
             <Menu className="w-6 h-6 text-muted-foreground" />
           </button>
         )}
-        <div className="hidden lg:flex items-center gap-2 shrink-0 mr-2">
+        {/* Contexto del tablero: nombre · vista · métricas. Una sola fuente
+            de verdad — antes el nombre y el conteo se repetían en una segunda
+            barra con una marca de agua gigante; eso se eliminó. */}
+        <div className="hidden lg:flex items-center gap-2.5 shrink-0">
           <span className="px-2.5 py-1 rounded-md text-xs font-black uppercase tracking-tight text-white whitespace-nowrap" style={{ backgroundColor: BOARD_COLORS[currentBoard]?.bg || '#1f2937' }}>{currentBoard}</span>
-          <span className="text-xs text-muted-foreground whitespace-nowrap">{orders.length} {t('orders')}</span>
+          <DropdownMenu>
+            <DropdownMenuTrigger className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-border/40 bg-muted/20 hover:border-royal/50 hover:bg-muted/40 transition-all group outline-none max-w-[170px]" data-tour="saved-views">
+              <span className={cn("text-[11px] font-bold uppercase tracking-tight truncate", activeViewName ? "text-royal" : "text-muted-foreground")}>
+                {activeViewName || t('dash_default_view')}
+              </span>
+              <ChevronDown className="w-3.5 h-3.5 text-muted-foreground group-hover:text-royal transition-colors shrink-0" />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent className="z-[100] min-w-[240px] bg-card/95 backdrop-blur-xl border-border rounded-lg shadow-2xl p-1 animate-in slide-in-from-top-2">
+              {currentBoardViews.length === 0 && <div className="p-4 text-center text-xs text-muted-foreground italic">{t('dash_no_saved_views')}</div>}
+
+              {pinnedViews.length > 0 && (
+                <div className="p-2 border-b border-border/50">
+                  <div className="text-[9px] font-bold uppercase tracking-[0.2em] text-royal mb-1 px-2">{t('dash_pinned_views')}</div>
+                  {pinnedViews.map(view => (
+                    <div key={view.view_id} className="flex items-center gap-1 group">
+                      <DropdownMenuItem onClick={() => handleApplyView(view)} className="flex-1 py-2 px-3 text-xs font-bold uppercase tracking-wider rounded-lg cursor-pointer hover:bg-muted">
+                        {view.name}
+                      </DropdownMenuItem>
+                      <button onClick={() => handleTogglePinView(view.view_id, view.pinned)} className="p-2 opacity-50 hover:opacity-100"><Pin className="w-3.5 h-3.5 text-royal fill-royal" /></button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {unpinnedViews.length > 0 && (
+                <div className="p-2">
+                  <div className="text-[9px] font-bold uppercase tracking-[0.2em] text-muted-foreground mb-1 px-2">{t('all')}</div>
+                  {unpinnedViews.map(view => (
+                    <div key={view.view_id} className="flex items-center gap-1 group">
+                      <DropdownMenuItem onClick={() => handleApplyView(view)} className="flex-1 py-2 px-3 text-xs font-bold uppercase tracking-wider rounded-lg cursor-pointer hover:bg-muted">
+                        {view.name}
+                      </DropdownMenuItem>
+                      <button onClick={() => handleTogglePinView(view.view_id, view.pinned)} className="p-2 opacity-0 group-hover:opacity-100 transition-opacity"><Pin className="w-3.5 h-3.5" /></button>
+                      <button onClick={() => handleDeleteView(view.view_id)} className="p-2 opacity-0 group-hover:opacity-100 transition-opacity hover:text-red-500"><X className="w-3.5 h-3.5" /></button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <DropdownMenuSeparator className="bg-border/50" />
+              <DropdownMenuItem onClick={() => handleApplyView(null)} className="py-2.5 px-4 text-xs font-bold uppercase tracking-wider text-muted-foreground hover:bg-secondary flex items-center justify-between">
+                {t('dash_reset_view')} <RefreshCw className="w-3 h-3" />
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <div className="h-5 w-px bg-border/50" />
+          <div className="flex items-center gap-1.5 text-xs whitespace-nowrap">
+            <span className="font-bold text-foreground">{orders.length}</span>
+            <span className="text-muted-foreground">{t('orders').toLowerCase()}</span>
+            <span className="text-border">·</span>
+            <span className="font-bold text-royal">{orders.reduce((sum, o) => sum + (Number(o.quantity) || 0), 0).toLocaleString()}</span>
+            <span className="text-muted-foreground">pcs</span>
+          </div>
         </div>
         <div className="flex items-center gap-4 flex-1" data-tour="search">
           <SearchBox
@@ -1820,11 +1875,12 @@ const Dashboard = () => {
                 title={blanksSweep?.enabled
                   ? t('dash_sweep_title_on', { n: blanksSweep?.sweep_minutes || 10 })
                   : t('dash_sweep_title_off')}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-bold text-[10px] uppercase tracking-[0.15em] shadow-md transition-all whitespace-nowrap ${blanksSweep?.enabled ? 'bg-amber-500 text-white shadow-amber-500/20 hover:bg-amber-400' : 'bg-muted text-muted-foreground hover:bg-muted/70'}`}
+                className={cn("relative p-2 rounded-lg transition-all", blanksSweep?.enabled ? 'bg-amber-500/15 text-amber-500 hover:bg-amber-500/25' : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground')}
                 data-testid="blanks-sweep-toggle"
+                aria-label={`Auto→Blanks ${blanksSweep?.enabled ? 'ON' : 'OFF'}`}
               >
-                <span className={`inline-block w-2 h-2 rounded-full ${blanksSweep?.enabled ? 'bg-white animate-pulse' : 'bg-muted-foreground/50'}`} />
-                Auto→Blanks {blanksSweep?.enabled ? 'ON' : 'OFF'}
+                <Zap className={cn("w-4 h-4", blanksSweep?.enabled && "fill-amber-500")} />
+                {blanksSweep?.enabled && <span className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />}
               </button>
             )}
             {currentBoard === 'SCHEDULING' && (
@@ -1906,6 +1962,9 @@ const Dashboard = () => {
             <button onClick={toggleLang} className="p-2 rounded hover:bg-muted/50 text-[10px] font-bold flex items-center gap-1 text-muted-foreground hover:text-foreground">
               <Languages className="w-4 h-4" /> {lang === 'es' ? 'EN' : 'ES'}
             </button>
+            <button onClick={() => setTourOpen(true)} data-tour="tutorial" title={lang === 'en' ? 'Guided tutorial' : 'Tutorial guiado'} className="p-2 rounded hover:bg-muted/50 text-muted-foreground hover:text-foreground transition-all">
+              <GraduationCap className="w-4 h-4" />
+            </button>
             <div className="relative">
               <button
                 data-testid="notifications-btn"
@@ -1973,91 +2032,6 @@ const Dashboard = () => {
           </div>
         </div>
       </header>
-
-      {/* Enterprise Suite Command Bar (Unified) */}
-      <div className="px-6 py-4 flex flex-col gap-4 z-30 transition-all bg-card border-b border-border shadow-sm">
-        {/* TOP ROW: Views, Metrics and Board Identifier */}
-        <div className="flex items-end justify-between w-full">
-          <div className="flex items-center gap-6 relative z-10">
-            {/* Saved Views Selector */}
-            <div className="flex flex-col items-center">
-              <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1.5 text-center">{t('saved_views')}</label>
-              <DropdownMenu>
-                <DropdownMenuTrigger className="flex items-center justify-between gap-3 px-4 py-2 bg-muted/20 border border-border/20 rounded-lg hover:border-royal/50 hover:bg-muted/40 transition-all group outline-none min-w-[160px] w-[180px]">
-                  <span className={cn("text-xs font-bold uppercase tracking-tight flex-1 text-center", activeViewName ? "text-royal" : "text-muted-foreground")}>
-                    {activeViewName || t('dash_default_view')}
-                  </span>
-                  <ChevronDown className="w-4 h-4 text-muted-foreground group-hover:text-royal transition-colors" />
-                </DropdownMenuTrigger>
-                <DropdownMenuContent className="z-[100] min-w-[240px] bg-card/95 backdrop-blur-xl border-border rounded-lg shadow-2xl p-1 animate-in slide-in-from-top-2">
-                  {currentBoardViews.length === 0 && <div className="p-4 text-center text-xs text-muted-foreground italic">{t('dash_no_saved_views')}</div>}
-
-                  {pinnedViews.length > 0 && (
-                    <div className="p-2 border-b border-border/50">
-                      <div className="text-[9px] font-bold uppercase tracking-[0.2em] text-royal mb-1 px-2">{t('dash_pinned_views')}</div>
-                      {pinnedViews.map(view => (
-                        <div key={view.view_id} className="flex items-center gap-1 group">
-                          <DropdownMenuItem onClick={() => handleApplyView(view)} className="flex-1 py-2 px-3 text-xs font-bold uppercase tracking-wider rounded-lg cursor-pointer hover:bg-muted">
-                            {view.name}
-                          </DropdownMenuItem>
-                          <button onClick={() => handleTogglePinView(view.view_id, view.pinned)} className="p-2 opacity-50 hover:opacity-100"><Pin className="w-3.5 h-3.5 text-royal fill-royal" /></button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {unpinnedViews.length > 0 && (
-                    <div className="p-2">
-                      <div className="text-[9px] font-bold uppercase tracking-[0.2em] text-muted-foreground mb-1 px-2">{t('all')}</div>
-                      {unpinnedViews.map(view => (
-                        <div key={view.view_id} className="flex items-center gap-1 group">
-                          <DropdownMenuItem onClick={() => handleApplyView(view)} className="flex-1 py-2 px-3 text-xs font-bold uppercase tracking-wider rounded-lg cursor-pointer hover:bg-muted">
-                            {view.name}
-                          </DropdownMenuItem>
-                          <button onClick={() => handleTogglePinView(view.view_id, view.pinned)} className="p-2 opacity-0 group-hover:opacity-100 transition-opacity"><Pin className="w-3.5 h-3.5" /></button>
-                          <button onClick={() => handleDeleteView(view.view_id)} className="p-2 opacity-0 group-hover:opacity-100 transition-opacity hover:text-red-500"><X className="w-3.5 h-3.5" /></button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  <DropdownMenuSeparator className="bg-border/50" />
-                  <DropdownMenuItem onClick={() => handleApplyView(null)} className="py-2.5 px-4 text-xs font-bold uppercase tracking-wider text-muted-foreground hover:bg-secondary flex items-center justify-between">
-                    {t('dash_reset_view')} <RefreshCw className="w-3 h-3" />
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </div>
-
-            <div className="h-10 w-px bg-border/40" />
-
-            {/* Quick Metrics */}
-            <div className="flex items-center gap-8">
-              <div className="flex flex-col">
-                <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest leading-none mb-1.5">{t('orders')}</span>
-                <span className="text-xl font-bold tracking-tighter">{orders.length}</span>
-              </div>
-              <div className="flex flex-col">
-                <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest leading-none mb-1.5">Total Qty</span>
-                <span className="text-xl font-bold tracking-tighter text-royal">
-                  {orders.reduce((sum, o) => sum + (Number(o.quantity) || 0), 0).toLocaleString()}
-                </span>
-              </div>
-            </div>
-
-            <div className="h-10 w-px bg-border/40 ml-2" />
-
-            {/* Board Title Identifier */}
-            <div className="text-[2.5rem] mt-[-4px] font-black font-barlow-semi tracking-tighter uppercase text-muted-foreground/15 pointer-events-none select-none whitespace-nowrap leading-none ml-2">
-              {currentBoard}
-            </div>
-
-            <button type="button" onClick={() => setTourOpen(true)} title={lang === 'en' ? 'Guided tutorial' : 'Tutorial guiado'} className="ml-2 self-center inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[11px] font-bold text-white bg-blue-600 hover:bg-blue-500 whitespace-nowrap shadow-sm">🎓 Tutorial</button>
-
-          </div>
-
-        </div>
-      </div>
 
       {/* Selector de columnas. El rótulo cambia según a quién afecta lo que
           hagas aquí, porque no es lo mismo recortar tu pantalla que quitarle
