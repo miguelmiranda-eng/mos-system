@@ -228,6 +228,47 @@ async def fetch_recent_invoices(first: int = 25) -> list:
     return nodes
 
 
+# Query ligera y PAGINADA solo para el backfill del work order: trae lo justo
+# (id, visualId, customerNote y las lineas) con pageInfo para avanzar por cursor.
+# WAF/rate-limit: se consume por paginas (una llamada por ~25 invoices), nunca
+# una llamada por invoice; _graphql ya reintenta ante 429.
+INVOICES_PAGE_QUERY = """
+query InvoicesPage($first: Int!, $after: String) {
+  invoices(first: $first, after: $after, sortOn: VISUAL_ID, sortDescending: true) {
+    pageInfo { hasNextPage endCursor }
+    nodes {
+      id
+      visualId
+      customerNote
+      lineItemGroups(first: 5) {
+        nodes {
+          lineItems(first: 20) {
+            nodes { description color itemNumber items sizes { count size } }
+          }
+        }
+      }
+    }
+  }
+}
+"""
+
+
+async def fetch_invoices_page(first: int = 25, after: str = None) -> dict:
+    """Una pagina de invoices para el backfill del work order.
+
+    Devuelve {"nodes": [...], "has_next": bool, "end_cursor": str|None}.
+    """
+    first = max(1, min(int(first or 25), 30))  # tope de complejidad de Printavo
+    data = await _graphql(INVOICES_PAGE_QUERY, {"first": first, "after": after})
+    conn = data.get("invoices") or {}
+    page = conn.get("pageInfo") or {}
+    return {
+        "nodes": conn.get("nodes") or [],
+        "has_next": bool(page.get("hasNextPage")),
+        "end_cursor": page.get("endCursor"),
+    }
+
+
 # ── Final Bill sync ──────────────────────────────────────────────────────────
 # When an invoice reaches the "Final Bill" status, MOS copies the invoice's
 # billed total and total item count onto the matching order (see

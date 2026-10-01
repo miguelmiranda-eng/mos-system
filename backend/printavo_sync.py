@@ -248,6 +248,37 @@ def _real_line_items(invoice: dict) -> list:
     return real
 
 
+def _work_order_content(invoice: dict, real=None) -> dict:
+    """Contenido del WORK ORDER que hoy se descarta por no ser prenda.
+
+    invoice_to_orders se queda solo con las lineas de prenda (_real_line_items);
+    las demas lineas del invoice (instrucciones de empaque "1) ...", NECK LABEL,
+    SETUP FEE, bolsas, approval method, allowed shortage, sample specs,
+    department headers...) traen el detalle que la ficha de work order necesita
+    y que hoy se tira. Aqui se capturan VERBATIM, en orden, SIN parsear: no se
+    toca el conteo de prendas ni el Final Bill (_real_line_items/_billed_qty
+    quedan intactos). El parseo en secciones se hara despues, con data real a la
+    vista. Devuelve {} si el invoice no trae contenido no-prenda.
+    """
+    if real is None:
+        real = _real_line_items(invoice)
+    garment_ids = {id(li) for li, _, _ in real}
+    lines = []
+    for li in _flatten_line_items(invoice):
+        if id(li) in garment_ids:
+            continue
+        desc = str(li.get("description") or "").strip()
+        if desc:
+            lines.append(desc)
+    note = str(invoice.get("customerNote") or "").strip()
+    wo = {}
+    if lines:
+        wo["lines"] = lines
+    if note:
+        wo["customer_note"] = note
+    return wo
+
+
 def _billed_qty(line_item: dict, sizes_qty: int) -> int:
     """Piece count of one garment line FOR BILLING (columna Total Quantity).
 
@@ -396,6 +427,10 @@ def invoice_to_orders(invoice: dict) -> list:
     # orders from department headers / notes / sample specs.
     real = _real_line_items(invoice)
 
+    # Contenido del work order (lineas no-prenda + customerNote), a nivel invoice:
+    # se estampa igual en TODAS las hermanas por color. {} si no hay nada.
+    wo_content = _work_order_content(invoice, real)
+
     # ¿La orden requiere muestra física? Se lee del work order (invoice-level) y
     # se estampa en TODAS las hermanas por color. Ausente = desconocido (el
     # invoice no trae la sección SAMPLES/TOPS NEEDED).
@@ -474,6 +509,9 @@ def invoice_to_orders(invoice: dict) -> list:
         if workorder_url:
             order["job_title_a"] = {"url": workorder_url, "desc": nickname[:120] or "Printavo WO"}
         order = {k: v for k, v in order.items() if v not in (None, "", {})}
+        # Work order (invoice-level): mismo contenido en todas las hermanas.
+        if wo_content:
+            order["work_order"] = wo_content
         # Customer-note link -> the order's links section (shown in the comments modal).
         if note_url:
             order["links"] = [{
