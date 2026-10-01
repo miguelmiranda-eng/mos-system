@@ -98,6 +98,41 @@ const daysTo = (s) => {
   if (!m) return null;
   return Math.round((new Date(`${m[1]}-${m[2]}-${m[3]}`) - new Date(new Date().toISOString().slice(0, 10))) / 86400000);
 };
+const stripHtml = (s) => String(s || '').replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]+>/g, ' ').replace(/\s+\n/g, '\n').replace(/[ \t]+/g, ' ').trim();
+const firstUrl = (s) => { const m = String(s || '').match(/https?:\/\/[^\s"'<>]+/); return m ? m[0] : ''; };
+
+// Parsea las lineas crudas del work order (Printavo) en secciones, como la
+// maqueta. El formato es consistente: bloques etiquetados SAMPLES / APPROVAL
+// METHOD: / ALLOWED SHORTAGE: / FRONT PRINT... / SPECIAL NOTES:, el PACK con
+// "INCLUDES REFERENCES TO:", instrucciones numeradas "1) ...", NEW BOXES /
+// BULK PACK, y lineas de servicio (fees). Si algo no encaja, cae en fees.
+function parseWorkOrder(lines) {
+  const wo = { samples: '', front: '', approval: '', shortage: '', specialNotes: '', packHeader: '', packRefs: [], steps: [], boxes: '', fees: [] };
+  const strip = (s, label) => s.replace(new RegExp(`^${label}\\s*:?\\s*`, 'i'), '').trim();
+  (lines || []).forEach((raw) => {
+    const line = String(raw || '').replace(/\r/g, '').trim();
+    if (!line) return;
+    const head = (line.split('\n')[0] || '').trim();
+    const U = head.toUpperCase();
+    if (/\(DO NOT EDIT\)/i.test(line) && /DEPARTMENT/i.test(U)) return;
+    if (/^SAMPLES\b/i.test(U)) { wo.samples = strip(line, 'SAMPLES'); return; }
+    if (/^APPROVAL METHOD/i.test(U)) { wo.approval = strip(line, 'APPROVAL METHOD'); return; }
+    if (/^ALLOWED SHORTAGE/i.test(U)) { wo.shortage = strip(line, 'ALLOWED SHORTAGE'); return; }
+    if (/^FRONT PRINT/i.test(U)) { wo.front = line; return; }
+    if (/^SPECIAL NOTES/i.test(U)) { const v = strip(line, 'SPECIAL NOTES'); if (v) wo.specialNotes = v; return; }
+    if (/INCLUDES REFERENCES TO/i.test(line)) {
+      const parts = line.split(/INCLUDES REFERENCES TO:?/i);
+      wo.packHeader = (parts[0] || '').trim();
+      wo.packRefs = (parts[1] || '').split('\n').map((s) => s.trim()).filter(Boolean);
+      return;
+    }
+    if (/^\d+\)/.test(head)) { wo.steps.push(line.replace(/\s+/g, ' ').trim()); return; }
+    if (/^(NEW BOXES|BULK PACK)/i.test(U)) { wo.boxes = line; return; }
+    wo.fees.push(line.replace(/\s+/g, ' ').trim());
+  });
+  return wo;
+}
+
 const MESES_ABBR = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
 const fmtWhen = (s) => {
   const d = new Date(s);
@@ -244,6 +279,10 @@ export default function WorkOrderModal({ order, isOpen, onClose, isDark = false 
   const cuadra = sizeSum === qty;
   const wo = (o.work_order && typeof o.work_order === 'object') ? o.work_order : {};
   const woLines = Array.isArray(wo.lines) ? wo.lines : [];
+  const wop = parseWorkOrder(woLines);
+  const hasWO = woLines.length > 0;
+  const noteText = stripHtml(wo.customer_note || '');
+  const noteUrl = firstUrl(wo.customer_note || '');
   const st = stageOf(o);
   const dueIn = daysTo(o.due_date);
   const storePo = o['store_po#'] || o.store_po || '';
@@ -343,6 +382,9 @@ export default function WorkOrderModal({ order, isOpen, onClose, isDark = false 
                   {check(o.is_preorder, 'Preorden')}
                 </div>
               </div>
+              {wop.front && (
+                <pre className={`mt-3 text-[12px] font-mono whitespace-pre-wrap rounded-lg border p-2.5 ${card}`}>{wop.front}</pre>
+              )}
             </div>
             {woLink && woLink.url && (
               <div className={`rounded-lg border p-3 ${card}`}>
@@ -429,30 +471,72 @@ export default function WorkOrderModal({ order, isOpen, onClose, isDark = false 
                 <Field label="Tablero">{o.board}</Field>
                 <Field label="Trim box">{o.trim_box}</Field>
                 <Field label="Final bill">{fmtDate(o.final_bill)}</Field>
+                <Field label="Allowed shortage" mono>{wop.shortage}</Field>
+                <Field label="Samples">{wop.samples}</Field>
                 <Field label="Sample física">{o.sample_printavo}</Field>
                 <Field label="Gemela" mono>{o.twin_order_number}</Field>
                 <Field label="Nickname" mono full>{woLink ? woLink.desc : ''}</Field>
+                {wop.approval && <Field label="Approval method" full>{wop.approval}</Field>}
               </div>
             </div>
 
             <div>
               <h3 className="text-[10px] font-bold uppercase tracking-[0.15em] text-slate-400 mb-2">Instrucciones de empaque</h3>
-              {woLines.length > 0 ? (
-                <div className="space-y-1">
-                  {woLines.map((line, idx) => (
-                    <div key={idx} className={`flex gap-2 text-[12.5px] rounded px-2 py-1 ${card} border`}>
-                      <span className="text-slate-400 font-mono w-5 shrink-0">{idx + 1}</span>
-                      <span className="break-words">{line}</span>
-                    </div>
-                  ))}
-                </div>
-              ) : (
+              {!hasWO ? (
                 <p className="text-[12px] text-slate-400">Aún sin datos del work order. Se poblará con el sync (órdenes nuevas) y el backfill (históricas).</p>
-              )}
-              {wo.customer_note && (
-                <div className="mt-3">
-                  <div className="text-[9px] font-bold uppercase tracking-[0.15em] text-slate-400 mb-1">Special notes</div>
-                  <p className="text-[12.5px] whitespace-pre-wrap">{wo.customer_note}</p>
+              ) : (
+                <div className="space-y-3">
+                  {(wop.packHeader || wop.steps.length > 0) && (
+                    <div>
+                      {wop.packHeader && <pre className={`text-[12px] font-mono whitespace-pre-wrap rounded-lg border p-2.5 ${card}`}>{wop.packHeader}</pre>}
+                      {wop.steps.length > 0 && (
+                        <div className="space-y-1 mt-1">
+                          {wop.steps.map((s, i) => (
+                            <div key={i} className={`flex gap-2 text-[12.5px] rounded px-2 py-1 ${card} border`}>
+                              <span className="text-slate-400 font-mono w-5 shrink-0">{i + 1}</span>
+                              <span className="break-words">{s.replace(/^\d+\)\s*/, '')}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  {wop.packRefs.length > 0 && (
+                    <div>
+                      <p className="text-[9px] font-bold uppercase tracking-[0.15em] text-slate-400 mb-1">{o.branding || 'PO'} · includes references to</p>
+                      <div className="grid grid-cols-2 gap-1">
+                        {wop.packRefs.map((r, i) => (
+                          <div key={i} className={`text-[11.5px] rounded px-2 py-1 ${card} border`}>{r}</div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {wop.boxes && (
+                    <div>
+                      <p className="text-[9px] font-bold uppercase tracking-[0.15em] text-slate-400 mb-1">New boxes</p>
+                      <pre className="text-[12px] whitespace-pre-wrap">{wop.boxes}</pre>
+                    </div>
+                  )}
+                  {wop.specialNotes && (
+                    <div>
+                      <p className="text-[9px] font-bold uppercase tracking-[0.15em] text-slate-400 mb-1">Special notes</p>
+                      <pre className="text-[12.5px] whitespace-pre-wrap">{wop.specialNotes}</pre>
+                    </div>
+                  )}
+                  {noteUrl && (
+                    <div>
+                      <p className="text-[9px] font-bold uppercase tracking-[0.15em] text-slate-400 mb-1">Packing list</p>
+                      <a href={noteUrl} target="_blank" rel="noreferrer" className="text-[12px] text-blue-500 underline break-all">{noteText || noteUrl}</a>
+                    </div>
+                  )}
+                  {wop.fees.length > 0 && (
+                    <div>
+                      <p className="text-[9px] font-bold uppercase tracking-[0.15em] text-slate-400 mb-1">Servicios / cargos</p>
+                      <ul className="text-[11.5px] text-slate-400 list-disc pl-4 space-y-0.5">
+                        {wop.fees.map((f, i) => <li key={i}>{f}</li>)}
+                      </ul>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
