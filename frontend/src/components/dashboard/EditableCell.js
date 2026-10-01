@@ -128,7 +128,7 @@ const EditableCellBase = ({ value, field, orderId, options, groupConfig, onUpdat
       const color = getStatusColor(value) || (isDark ? { bg: '#374151', text: '#D1D5DB' } : { bg: '#F3F4F6', text: '#374151' });
       return <span className="px-2.5 py-1 rounded text-xs font-bold whitespace-nowrap" style={{ backgroundColor: color.bg, color: color.text }}>{value || '—'}</span>;
     }
-    return <span className="text-base font-semibold text-foreground truncate" title={typeof value === 'string' ? value : undefined}>{displayValue(value, type) || '—'}</span>;
+    return <span className="text-base font-semibold font-mono text-foreground truncate" title={typeof value === 'string' ? value : undefined}>{displayValue(value, type) || '—'}</span>;
   }
 
   // link_desc editing and display
@@ -274,7 +274,7 @@ const EditableCellBase = ({ value, field, orderId, options, groupConfig, onUpdat
       className={`cursor-pointer w-full h-full min-h-[32px] flex items-center px-1 hover:bg-secondary/50 rounded transition-colors group ${className}`} title={t('click_to_edit')}>
       {isSelectField ? <ColoredBadge value={value} isDark={isDark} /> :
        type === 'link' ? <span className="text-muted-foreground text-sm">+ {t('link')}</span> :
-       (value ? <span className="text-foreground font-semibold text-base truncate" title={typeof value === 'string' ? value : undefined}>{displayValue(value, type)}</span> : <span className="text-muted-foreground/50">-</span>)}
+       (value ? <span className="text-foreground font-semibold font-mono text-base truncate" title={typeof value === 'string' ? value : undefined}>{displayValue(value, type)}</span> : <span className="text-muted-foreground/50">-</span>)}
     </div>
   );
 };

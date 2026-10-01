@@ -1180,7 +1180,7 @@ const Dashboard = () => {
                 <span
                   onClick={(e) => { e.stopPropagation(); setWorkOrderObj(order); }}
                   title="Abrir work order"
-                  className={`font-bold text-[15px] tracking-tight leading-none text-slate-800 dark:text-slate-100 truncate cursor-pointer hover:text-primary hover:underline shrink-0 ${isSearchMatch ? 'text-primary' : ''}`}>
+                  className="font-mono font-bold text-[15px] leading-none text-primary truncate cursor-pointer hover:underline shrink-0">
                   {order.order_number}
                 </span>
                 <div className="flex items-center gap-1 shrink-0">
