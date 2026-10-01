@@ -19,6 +19,19 @@ export default class ErrorBoundary extends React.Component {
   render() {
     if (this.state.error) {
       const e = this.state.error;
+      // Firefox's error.stack does NOT include the "Name: message" header that
+      // Chrome prepends — so showing only `e.stack` hides the one line that
+      // actually names the bug. Build the header ourselves and only prepend it
+      // when the stack doesn't already start with it (avoids a dup on Chrome).
+      const name = (e && e.name) || "Error";
+      const message = (e && e.message) || "";
+      const header = message ? `${name}: ${message}` : name;
+      const stack = (e && e.stack) || "";
+      const ua = (typeof navigator !== "undefined" && navigator.userAgent) || "";
+      const body = [
+        stack.startsWith(header) ? stack : `${header}\n\n${stack}`,
+        ua && `\nUA: ${ua}`,
+      ].filter(Boolean).join("\n") || String(e);
       return (
         <div style={{ padding: 20, fontFamily: "system-ui, -apple-system, sans-serif", color: "#111827", background: "#ffffff", minHeight: "100vh", boxSizing: "border-box" }}>
           <h2 style={{ color: "#dc2626", margin: "0 0 6px" }}>Algo falló en la pantalla</h2>
@@ -26,7 +39,7 @@ export default class ErrorBoundary extends React.Component {
             Toma una captura de este texto y mándala. (build <b>{BUILD_TAG}</b>)
           </p>
           <pre style={{ whiteSpace: "pre-wrap", wordBreak: "break-word", fontSize: 12, lineHeight: 1.5, background: "#f4f4f5", padding: 12, borderRadius: 8, color: "#b91c1c", border: "1px solid #fecaca" }}>
-            {String((e && (e.stack || e.message)) || e)}
+            {body}
           </pre>
           <button
             onClick={() => { this.setState({ error: null }); window.__mosProgrammaticReload = true; window.location.reload(); }}

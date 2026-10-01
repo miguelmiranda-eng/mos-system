@@ -291,7 +291,7 @@ export const HomeModule = () => {
     if (!data) return [];
     const q = (sourceSearch[type] || '').trim().toUpperCase();
     if (!q) return data.items;
-    return data.items.filter(it => it.value.toUpperCase().includes(q));
+    return data.items.filter(it => (it.value || '').toUpperCase().includes(q));
   };
 
   if (loading) {
@@ -449,12 +449,12 @@ export const HomeModule = () => {
                                       <span className={`font-mono font-medium ${isDrop(p.a) ? 'text-red-600 dark:text-red-400 line-through decoration-red-500/40' : 'text-emerald-600 dark:text-emerald-400'}`}>
                                         {p.a}
                                       </span>
-                                      <span className="text-[10px] text-muted-foreground bg-muted px-1 rounded tabular-nums">{p.count_a.toLocaleString()}</span>
+                                      <span className="text-[10px] text-muted-foreground bg-muted px-1 rounded tabular-nums">{(p.count_a ?? 0).toLocaleString()}</span>
                                       <ArrowRight className="w-3 h-3 text-muted-foreground/60" />
                                       <span className={`font-mono font-medium ${isDrop(p.b) ? 'text-red-600 dark:text-red-400 line-through decoration-red-500/40' : 'text-emerald-600 dark:text-emerald-400'}`}>
                                         {p.b}
                                       </span>
-                                      <span className="text-[10px] text-muted-foreground bg-muted px-1 rounded tabular-nums">{p.count_b.toLocaleString()}</span>
+                                      <span className="text-[10px] text-muted-foreground bg-muted px-1 rounded tabular-nums">{(p.count_b ?? 0).toLocaleString()}</span>
                                       <span className="ml-auto text-[10px] bg-amber-500/15 text-amber-700 dark:text-amber-300 px-1 rounded">d={p.distance}</span>
                                     </div>
                                     <div className="mt-1.5 flex items-center gap-1.5">
