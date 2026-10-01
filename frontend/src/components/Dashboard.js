@@ -1763,6 +1763,10 @@ const Dashboard = () => {
             <Menu className="w-6 h-6 text-muted-foreground" />
           </button>
         )}
+        <div className="hidden lg:flex items-center gap-2 shrink-0 mr-2">
+          <span className="px-2.5 py-1 rounded-md text-xs font-black uppercase tracking-tight text-white whitespace-nowrap" style={{ backgroundColor: BOARD_COLORS[currentBoard]?.bg || '#1f2937' }}>{currentBoard}</span>
+          <span className="text-xs text-muted-foreground whitespace-nowrap">{orders.length} {t('orders')}</span>
+        </div>
         <div className="flex items-center gap-4 flex-1" data-tour="search">
           <SearchBox
             ref={searchInputRef}
