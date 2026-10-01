@@ -1894,6 +1894,7 @@ const Dashboard = () => {
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
+          <div className="h-6 w-px bg-border mx-2" />
         <div className="flex items-center gap-4 text-card-foreground">
           {/* Quick Actions */}
           <div className="flex items-center gap-1">
