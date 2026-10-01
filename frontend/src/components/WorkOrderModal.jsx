@@ -1,6 +1,7 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { X, Image as ImageIcon } from 'lucide-react';
 import { toast } from 'sonner';
+import { API } from '../lib/constants';
 
 /*
  * Ficha de WORK ORDER a pantalla completa (solo lectura). Aditiva: es un modal
@@ -97,6 +98,15 @@ const daysTo = (s) => {
   if (!m) return null;
   return Math.round((new Date(`${m[1]}-${m[2]}-${m[3]}`) - new Date(new Date().toISOString().slice(0, 10))) / 86400000);
 };
+const MESES_ABBR = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+const fmtWhen = (s) => {
+  const d = new Date(s);
+  if (!s || Number.isNaN(d.getTime())) return '';
+  const hm = d.toTimeString().slice(0, 5);
+  const iso = d.toISOString().slice(0, 10);
+  const today = new Date().toISOString().slice(0, 10);
+  return iso === today ? `hoy ${hm}` : `${d.getDate()} ${MESES_ABBR[d.getMonth()]} ${hm}`;
+};
 
 function Field({ label, children, mono, full }) {
   return (
@@ -172,6 +182,18 @@ export default function WorkOrderModal({ order, isOpen, onClose, isDark = false 
     return () => document.removeEventListener('keydown', onKey);
   }, [isOpen, onClose]);
 
+  // Capturas de producción de la orden (barra de avance + lista).
+  const [logs, setLogs] = useState([]);
+  useEffect(() => {
+    if (!isOpen || !order?.order_id) { setLogs([]); return undefined; }
+    let alive = true;
+    fetch(`${API}/production-logs/${order.order_id}`, { credentials: 'include' })
+      .then((r) => (r.ok ? r.json() : { logs: [] }))
+      .then((d) => { if (alive) setLogs(Array.isArray(d.logs) ? d.logs : []); })
+      .catch(() => { if (alive) setLogs([]); });
+    return () => { alive = false; };
+  }, [isOpen, order]);
+
   if (!isOpen || !order) return null;
 
   const o = order;
@@ -188,6 +210,8 @@ export default function WorkOrderModal({ order, isOpen, onClose, isDark = false 
   const design = o['design_#'] || o.design_num || '';
   const pos = Array.isArray(o.print_positions) ? o.print_positions.join(' · ') : (o.print_positions || '');
   const woLink = (o.job_title_a && typeof o.job_title_a === 'object') ? o.job_title_a : null;
+  const totalProduced = logs.reduce((a, l) => a + (Number(l.quantity_produced) || 0), 0);
+  const pct = qty ? Math.min(100, Math.round((totalProduced * 100) / qty)) : 0;
 
   const check = (on, label) => (
     <div className="flex items-center gap-2 text-[12.5px]">
@@ -292,6 +316,27 @@ export default function WorkOrderModal({ order, isOpen, onClose, isDark = false 
                   </div>
                 </div>
               ) : <div className="text-[12px] text-slate-400">Sin desglose de tallas.</div>}
+            </div>
+
+            <div>
+              <div className="flex items-center justify-between mb-1.5">
+                <h3 className="text-[10px] font-bold uppercase tracking-[0.15em] text-slate-400">Avance de producción</h3>
+                <span className="text-[11px]">{pct}% impreso · <span className="text-slate-400">{totalProduced} de {qty}</span></span>
+              </div>
+              <div className={`h-2 rounded-full overflow-hidden ${isDark ? 'bg-white/10' : 'bg-gray-200'}`}>
+                <div className={`h-full rounded-full ${pct >= 100 ? 'bg-emerald-500' : 'bg-blue-500'}`} style={{ width: `${pct}%` }} />
+              </div>
+              {logs.length > 0 ? (
+                <div className="mt-2 space-y-1 max-h-40 overflow-y-auto">
+                  {logs.map((l, idx) => (
+                    <div key={idx} className={`flex items-center gap-2 text-[11.5px] rounded px-2 py-1 ${card} border`}>
+                      <span className="font-mono font-bold w-10 shrink-0 text-right">{l.quantity_produced}</span>
+                      <span className="truncate">{[l.size, l.design_type, l.machine, l.user_name].filter(Boolean).join(' · ')}</span>
+                      <span className="ml-auto text-slate-400 shrink-0">{fmtWhen(l.created_at)}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : <p className="text-[12px] text-slate-400 mt-1.5">Sin capturas de producción todavía.</p>}
             </div>
 
             <div>
