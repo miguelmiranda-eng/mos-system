@@ -171,6 +171,13 @@ async def main():
                                                                   "preferred_client": "SPEKTRUM"})
         m3 = next(m for m in r.json()["machines"] if m["machine"] == "MAQUINA3")
         check("editar máquina", m3["active"] is False and m3["heads"] == 8 and m3["preferred_client"] == "SPEKTRUM", m3)
+        # Borrar los ajustes (limpieza al eliminar el tablero): vuelve a defaults.
+        r = await sup.delete("/api/planner/machines/MAQUINA3")
+        check("borrar ajustes de máquina", r.status_code == 200 and r.json().get("deleted") == 1, r.status_code)
+        cfg_after = (await sup.get("/api/planner/config")).json()
+        m3b = next(m for m in cfg_after["machines"] if m["machine"] == "MAQUINA3")
+        check("máquina sin ajustes vuelve a defaults",
+              m3b["active"] is True and m3b["heads"] == 16 and m3b["preferred_client"] == "", m3b)
 
         print("\n== Calendario y proyección ==")
         r = await sup.get("/api/planner/projection")

@@ -1680,6 +1680,9 @@ const MachinesTab = ({ cfgData, canEdit, onSaved, tr }) => {
     setBusyMachine(true);
     try {
       await configApi(`/boards/${encodeURIComponent(m.machine)}`, { method: "DELETE" });
+      // Limpia los ajustes del planner (cabezas, cliente, activa) para que una
+      // máquina recreada con el mismo nombre no herede valores viejos.
+      await planner(`/machines/${encodeURIComponent(m.machine)}`, { method: "DELETE" }).catch(() => {});
       toast.success(tr("plan_machine_deleted", { m: m.machine }));
       onSaved();
     } catch (e) { toast.error(e.message); } finally { setBusyMachine(false); }

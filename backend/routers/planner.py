@@ -309,6 +309,20 @@ async def put_machine(machine: str, request: Request):
     return {"machines": await _machines()}
 
 
+@router.delete("/machines/{machine}")
+async def delete_machine_settings(machine: str, request: Request):
+    """Limpia los ajustes del planner de una máquina (cabezas, cliente, activa).
+    Se llama al eliminar su tablero MAQUINA<n> para que una máquina recreada con
+    el mismo nombre no herede ajustes viejos. NO toca el tablero ni las órdenes:
+    de eso se encarga el CRUD de tableros del CRM (/api/config/boards)."""
+    user = await require_admin(request)
+    before = await db.planner_machines.find_one({"machine": machine}, {"_id": 0})
+    res = await db.planner_machines.delete_one({"machine": machine})
+    if before:
+        await log_activity(user, "planner_machine_settings_delete", {"machine": machine}, before)
+    return {"deleted": res.deleted_count}
+
+
 # ── Calendario ─────────────────────────────────────────────────────────────
 def _validate_entry(body: dict) -> dict:
     kind = body.get("kind")
@@ -612,7 +626,7 @@ async def data_quality(request: Request):
 # ── Alertas ────────────────────────────────────────────────────────────────
 # Tableros donde una orden ya está cerrada o fuera del flujo: no alertan.
 ALERT_EXCLUDED_BOARDS = ["PAPELERA DE RECICLAJE", "CANCELLED", "COMPLETOS", "FINAL BILL",
-                         "INVENTARIO", "EJEMPLOS", "RESPALDO MONDAY"]
+                         "EDI", "INVENTARIO", "EJEMPLOS", "RESPALDO MONDAY"]
 
 
 @router.get("/alerts")
