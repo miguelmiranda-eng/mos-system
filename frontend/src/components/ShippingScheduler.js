@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import {
   ChevronLeft, ChevronRight, Plus, Trash2, Copy, Download, RefreshCw, Loader2,
-  ExternalLink, FileSpreadsheet, Wand2, Search, GripVertical, X, RotateCcw, History, CalendarDays,
+  ExternalLink, FileSpreadsheet, Wand2, Search, GripVertical, X, RotateCcw, History, CalendarDays, FileDown,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { toast } from "sonner";
@@ -120,7 +120,7 @@ const Cell = ({ value, onSave, type = 'text', list, placeholder, className = '',
 // ORDER va primero (pedido de Envíos); antes de ella, la columna de
 // selección + manija de arrastre (SEL_W).
 const COLS = ['ORDER', 'CUSTOMER', 'SHIPPING#', 'DELIVER TO', 'BRANDING', 'CUSTOMER PO.', 'DESIGN #', 'PCS', 'STATUS', 'PRIORITY', 'NOTES', 'SHIPPING FROM', 'CARRIER'];
-const COL_W = [125, 110, 90, 120, 130, 150, 150, 80, 190, 80, 190, 120, 120, 96];
+const COL_W = [125, 110, 90, 120, 130, 150, 150, 80, 190, 80, 190, 120, 120, 120];
 const SEL_W = 46;
 // Columnas del programador anterior que vienen VIVAS de la orden (solo
 // lectura): cancel date / Days Com., status de producción, pedido vs.
@@ -275,6 +275,8 @@ const ShippingScheduler = () => {
   const [loading, setLoading] = useState(false);
   const [showWeekend, setShowWeekend] = useState(false);
   const [view, setView] = useState('program');    // 'program' | 'moves'
+  const [pkBusy, setPkBusy] = useState(null);     // export_id / shipment_id generando packing
+  const [pkReport, setPkReport] = useState(null); // avisos del último packing generado
   // Navegador Año → Mes (la semana abierta es weekStart). Arranca en el mes
   // del jueves de la semana (regla ISO: la semana es del mes donde cae su jueves).
   const [navYear, setNavYear] = useState(() => addDays(mondayOf(new Date()), 3).getFullYear());
@@ -618,6 +620,31 @@ const ShippingScheduler = () => {
       `export_${exp.export_no || 'sin_no'}_${exp.date}.xlsx`);
   };
 
+  // ── PACKING LIST de exportación (motor en el backend) ─────────────────────
+  // Por orden o del export completo. El backend responde el archivo en
+  // base64 + avisos (DPL vs WMS, faltan cajas, etc.); si hay avisos se
+  // muestran en un reporte para revisarlos antes de mandar el PL.
+  const genPacking = async (url, busyKey, label) => {
+    setPkBusy(busyKey);
+    try {
+      const d = await call(url, 'POST');
+      const bin = atob(d.content_b64);
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i);
+      const href = URL.createObjectURL(new Blob([bytes], { type: d.media_type }));
+      const a = document.createElement('a');
+      a.href = href;
+      a.download = d.filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(href), 5000);
+      if (d.warnings?.length) setPkReport({ label, filename: d.filename, warnings: d.warnings, summary: d.summary || [] });
+      else toast.success(t('pk_done', { file: d.filename }));
+    } catch (e) { toast.error(e.message || t('pk_err')); }
+    finally { setPkBusy(null); }
+  };
+
   // ── Derivados de la semana ─────────────────────────────────────────────────
   const todayIso = isoOf(new Date());
   const weekDays = Array.from({ length: 7 }, (_, i) => isoOf(addDays(weekStart, i)));
@@ -826,6 +853,12 @@ const ShippingScheduler = () => {
             {(data?.customs_lights || ['VERDE', 'ROJO']).map((c) => <option key={c} value={c}>{c}</option>)}
           </select>
           <div className="flex items-center gap-1 ml-auto">
+            <button onClick={() => genPacking(`${API}/exports/${exp.export_id}/packing`, exp.export_id, exportLabel(exp))}
+              disabled={!ls.length || pkBusy === exp.export_id} title={t('pk_export_hint')}
+              className="flex items-center gap-1 px-2.5 py-1 rounded-md bg-indigo-600 text-white text-[10px] font-black uppercase tracking-wider hover:bg-indigo-700 disabled:opacity-40">
+              {pkBusy === exp.export_id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileDown className="w-3.5 h-3.5" />}
+              {t('pk_export_btn')}
+            </button>
             <button onClick={() => exportOne(exp)} disabled={!ls.length} title={t('sch_excel_export')}
               className="p-1.5 rounded-md text-emerald-700 hover:bg-emerald-50 disabled:opacity-30"><FileSpreadsheet className="w-4 h-4" /></button>
             <button onClick={() => deleteExport(exp)} title={t('sch_delete_export')}
@@ -850,6 +883,15 @@ const ShippingScheduler = () => {
           </label>
           <div className="flex-1 min-w-[160px]"><Cell boxed value={exp.notes} placeholder={t('sch_notes_ph')} className="text-slate-600"
             onSave={(v) => updateExport(exp, { notes: v })} /></div>
+        </div>
+        {/* Transporte: pie del PACKING LIST de exportación */}
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 px-3 py-1.5 bg-slate-50 border-b border-slate-300 text-[11px]">
+          <span className="font-black text-slate-500 uppercase" title={t('pk_transport_hint')}>{t('pk_transport')}</span>
+          {[['transport_company', 'pk_company_ph', 'w-48'], ['driver_name', 'pk_driver_ph', 'w-56'],
+            ['license_plate', 'pk_plate_ph', 'w-28'], ['seal_numbers', 'pk_seals_ph', 'w-44']].map(([k, ph, w]) => (
+            <span key={k} className={w}><Cell boxed value={exp[k]} placeholder={t(ph)} className="!py-0.5 font-bold"
+              onSave={(v) => updateExport(exp, { [k]: v })} /></span>
+          ))}
         </div>
         {/* Tabla de órdenes */}
         <div className="overflow-x-auto">
@@ -969,6 +1011,11 @@ const ShippingScheduler = () => {
                           {moveOptions(l).map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
                           <option value="__date">{t('sch_other_date')}</option>
                         </select>
+                        <button onClick={() => genPacking(`${API}/lines/${l.shipment_id}/packing`, l.shipment_id, `#${l.order_number}`)}
+                          disabled={pkBusy === l.shipment_id} title={t('pk_line_hint')}
+                          className="p-1 rounded text-indigo-500 hover:text-indigo-700 hover:bg-indigo-50 disabled:opacity-40">
+                          {pkBusy === l.shipment_id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileDown className="w-3.5 h-3.5" />}
+                        </button>
                         <button onClick={() => duplicateLine(l)} title={t('sch_duplicate')} className="p-1 rounded text-slate-400 hover:text-blue-600"><Copy className="w-3.5 h-3.5" /></button>
                         <button onClick={() => deleteLine(l)} title={t('sch_delete_line')} className="p-1 rounded text-slate-400 hover:text-red-600"><Trash2 className="w-3.5 h-3.5" /></button>
                       </div>
@@ -1242,6 +1289,50 @@ const ShippingScheduler = () => {
       )}
       </div>
       </div>
+
+      {/* Reporte del packing generado: avisos para revisar antes de enviarlo. */}
+      {pkReport && (
+        <div className="fixed inset-0 z-[90] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-slate-900/50" onClick={() => setPkReport(null)} />
+          <div className="sch-sheet relative w-full max-w-3xl max-h-[85vh] overflow-y-auto rounded-2xl shadow-2xl p-5 space-y-3">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h3 className="text-base font-black text-slate-800">{t('pk_report_title', { label: pkReport.label })}</h3>
+                <p className="text-[11px] text-slate-500">{t('pk_report_file', { file: pkReport.filename })}</p>
+              </div>
+              <button onClick={() => setPkReport(null)} className="p-1 rounded-lg text-slate-400 hover:bg-slate-100"><X className="w-5 h-5" /></button>
+            </div>
+            <div className="rounded-xl border border-amber-200 bg-amber-50 p-3">
+              <p className="text-[12px] font-black text-amber-800 mb-1.5">{t('pk_report_warn', { n: pkReport.warnings.length })}</p>
+              <ul className="space-y-1 text-[12px] text-amber-900 list-disc pl-5">
+                {pkReport.warnings.map((w, i) => <li key={i}>{w}</li>)}
+              </ul>
+            </div>
+            <table className="w-full text-[12px] border-collapse">
+              <thead>
+                <tr className="text-[10px] font-black uppercase text-slate-600">
+                  <th className="text-left px-2 py-1">{t('order')}</th>
+                  <th className="text-left px-2 py-1">{t('pk_source')}</th>
+                  <th className="text-right px-2 py-1">PCS</th>
+                  <th className="text-right px-2 py-1">{t('pk_boxes')}</th>
+                  <th className="text-right px-2 py-1">{t('pk_pallets')}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {pkReport.summary.map((s) => (
+                  <tr key={s.order_number} data-st="none" className="border-t border-slate-100">
+                    <td className="px-2 py-1 font-black">#{s.order_number}</td>
+                    <td className="px-2 py-1">{s.source}</td>
+                    <td className="px-2 py-1 text-right tabular-nums">{fmtNum(s.units)}</td>
+                    <td className={`px-2 py-1 text-right tabular-nums ${s.boxes == null ? 'sch-neg' : ''}`}>{s.boxes ?? '—'}</td>
+                    <td className={`px-2 py-1 text-right tabular-nums ${s.pallets == null ? 'sch-neg' : ''}`}>{s.pallets ?? '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {/* Barra de acciones de la selección (flotante abajo). */}
       {selIds.length > 0 && (

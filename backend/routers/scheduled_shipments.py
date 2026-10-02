@@ -38,6 +38,8 @@ Endpoints (prefijo /api/scheduled-shipments):
   POST   "/lines/{shipment_id}/duplicate" → clona una línea (para partir un envío)
   POST   "/lines/move"               → mueve varias líneas (selección / arrastre) a un export o fecha, en una posición
   POST   "/lines/delete"             → quita varias líneas
+  POST   "/exports/{id}/packing"     → PACKING LIST de exportación del export (uno por cliente; varios → zip)
+  POST   "/lines/{id}/packing"       → PACKING LIST de una sola orden
   GET    "/movements"                → bitácora de movimientos (con ¿se puede revertir? y por qué no)
   POST   "/movements/{id}/revert"    → revierte un movimiento si nada de lo que tocó cambió después
   PUT    "/{shipment_id}"            → edita una línea (o la mueve de export / fecha)
@@ -52,6 +54,7 @@ from fastapi import APIRouter, Request, HTTPException
 from deps import db, require_auth, log_activity, require_api_customer
 from services.qty_embarcada import qty_embarcada, qty_embarcada_por_orden, entero_o_none
 from services import shipping_journal as jr
+from services import export_packing as pk
 
 # Extrae etiqueta|url de un comentario [file]etiqueta|url[/file] (packing_link_seed).
 _FILE_RE = re.compile(r"\[file\](.*?)\|(.*?)\[/file\]")
@@ -368,7 +371,9 @@ async def _one_row(sched):
 def _export_out(e: dict) -> dict:
     return {k: e.get(k) for k in (
         "export_id", "date", "position", "export_no", "pl_numbers", "truck", "customs_light",
-        "cutoff_time", "export_time", "notes", "created_at", "updated_at", "created_by_name")}
+        "cutoff_time", "export_time", "notes", "created_at", "updated_at", "created_by_name",
+        # Pie del PACKING LIST de exportación (services/export_packing.py).
+        "transport_company", "driver_name", "license_plate", "seal_numbers")}
 
 
 async def _get_export(export_id) -> dict:
@@ -619,7 +624,8 @@ async def update_export(export_id: str, request: Request):
     upd = {}
     if "export_no" in body:
         upd["export_no"] = _int_or_none(body["export_no"], "export_no", 1, 1_000_000)
-    for k, n in (("pl_numbers", 200), ("truck", 120), ("notes", 500)):
+    for k, n in (("pl_numbers", 200), ("truck", 120), ("notes", 500), ("transport_company", 120),
+                 ("driver_name", 120), ("license_plate", 40), ("seal_numbers", 120)):
         if k in body:
             upd[k] = _txt(body[k], n)
     if "customs_light" in body:
@@ -1112,6 +1118,41 @@ async def unschedule(shipment_id: str, request: Request):
                         f"Quitó #{sched.get('order_number')} de {await _exp_label(sched['export_id'])}",
                         lines=[(shipment_id, sched, None)])
     return {"message": "Envío desprogramado", "order_number": sched.get("order_number")}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PACKING LIST de exportación — services/export_packing.py
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def _packing_response(user, export_id, shipment_id=None):
+    import base64
+    try:
+        name, data, media, warnings, summary = await pk.generate(export_id, shipment_id)
+    except LookupError:
+        raise HTTPException(status_code=404, detail="Export u orden no encontrada")
+    await log_activity(user, "generate_export_packing", {
+        "export_id": export_id, "shipment_id": shipment_id, "file": name, "warnings": len(warnings)})
+    # JSON (no archivo directo) para que el navegador lea nombre y avisos sin
+    # depender de los headers expuestos por CORS.
+    return {"filename": name, "media_type": media, "content_b64": base64.b64encode(data).decode(),
+            "warnings": warnings, "summary": summary}
+
+
+@router.post("/exports/{export_id}/packing")
+async def export_packing(export_id: str, request: Request):
+    """PL completo del export (uno por cliente: GTS, SKT…; varios → .zip)."""
+    user = await require_auth(request)
+    return await _packing_response(user, export_id)
+
+
+@router.post("/lines/{shipment_id}/packing")
+async def line_packing(shipment_id: str, request: Request):
+    """PL de una sola orden del export."""
+    user = await require_auth(request)
+    ln = await db.scheduled_shipments.find_one({"shipment_id": shipment_id}, {"_id": 0, "export_id": 1})
+    if not ln or not ln.get("export_id"):
+        raise HTTPException(status_code=404, detail="Línea no encontrada")
+    return await _packing_response(user, ln["export_id"], shipment_id)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

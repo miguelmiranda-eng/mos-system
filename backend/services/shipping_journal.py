@@ -32,6 +32,8 @@ LINE_FIELDS = {
 EXPORT_FIELDS = {
     "export_no": "EXPORT#", "pl_numbers": "PL", "truck": "Transporte", "customs_light": "Semáforo",
     "cutoff_time": "Corte", "export_time": "Export HR", "notes": "Notas", "date": "Fecha",
+    "transport_company": "Compañía de transporte", "driver_name": "Chofer", "license_plate": "Placas",
+    "seal_numbers": "Sellos",
 }
 
 
