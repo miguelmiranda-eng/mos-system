@@ -8,17 +8,25 @@ import {
   DialogHeader,
   DialogTitle,
 } from "../ui/dialog";
-import { Link2, Loader2, Check, AlertCircle, CircleSlash } from "lucide-react";
+import { Link2, Loader2, Check, AlertCircle, CircleSlash, Mail } from "lucide-react";
+
+// Último(s) destinatario(s) usados, para no reescribirlos cada vez (por navegador).
+const EMAIL_KEY = "seed_packing_email_to";
 
 // Herramienta para sembrar el enlace de un packing list en el modal de comentarios
 // de varias ordenes a la vez. El usuario pega los numeros de orden (columna A del
 // packing), una etiqueta y el enlace; la herramienta los busca por order_number y
 // agrega el comentario con el link clickeable. Idempotente en el backend.
+// Opcional: correo(s) a quien se manda el packing (Excel adjunto, descargado del
+// enlace) A NOMBRE de quien siembra; el backend lo envía después de sembrar.
 export const SeedPackingLinkModal = ({ isOpen, onClose, onSeeded }) => {
   const { t } = useLang();
   const [numbersText, setNumbersText] = useState("");
   const [label, setLabel] = useState("");
   const [url, setUrl] = useState("");
+  const [emailTo, setEmailTo] = useState(() => {
+    try { return localStorage.getItem(EMAIL_KEY) || ""; } catch { return ""; }
+  });
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
 
@@ -49,7 +57,7 @@ export const SeedPackingLinkModal = ({ isOpen, onClose, onSeeded }) => {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ order_numbers: numbers, label: label.trim(), url: url.trim() }),
+        body: JSON.stringify({ order_numbers: numbers, label: label.trim(), url: url.trim(), email_to: emailTo.trim() }),
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
@@ -59,6 +67,11 @@ export const SeedPackingLinkModal = ({ isOpen, onClose, onSeeded }) => {
       const data = await res.json();
       setResult(data);
       toast.success(t('ship_seed_ok', { n: data.seeded_count }));
+      if (emailTo.trim()) { try { localStorage.setItem(EMAIL_KEY, emailTo.trim()); } catch { /* sin storage */ } }
+      if (data.email) {
+        if (data.email.sent) toast.success(t('ship_seed_email_ok', { to: data.email.to.join(", ") }));
+        else toast.error(data.email.error || t('ship_seed_email_err'));
+      }
       if (onSeeded) onSeeded();
     } catch { toast.error(t('ceo_err_connection')); }
     finally { setLoading(false); }
@@ -119,6 +132,25 @@ export const SeedPackingLinkModal = ({ isOpen, onClose, onSeeded }) => {
             </p>
           </div>
 
+          <div>
+            <label className="text-[11px] font-black uppercase tracking-widest text-muted-foreground block mb-1">
+              {t('ship_seed_email')}
+            </label>
+            <div className="relative">
+              <Mail className="w-4 h-4 text-muted-foreground absolute left-3 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                inputMode="email"
+                value={emailTo}
+                onChange={(e) => setEmailTo(e.target.value)}
+                placeholder="cliente@empresa.com, broker@empresa.com"
+                className="w-full pl-9 pr-3 py-2 bg-background border border-border rounded-lg text-sm"
+                data-testid="seed-email"
+              />
+            </div>
+            <p className="text-[10px] text-muted-foreground mt-1">{t('ship_seed_email_hint')}</p>
+          </div>
+
           {result && (
             <div className="rounded-lg border border-border/50 bg-secondary/20 p-3 space-y-1.5 text-xs" data-testid="seed-result">
               <div className="flex items-center gap-2 text-emerald-500 font-bold">
@@ -133,6 +165,20 @@ export const SeedPackingLinkModal = ({ isOpen, onClose, onSeeded }) => {
                 <div className="flex items-start gap-2 text-red-500">
                   <AlertCircle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
                   <span>{t('ship_seed_not_found', { n: result.not_found_count })} <span className="font-mono">{result.not_found.join(", ")}</span></span>
+                </div>
+              )}
+              {result.email && (
+                <div className={`flex items-start gap-2 ${result.email.sent ? 'text-emerald-500' : 'text-red-500'}`} data-testid="seed-email-result">
+                  <Mail className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
+                  <span>
+                    {result.email.sent
+                      ? t('ship_seed_email_ok', { to: result.email.to.join(", ") })
+                      : (result.email.error || t('ship_seed_email_err'))}
+                    {result.email.sent && !result.email.attached && (
+                      <span className="block text-amber-500">{t('ship_seed_email_no_attach', { why: result.email.attach_error || '' })}</span>
+                    )}
+                    {result.email.sent && <span className="block text-muted-foreground">{t('ship_seed_email_from', { from: result.email.from })}</span>}
+                  </span>
                 </div>
               )}
             </div>

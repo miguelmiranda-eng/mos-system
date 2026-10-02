@@ -263,6 +263,41 @@ def size_totals(rows) -> dict:
     return out
 
 
+_DRIVE_FILE_RE = re.compile(r"drive\.google\.com/(?:file/d/|open\?id=|uc\?(?:.*&)?id=)([A-Za-z0-9_-]+)")
+
+
+async def download_xlsx(url: str):
+    """Descarga un packing como .xlsx desde su enlace (Google Sheet nativo,
+    .xlsx subido a Drive/Sheets, archivo de Drive o URL directa a .xlsx).
+    Devuelve (bytes, None) o (None, motivo). Sólo enlaces públicos."""
+    url = str(url or "").strip()
+    cands = []
+    m = DPL_RE.search(url)
+    if m:
+        cands += [f"https://docs.google.com/spreadsheets/d/{m.group(1)}/export?format=xlsx",
+                  f"https://drive.google.com/uc?export=download&id={m.group(1)}"]
+    m = _DRIVE_FILE_RE.search(url)
+    if m:
+        cands.append(f"https://drive.google.com/uc?export=download&id={m.group(1)}")
+    if not cands and re.match(r"^https?://", url):
+        cands.append(url)
+    if not cands:
+        return None, "el enlace no es una URL válida"
+    last = "no se pudo descargar"
+    async with httpx.AsyncClient(headers={"User-Agent": "MOS-packing/1.0"}, follow_redirects=True, timeout=30) as client:
+        for c in cands:
+            try:
+                r = await client.get(c)
+            except httpx.HTTPError as e:
+                last = f"no se pudo descargar ({type(e).__name__})"
+                continue
+            if r.status_code == 200 and r.content[:2] == b"PK":
+                return r.content, None
+            last = ("el archivo no es público (compártelo como 'Cualquier persona con el enlace')"
+                    if r.status_code in (401, 403) else f"la descarga no devolvió un Excel (HTTP {r.status_code})")
+    return None, last
+
+
 async def fetch_dpl(client: httpx.AsyncClient, url: str):
     m = DPL_RE.search(url or "")
     if not m:

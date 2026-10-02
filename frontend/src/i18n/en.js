@@ -2940,6 +2940,12 @@ const en = {
   ship_seed_skipped: "{n} already had this link (skipped)",
   ship_seed_not_found: "{n} not found in the CRM:",
   ship_seed_submit: "Seed into {n} order(s)",
+  ship_seed_email: "Email the packing to (optional)",
+  ship_seed_email_hint: "Sent from your email with the packing attached as Excel; you get a copy and replies come to you. Separate several emails with commas.",
+  ship_seed_email_ok: "Packing emailed to {to}",
+  ship_seed_email_err: "Could not send the email",
+  ship_seed_email_no_attach: "Sent with the link only: the Excel could not be attached ({why})",
+  ship_seed_email_from: "Sent as: {from}",
   // Programador de envíos (ShippingScheduler: semana → día → export → órdenes)
   sch_add: "Add",
   sch_add_export: "Export",

@@ -1516,8 +1516,12 @@ async def seed_packing_link(request: Request):
     - Deduplica los numeros de orden.
     - Omite las ordenes que ya tienen exactamente el mismo enlace sembrado
       (idempotente: correrlo dos veces no duplica el comentario).
-    body: { order_numbers: [str], label: str, url: str }
+    - Opcional `email_to`: manda el packing (Excel adjunto, descargado del enlace)
+      a esos correos A NOMBRE de quien siembra (services/mailer.py). Se valida
+      antes de sembrar; si el envío falla, la siembra no se pierde.
+    body: { order_numbers: [str], label: str, url: str, email_to?: "a@x.com, b@y.com" }
     """
+    from services.mailer import parse_recipients
     user = await require_auth(request)
     body = await request.json()
     raw_numbers = body.get("order_numbers") or []
@@ -1527,6 +1531,11 @@ async def seed_packing_link(request: Request):
         raise HTTPException(status_code=400, detail="El enlace (url) es obligatorio")
     if not isinstance(raw_numbers, list) or not raw_numbers:
         raise HTTPException(status_code=400, detail="Se requieren numeros de orden")
+    email_to, bad_emails = parse_recipients(body.get("email_to"))
+    if bad_emails:
+        raise HTTPException(status_code=400, detail=f"Correo no válido: {', '.join(bad_emails)}")
+    if len(email_to) > 50:
+        raise HTTPException(status_code=400, detail="Máximo 50 destinatarios")
 
     # Normaliza + deduplica preservando el orden.
     seen, numbers = set(), []
@@ -1619,13 +1628,70 @@ async def seed_packing_link(request: Request):
         except Exception:
             logger.exception("[packing] notificación push falló")
 
+    email = await _email_seeded_packing(user, email_to, label, url, seeded + skipped) if email_to else None
     return {
         "total": len(numbers),
         "seeded": seeded, "seeded_count": len(seeded),
         "not_found": not_found, "not_found_count": len(not_found),
         "skipped_duplicate": skipped, "skipped_count": len(skipped),
         "duplicated_numbers": duplicated, "duplicated_count": len(duplicated),
+        "email": email,
     }
+
+
+async def _packing_email_context(label, orders):
+    """Cliente (GTS/SKT), destino y fecha de embarque para el cuerpo del correo:
+    de la etiqueta ('PL GTS 10-26-0090 SHIPPING 10-02-2026') y, si falta, de las
+    órdenes y su renglón en el programador de envíos."""
+    from collections import Counter
+    from services.export_packing import client_code
+    lab = (label or "").upper()
+    m = re.search(r"\bPL\s*-?\s*([A-Z]{2,4})\b", lab)
+    code = m.group(1) if m else None
+    m = re.search(r"SHIPPING\s+(\d{1,2}-\d{1,2}-\d{4})", lab)
+    shipped = m.group(1) if m else None
+    docs = await db.orders.find({"order_number": {"$in": orders}, "board": {"$ne": "PAPELERA DE RECICLAJE"}},
+                                {"_id": 0, "client": 1}).to_list(500)
+    if not code:
+        codes = Counter(client_code(d["client"]) for d in docs if d.get("client"))
+        code = codes.most_common(1)[0][0] if codes else "GTS"
+    lines = await db.scheduled_shipments.find(
+        {"order_number": {"$in": orders}, "export_id": {"$exists": True}},
+        {"_id": 0, "delivery_to": 1, "ship_date": 1}).sort("ship_date", -1).to_list(500)
+    dest = Counter(str(x.get("delivery_to") or "").strip().upper() for x in lines if x.get("delivery_to"))
+    dest = dest.most_common(1)[0][0] if dest else "ST ANDREWS"
+    if not shipped:
+        d = next((x["ship_date"] for x in lines if x.get("ship_date")), None) \
+            or datetime.now(timezone.utc).date().isoformat()
+        shipped = f"{d[5:7]}-{d[8:10]}-{d[0:4]}"
+    return code, dest, shipped
+
+
+async def _email_seeded_packing(user, to, label, url, orders):
+    """Manda el packing sembrado (Excel adjunto si el enlace es descargable) a
+    nombre de quien siembra, con el texto que usa Envíos ('Please find attached
+    the Packing List for GTS- SAN DIEGO - ST ANDREWS, it shipped on 10-02-2026.').
+    Devuelve el resultado para el modal; nunca lanza."""
+    import html as _html
+    from services.export_packing import download_xlsx
+    from services.mailer import send_as_user
+    name = re.sub(r'[\\/:*?"<>|]+', " ", label or "Packing list").strip() or "Packing list"
+    data, err = await download_xlsx(url)
+    code, dest, shipped = await _packing_email_context(label, orders)
+    route = _html.escape(f"{code}- SAN DIEGO - {dest}")
+    body = (
+        "<p>Hi All,</p>"
+        f"<p style=\"font-size:15px\">Please find attached the Packing List for <b><u>{route}</u></b>, "
+        f"it shipped on <b>{_html.escape(shipped)}</b>.</p>"
+        + ("" if data else
+           f"<p>Packing List: <a href=\"{_html.escape(url, quote=True)}\">{_html.escape(label or url)}</a></p>"))
+    res = await send_as_user(user, to, label or name, body,
+                             attachments=[(f"{name}.xlsx", data)] if data else None)
+    res.update({"to": to, "attached": bool(data), "attach_error": err})
+    await log_activity(user, "send_packing_email", {
+        "to": to, "label": label, "url": url, "orders": orders,
+        "sent": res.get("sent"), "attached": bool(data), "error": res.get("error") or err})
+    return res
 
 @router.put("/{order_id}/comments/{comment_id}")
 async def update_comment(order_id: str, comment_id: str, request: Request):
