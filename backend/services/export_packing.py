@@ -365,19 +365,59 @@ def pl_number_for(export, code):
     return None
 
 
-async def build_context(export_id: str, shipment_id: str | None = None) -> dict:
+async def _export_lines(export_id: str):
+    """Export, sus renglones, sus órdenes y el cliente (código de PL) de cada
+    renglón. Una orden sin cliente en MOS (dato faltante) va al cliente que
+    domina el envío, con aviso para corregir el dato."""
     exp = await db.shipping_exports.find_one({"export_id": export_id}, {"_id": 0})
     if not exp:
         raise LookupError("export")
-    q = {"export_id": export_id}
-    if shipment_id:
-        q["shipment_id"] = shipment_id
-    lines = await db.scheduled_shipments.find(q, {"_id": 0}).sort([("position", 1), ("created_at", 1)]).to_list(1000)
-    if shipment_id and not lines:
-        raise LookupError("line")
+    lines = await db.scheduled_shipments.find(
+        {"export_id": export_id}, {"_id": 0}).sort([("position", 1), ("created_at", 1)]).to_list(1000)
     nums = list(dict.fromkeys(ln["order_number"] for ln in lines))
     orders = {o["order_number"]: o for o in await db.orders.find(
         {"order_number": {"$in": nums}, "board": {"$ne": PAPELERA}}, {"_id": 0}).to_list(1000)}
+    codes, missing = {}, []
+    for ln in lines:
+        cl = (orders.get(ln["order_number"]) or {}).get("client") or (ln.get("manual_fields") or {}).get("client")
+        if cl:
+            codes[ln["shipment_id"]] = client_code(cl)
+        else:
+            missing.append(ln)
+    present = list(codes.values())
+    main_code = max(set(present), key=present.count) if present else "GTS"
+    warnings = []
+    for ln in missing:
+        codes[ln["shipment_id"]] = main_code
+        warnings.append(f"#{ln['order_number']}: la orden no tiene cliente en MOS; se incluyó en el PL {main_code} (corrige el cliente)")
+    return exp, lines, orders, codes, warnings
+
+
+async def list_clients(export_id: str) -> list:
+    """Clientes (PL) que lleva un envío: [{code, pl_number, client, orders[], count}]."""
+    exp, lines, orders, codes, _ = await _export_lines(export_id)
+    out = {}
+    for ln in lines:
+        code = codes[ln["shipment_id"]]
+        o = orders.get(ln["order_number"]) or {}
+        e = out.setdefault(code, {"code": code, "pl_number": pl_number_for(exp, code), "client": o.get("client") or None,
+                                  "orders": [], "count": 0})
+        if not e["client"] and o.get("client"):
+            e["client"] = o["client"]
+        e["orders"].append(ln["order_number"])
+        e["count"] += 1
+    return list(out.values())
+
+
+async def build_context(export_id: str, client: str | None = None) -> dict:
+    exp, lines, orders, codes, base_warnings = await _export_lines(export_id)
+    if client:
+        lines = [ln for ln in lines if codes[ln["shipment_id"]] == client]
+        if not lines:
+            raise LookupError("client")
+    base_warnings = [w for w in base_warnings if any(f"#{ln['order_number']}:" in w for ln in lines)] \
+        if client else base_warnings
+    nums = list(dict.fromkeys(ln["order_number"] for ln in lines))
     sem = asyncio.Semaphore(6)
     dpls = {}
 
@@ -394,7 +434,7 @@ async def build_context(export_id: str, shipment_id: str | None = None) -> dict:
         await asyncio.gather(*(one(n) for n in nums))
     wms = dict(zip(nums, await asyncio.gather(*(wms_breakdown(n) for n in nums))))
 
-    groups, warnings = [], []
+    groups, warnings = [], list(base_warnings)
     for ln in lines:
         num = ln["order_number"]
         o = orders.get(num) or {}
@@ -463,7 +503,7 @@ async def build_context(export_id: str, shipment_id: str | None = None) -> dict:
         groups.append({
             "shipment_id": ln["shipment_id"],
             "order_number": num,
-            "code": client_code(o.get("client") or mf.get("client")) if (o.get("client") or mf.get("client")) else None,
+            "code": codes[ln["shipment_id"]],
             "inv": _digits_or_text(num),
             "po": _digits_or_text(o.get("customer_po") or mf.get("customer_po")),
             "cust_po": cust_po(o) if o else _digits_or_text(mf.get("customer_po")),
@@ -479,14 +519,6 @@ async def build_context(export_id: str, shipment_id: str | None = None) -> dict:
             "dpl_url": url,
             "packed": {"date": str(dpl.get("date_packed") or "") if dpl else "", "by": str(dpl.get("packer") or "") if dpl else ""},
         })
-    # Orden sin cliente en MOS (dato faltante): va al PL del cliente que domina
-    # el export, con aviso para corregir el dato.
-    codes = [g["code"] for g in groups if g["code"]]
-    main_code = max(set(codes), key=codes.count) if codes else "GTS"
-    for g in groups:
-        if not g["code"]:
-            g["code"] = main_code
-            warnings.append(f"#{g['order_number']}: la orden no tiene cliente en MOS; se incluyó en el PL {main_code} (corrige el cliente)")
     return {"export": exp, "groups": groups, "warnings": warnings}
 
 
@@ -640,9 +672,11 @@ def file_name(pl_number: str, export: dict, suffix: str = "") -> str:
     return f"{base}{' - ' + suffix if suffix else ''} SHIPPING {ship}.xlsx".replace("  ", " ")
 
 
-async def generate(export_id: str, shipment_id: str | None = None):
-    """Devuelve (nombre_archivo, bytes, media_type, warnings, resumen)."""
-    ctx = await build_context(export_id, shipment_id)
+async def generate(export_id: str, client: str | None = None):
+    """PL del envío (export). Con `client` (GTS, SKT…) sólo el de ese cliente;
+    sin él, todos (varios → .zip). Devuelve (nombre, bytes, media_type,
+    avisos, resumen)."""
+    ctx = await build_context(export_id, client)
     exp, groups, warnings = ctx["export"], ctx["groups"], list(ctx["warnings"])
     by_code = {}
     for g in groups:
@@ -653,8 +687,7 @@ async def generate(export_id: str, shipment_id: str | None = None):
         if not pl:
             warnings.append(f"El export no tiene EXPORT# ni PL para {code}: el PL sale sin número")
             pl = f"PL{code} (SIN NUMERO)"
-        suffix = f"#{gs[0]['order_number']}" if shipment_id else ""
-        files.append((file_name(pl, exp, suffix), render_pl(pl, exp, gs)))
+        files.append((file_name(pl, exp), render_pl(pl, exp, gs)))
     summary = [{"order_number": g["order_number"], "source": g["source"], "boxes": g["boxes"], "pallets": g["pallets"],
                 "units": sum(sum(r["sizes"].values()) for r in g["rows"])} for g in groups]
     if len(files) == 1:

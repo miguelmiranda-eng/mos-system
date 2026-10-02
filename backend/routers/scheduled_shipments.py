@@ -38,8 +38,8 @@ Endpoints (prefijo /api/scheduled-shipments):
   POST   "/lines/{shipment_id}/duplicate" → clona una línea (para partir un envío)
   POST   "/lines/move"               → mueve varias líneas (selección / arrastre) a un export o fecha, en una posición
   POST   "/lines/delete"             → quita varias líneas
-  POST   "/exports/{id}/packing"     → PACKING LIST de exportación del export (uno por cliente; varios → zip)
-  POST   "/lines/{id}/packing"       → PACKING LIST de una sola orden
+  GET    "/exports/{id}/packing/clients" → clientes del envío (un packing por cliente)
+  POST   "/exports/{id}/packing?client=GTS" → PACKING LIST del cliente en ese envío (sin client: todos → zip)
   GET    "/movements"                → bitácora de movimientos (con ¿se puede revertir? y por qué no)
   POST   "/movements/{id}/revert"    → revierte un movimiento si nada de lo que tocó cambió después
   PUT    "/{shipment_id}"            → edita una línea (o la mueve de export / fecha)
@@ -1124,35 +1124,36 @@ async def unschedule(shipment_id: str, request: Request):
 # PACKING LIST de exportación — services/export_packing.py
 # ─────────────────────────────────────────────────────────────────────────────
 
-async def _packing_response(user, export_id, shipment_id=None):
+async def _packing_response(user, export_id, client=None):
     import base64
     try:
-        name, data, media, warnings, summary = await pk.generate(export_id, shipment_id)
+        name, data, media, warnings, summary = await pk.generate(export_id, client)
     except LookupError:
-        raise HTTPException(status_code=404, detail="Export u orden no encontrada")
+        raise HTTPException(status_code=404, detail="Export o cliente no encontrado en el envío")
     await log_activity(user, "generate_export_packing", {
-        "export_id": export_id, "shipment_id": shipment_id, "file": name, "warnings": len(warnings)})
+        "export_id": export_id, "client": client, "file": name, "warnings": len(warnings)})
     # JSON (no archivo directo) para que el navegador lea nombre y avisos sin
     # depender de los headers expuestos por CORS.
     return {"filename": name, "media_type": media, "content_b64": base64.b64encode(data).decode(),
             "warnings": warnings, "summary": summary}
 
 
+@router.get("/exports/{export_id}/packing/clients")
+async def export_packing_clients(export_id: str, request: Request):
+    """Clientes que lleva el envío (cada uno es un packing con su PL)."""
+    await require_auth(request)
+    try:
+        return {"clients": await pk.list_clients(export_id)}
+    except LookupError:
+        raise HTTPException(status_code=404, detail="Export no encontrado")
+
+
 @router.post("/exports/{export_id}/packing")
-async def export_packing(export_id: str, request: Request):
-    """PL completo del export (uno por cliente: GTS, SKT…; varios → .zip)."""
+async def export_packing(export_id: str, request: Request, client: str | None = None):
+    """PACKING LIST del envío = export. Con ?client=GTS sólo el de ese cliente;
+    sin él, todos los clientes del envío (varios → .zip)."""
     user = await require_auth(request)
-    return await _packing_response(user, export_id)
-
-
-@router.post("/lines/{shipment_id}/packing")
-async def line_packing(shipment_id: str, request: Request):
-    """PL de una sola orden del export."""
-    user = await require_auth(request)
-    ln = await db.scheduled_shipments.find_one({"shipment_id": shipment_id}, {"_id": 0, "export_id": 1})
-    if not ln or not ln.get("export_id"):
-        raise HTTPException(status_code=404, detail="Línea no encontrada")
-    return await _packing_response(user, ln["export_id"], shipment_id)
+    return await _packing_response(user, export_id, (client or "").strip().upper() or None)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

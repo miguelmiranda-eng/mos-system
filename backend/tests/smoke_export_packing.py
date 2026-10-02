@@ -112,6 +112,9 @@ def sembrar():
         {"order_id": "o3", "order_number": "3383", "client": "", "branding": "SPENCERS WARNER",
          "customer_po": "22766", "store_po#": "P028208 - 325984", "design_#": "MYC0001M1000",
          "color": "BLACK", "board": "FINAL BILL", "sizes": {"L": 50}},
+        {"order_id": "o4", "order_number": "3206", "client": "SPEKTRUM", "branding": "CULTURE KINGS",
+         "customer_po": "4004627", "store_po": "4004627", "design_#": "VENOM VINTAGE TEE",
+         "color": "BLACK ACIDWASH", "board": "FINAL BILL", "sizes": {"M": 30}},
     ])
     sdb.wms_boxes.insert_many([
         {"box_id": "B1", "country_of_origin": "NICARAGUA", "fabric_content": "100% COTTON", "description": "MENS SS"},
@@ -124,6 +127,7 @@ def sembrar():
         mv("3319", "S", "B1", 216), mv("3319", "M", "B1", 612),
         mv("3384", "M", "B2", 100),
         mv("3383", "L", "B3", 50),
+        mv("3206", "M", "B3", 30),
     ])
     sdb.users.insert_one({"user_id": "u", "email": "u@test.local", "name": "Envíos", "password_hash": bcrypt.hash("p"),
                           "role": "supersu", "admin_level": 5, "active": True})
@@ -167,13 +171,24 @@ async def main():
         for ln in add:
             await c.put(f"{API}/{ln['shipment_id']}", json={"delivery_to": "ST ANDREWS"})
 
-        print("\n== PL de una orden ==")
-        r = await c.post(f"{API}/lines/{add[0]['shipment_id']}/packing")
+        print("\n== PL de un envío (export) con una orden ==")
+        uno = (await c.post(f"{API}/exports", json={"date": "2026-09-30"})).json()
+        await c.put(f"{API}/exports/{uno['export_id']}", json={
+            "export_no": 85, "pl_numbers": "PLGTS 09-26-0085", "truck": "TEC.361 / 53144",
+            "transport_company": "TECMA TRANSPORTATION", "driver_name": "JAIME", "license_plate": "BU9842",
+            "seal_numbers": "014093 // 014615"})
+        l1 = (await c.post(f"{API}/lines", json={"export_id": uno["export_id"], "order_numbers": "3319"})).json()["added"][0]
+        await c.put(f"{API}/{l1['shipment_id']}", json={"delivery_to": "ST ANDREWS"})
+        r = await c.post(f"{API}/exports/{uno['export_id']}/packing")
         d = r.json()
         check("responde archivo xlsx con nombre del PL", r.status_code == 200 and d["filename"].startswith("PL GTS 09-26-0085")
               and d["filename"].endswith(".xlsx"), d.get("filename"))
         ws = openpyxl.load_workbook(io.BytesIO(base64.b64decode(d["content_b64"])))["PACKING"]
         check("encabezado: # PACKING LIST y SHIP TO", ws["V1"].value == "PLGTS 09-26-0085" and ws["V6"].value == "TSC BROKER")
+        check("CUSTOMER y SHIP TO como los escribe Envíos", ws["U11"].value == "SPENCER" and ws["V11"].value == "ST ANDREW",
+              (ws["U11"].value, ws["V11"].value))
+        check("no existe el PL por renglón (es por envío)",
+              (await c.post(f"{API}/lines/{l1['shipment_id']}/packing")).status_code in (404, 405))
         fila = [ws.cell(11, i).value for i in range(1, 9)]
         check("datos de la orden (INV/PO/CUST PO/STYLE/COLOR/CONTENT/DESC/ORIGEN)",
               fila == [3319, 22726, 325887, "DNC0014M1000", "BLACK", "100% COTTON", "SHORT SLEEVE", "NICARAGUA"], fila)
@@ -203,6 +218,27 @@ async def main():
         check("aviso: orden sin DPL (faltan cajas/tarimas)", "#3383: sin enlace al DIGITAL PACKING LIST" in w, w)
         check("totales con fórmula", str(ws["N18"].value or "").startswith("=SUM(R11:R13)") or
               any(str(ws.cell(r, 14).value or "").startswith("=SUM(R11:R13)") for r in range(14, 25)))
+
+        print("\n== Envío con varios clientes: un packing por cliente ==")
+        await c.post(f"{API}/lines", json={"export_id": exp["export_id"], "order_numbers": "3206"})
+        r = await c.get(f"{API}/exports/{exp['export_id']}/packing/clients")
+        cl = {x["code"]: x for x in r.json()["clients"]}
+        check("lista de clientes del envío (GTS 3 órdenes con la sin cliente, SKT 1)",
+              set(cl) == {"GTS", "SKT"} and cl["GTS"]["count"] == 3 and cl["SKT"]["count"] == 1, r.json())
+        check("PL de cada cliente (SKT sale del EXPORT# si no está capturado)",
+              cl["GTS"]["pl_number"] == "PLGTS 09-26-0085" and cl["SKT"]["pl_number"] == "PLSKT 09-26-0085", cl)
+        r = await c.post(f"{API}/exports/{exp['export_id']}/packing", params={"client": "skt"})
+        d = r.json()
+        ws = openpyxl.load_workbook(io.BytesIO(base64.b64decode(d["content_b64"])))["PACKING"]
+        check("packing de un solo cliente: xlsx con su PL y sólo sus órdenes",
+              d["filename"].startswith("PL SKT 09-26-0085") and ws["V1"].value == "PLSKT 09-26-0085"
+              and ws["A11"].value == 3206 and not ws["A12"].value, (d["filename"], ws["V1"].value, ws["A11"].value, ws["A12"].value))
+        check("los avisos son sólo de ese cliente", not any(w.startswith(("#3383", "#3384")) for w in d["warnings"]), d["warnings"])
+        r = await c.post(f"{API}/exports/{exp['export_id']}/packing")
+        names = zipfile.ZipFile(io.BytesIO(base64.b64decode(r.json()["content_b64"]))).namelist()
+        check("sin cliente: todos los packings del envío en un .zip", sorted(n[:6] for n in names) == ["PL GTS", "PL SKT"], names)
+        r = await c.post(f"{API}/exports/{exp['export_id']}/packing", params={"client": "ABC"})
+        check("cliente que no va en el envío → 404", r.status_code == 404, r.status_code)
 
         print("\n== DPL con resumen mal capturado ==")
         mala = fake_dpl([("S", 216, 6, 1), ("M", 612, 17, 1)], [("100% Cotton", "Nicaragua", {"S": 216, "M": 600})])

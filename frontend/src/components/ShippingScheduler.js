@@ -120,7 +120,7 @@ const Cell = ({ value, onSave, type = 'text', list, placeholder, className = '',
 // ORDER va primero (pedido de Envíos); antes de ella, la columna de
 // selección + manija de arrastre (SEL_W).
 const COLS = ['ORDER', 'CUSTOMER', 'SHIPPING#', 'DELIVER TO', 'BRANDING', 'CUSTOMER PO.', 'DESIGN #', 'PCS', 'STATUS', 'PRIORITY', 'NOTES', 'SHIPPING FROM', 'CARRIER'];
-const COL_W = [125, 110, 90, 120, 130, 150, 150, 80, 190, 80, 190, 120, 120, 120];
+const COL_W = [125, 110, 90, 120, 130, 150, 150, 80, 190, 80, 190, 120, 120, 96];
 const SEL_W = 46;
 // Columnas del programador anterior que vienen VIVAS de la orden (solo
 // lectura): cancel date / Days Com., status de producción, pedido vs.
@@ -277,6 +277,7 @@ const ShippingScheduler = () => {
   const [view, setView] = useState('program');    // 'program' | 'moves'
   const [pkBusy, setPkBusy] = useState(null);     // export_id / shipment_id generando packing
   const [pkReport, setPkReport] = useState(null); // avisos del último packing generado
+  const [pkMenu, setPkMenu] = useState(null);     // { exportId, clients } al elegir cliente
   // Navegador Año → Mes (la semana abierta es weekStart). Arranca en el mes
   // del jueves de la semana (regla ISO: la semana es del mes donde cae su jueves).
   const [navYear, setNavYear] = useState(() => addDays(mondayOf(new Date()), 3).getFullYear());
@@ -621,7 +622,7 @@ const ShippingScheduler = () => {
   };
 
   // ── PACKING LIST de exportación (motor en el backend) ─────────────────────
-  // Por orden o del export completo. El backend responde el archivo en
+  // Uno por envío = export (bloque/camión) y cliente (PLGTS, PLSKT…). El backend responde el archivo en
   // base64 + avisos (DPL vs WMS, faltan cajas, etc.); si hay avisos se
   // muestran en un reporte para revisarlos antes de mandar el PL.
   const genPacking = async (url, busyKey, label) => {
@@ -643,6 +644,22 @@ const ShippingScheduler = () => {
       else toast.success(t('pk_done', { file: d.filename }));
     } catch (e) { toast.error(e.message || t('pk_err')); }
     finally { setPkBusy(null); }
+  };
+  // Un envío puede llevar varios clientes = varios packings (PLGTS, PLSKT…):
+  // con uno solo se genera directo; con varios se elige de cuál.
+  const openPacking = async (exp) => {
+    setPkBusy(exp.export_id);
+    try {
+      const d = await call(`${API}/exports/${exp.export_id}/packing/clients`, 'GET');
+      const clients = d.clients || [];
+      setPkBusy(null);
+      if (clients.length === 1) {
+        genPacking(`${API}/exports/${exp.export_id}/packing?client=${encodeURIComponent(clients[0].code)}`,
+          exp.export_id, `${exportLabel(exp)} · ${clients[0].code}`);
+      } else if (clients.length > 1) {
+        setPkMenu({ exportId: exp.export_id, clients });
+      }
+    } catch (e) { setPkBusy(null); toast.error(e.message || t('pk_err')); }
   };
 
   // ── Derivados de la semana ─────────────────────────────────────────────────
@@ -853,12 +870,37 @@ const ShippingScheduler = () => {
             {(data?.customs_lights || ['VERDE', 'ROJO']).map((c) => <option key={c} value={c}>{c}</option>)}
           </select>
           <div className="flex items-center gap-1 ml-auto">
-            <button onClick={() => genPacking(`${API}/exports/${exp.export_id}/packing`, exp.export_id, exportLabel(exp))}
-              disabled={!ls.length || pkBusy === exp.export_id} title={t('pk_export_hint')}
-              className="flex items-center gap-1 px-2.5 py-1 rounded-md bg-indigo-600 text-white text-[10px] font-black uppercase tracking-wider hover:bg-indigo-700 disabled:opacity-40">
-              {pkBusy === exp.export_id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileDown className="w-3.5 h-3.5" />}
-              {t('pk_export_btn')}
-            </button>
+            <div className="relative">
+              <button onClick={() => openPacking(exp)}
+                disabled={!ls.length || pkBusy === exp.export_id} title={t('pk_export_hint')}
+                className="flex items-center gap-1 px-2.5 py-1 rounded-md bg-indigo-600 text-white text-[10px] font-black uppercase tracking-wider hover:bg-indigo-700 disabled:opacity-40">
+                {pkBusy === exp.export_id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileDown className="w-3.5 h-3.5" />}
+                {t('pk_export_btn')}
+              </button>
+              {/* Envío con varios clientes: un packing por cliente; se elige cuál. */}
+              {pkMenu && pkMenu.exportId === exp.export_id && (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => setPkMenu(null)} />
+                  <div className="sch-sheet absolute right-0 top-full mt-1 z-50 w-80 rounded-xl border border-slate-200 shadow-xl p-1.5">
+                    <p className="px-2 py-1 text-[10px] font-black uppercase text-slate-500">{t('pk_pick_client')}</p>
+                    {pkMenu.clients.map((c) => (
+                      <button key={c.code} onClick={() => { setPkMenu(null); genPacking(`${API}/exports/${exp.export_id}/packing?client=${encodeURIComponent(c.code)}`, exp.export_id, `${exportLabel(exp)} · ${c.code}`); }}
+                        className="w-full text-left px-2 py-1.5 rounded-lg hover:bg-indigo-50 flex items-center justify-between gap-2">
+                        <span className="min-w-0">
+                          <span className="block text-[12px] font-black text-slate-800">{c.pl_number || `PL${c.code}`}</span>
+                          <span className="block text-[10px] text-slate-500 truncate">{c.client || c.code} · {t('pk_n_orders', { n: c.count })}</span>
+                        </span>
+                        <FileDown className="w-4 h-4 text-indigo-600 flex-shrink-0" />
+                      </button>
+                    ))}
+                    <button onClick={() => { setPkMenu(null); genPacking(`${API}/exports/${exp.export_id}/packing`, exp.export_id, exportLabel(exp)); }}
+                      className="w-full text-left px-2 py-1.5 mt-1 border-t border-slate-100 rounded-lg hover:bg-slate-50 text-[11px] font-bold text-slate-600">
+                      {t('pk_all_clients')}
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
             <button onClick={() => exportOne(exp)} disabled={!ls.length} title={t('sch_excel_export')}
               className="p-1.5 rounded-md text-emerald-700 hover:bg-emerald-50 disabled:opacity-30"><FileSpreadsheet className="w-4 h-4" /></button>
             <button onClick={() => deleteExport(exp)} title={t('sch_delete_export')}
@@ -1011,11 +1053,6 @@ const ShippingScheduler = () => {
                           {moveOptions(l).map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
                           <option value="__date">{t('sch_other_date')}</option>
                         </select>
-                        <button onClick={() => genPacking(`${API}/lines/${l.shipment_id}/packing`, l.shipment_id, `#${l.order_number}`)}
-                          disabled={pkBusy === l.shipment_id} title={t('pk_line_hint')}
-                          className="p-1 rounded text-indigo-500 hover:text-indigo-700 hover:bg-indigo-50 disabled:opacity-40">
-                          {pkBusy === l.shipment_id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileDown className="w-3.5 h-3.5" />}
-                        </button>
                         <button onClick={() => duplicateLine(l)} title={t('sch_duplicate')} className="p-1 rounded text-slate-400 hover:text-blue-600"><Copy className="w-3.5 h-3.5" /></button>
                         <button onClick={() => deleteLine(l)} title={t('sch_delete_line')} className="p-1 rounded text-slate-400 hover:text-red-600"><Trash2 className="w-3.5 h-3.5" /></button>
                       </div>
