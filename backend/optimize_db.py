@@ -36,6 +36,11 @@ WMS_INDEXES = [
     ("wms_boxes", "location", {}),
     ("wms_boxes", "box_id", {"unique": True}),
     ("wms_boxes", "receiving_id", {}),
+    # Cajas de una fila de inventario ($match inventory_id $in): sin índice
+    # recorría las ~78k cajas (1.7 s en hora pico, medido 2026-10-02).
+    ("wms_boxes", "inventory_id", {}),
+    # Recepciones por receiving_id (historial de caja, joins): no tenía índice.
+    ("wms_receiving", "receiving_id", {}),
     ("wms_boxes", [("status", 1), ("state", 1)], {}),
     ("wms_boxes", "seq_num", {}),
     # Etiqueta física escaneable (LPN externo o BOX- registrado). Sparse porque
@@ -175,6 +180,9 @@ CORE_INDEXES = [
     # Comentarios de una orden: se leen CADA vez que alguien abre una orden y
     # no había índice (36k docs recorridos por apertura).
     ("comments", [("order_id", 1), ("created_at", 1)], {}),
+    # Editar / fijar / reaccionar / borrar un comentario busca por comment_id:
+    # sin índice era un recorrido de los ~36k (1.5 s medido 2026-10-02).
+    ("comments", "comment_id", {}),
     # Planeación: "última corrida" ordena por created_at; sin índice cargaba
     # todas las corridas (~220 KB c/u) para ordenarlas en memoria.
     ("planner_runs", [("created_at", -1)], {}),
