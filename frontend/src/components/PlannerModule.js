@@ -725,7 +725,7 @@ const AppliedMovesCard = ({ rows, canEdit, onRevert, lastResults, tr }) => {
   );
 };
 
-const ScheduleTab = ({ config, run, running, onRun, canEdit, onToggle, onAdjust, overrides, history, onUndo,
+const ScheduleTab = ({ config, efficiency, run, running, onRun, canEdit, onToggle, onAdjust, overrides, history, onUndo,
   onApplyMoves, applied, onRevertMove, lastApply, tr }) => {
   const [status, setStatus] = useState("");
   const [kindF, setKindF] = useState("");
@@ -849,6 +849,35 @@ const ScheduleTab = ({ config, run, running, onRun, canEdit, onToggle, onAdjust,
         <Stat label={tr("plan_st_blocked")} value={fmt(run.stats?.blocked)} color="text-slate-500" />
         <Stat label={tr("plan_st_hits")} value={fmt(run.stats?.hits_scheduled)} color="text-blue-600" />
       </div>
+
+      {(() => {
+        const rr = efficiency?.measured?.run_rates || {};
+        const rates = rr.rates || {};
+        const glob = rr.global_rate;
+        const rpph = config?.rate_pph || 407;
+        return (
+          <Card className="p-3">
+            <div className="flex flex-wrap items-center gap-x-5 gap-y-1">
+              <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">{tr("plan_speed_title")}</span>
+              {glob != null ? (
+                <>
+                  {["BAJO", "MEDIO", "ALTO"].map((v) => (
+                    <span key={v} className="text-sm tabular-nums text-slate-700">
+                      {tr(`plan_run_${v}`)}: <b className="text-violet-700">{fmt(rates[v] || glob)}</b> h/h
+                    </span>
+                  ))}
+                  <span className="text-sm tabular-nums text-slate-700">
+                    {tr("plan_speed_global")}: <b className="text-violet-700">{fmt(glob)}</b> h/h
+                  </span>
+                  <span className="ml-auto text-xs text-slate-400">{tr("plan_speed_measured", { w: 8, r: fmt(rpph) })}</span>
+                </>
+              ) : (
+                <span className="text-sm text-slate-500">{tr("plan_speed_none", { r: fmt(rpph) })}</span>
+              )}
+            </div>
+          </Card>
+        );
+      })()}
 
       {(run.impact || []).length > 0 && (
         <Card className="p-4 border-violet-200">
@@ -2486,7 +2515,7 @@ const PlannerModule = () => {
           <div className="py-20 flex justify-center"><Loader2 className="w-7 h-7 animate-spin text-blue-600" /></div>
         ) : (
           <>
-            {tab === "schedule" && <ScheduleTab config={cfgData.config} run={run} running={running} onRun={() => runEngine("manual")} canEdit={canEdit}
+            {tab === "schedule" && <ScheduleTab config={cfgData.config} efficiency={cfgData.efficiency} run={run} running={running} onRun={() => runEngine("manual")} canEdit={canEdit}
               onToggle={toggleEngine} onAdjust={setAdjusting} overrides={ovData.active} history={ovData.history}
               onUndo={undoOverride} onApplyMoves={applyMoves} applied={applied} onRevertMove={revertMove}
               lastApply={lastApply} tr={tr} />}
