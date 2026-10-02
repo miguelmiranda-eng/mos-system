@@ -516,7 +516,7 @@ def _held(ov: dict, today: date) -> bool:
 
 def schedule(jobs: List[dict], machines: List[dict], cfg: dict, cal: Calendar,
              start: datetime, efficiency: float, board_of: Dict[str, str],
-             overrides: Optional[Dict[str, dict]] = None):
+             overrides: Optional[Dict[str, dict]] = None, run_rates: Optional[dict] = None):
     """Simulación turno por turno.
 
     machines: [{"machine": "MAQUINA1", "active": bool, "heads": int, "preferred_client": str}]
@@ -534,6 +534,16 @@ def schedule(jobs: List[dict], machines: List[dict], cfg: dict, cal: Calendar,
     active = [m for m in machines if m.get("active")]
     cap_shift = cfg["hits_per_shift"] * efficiency
     setup_hits_per_color = cfg["setup_min_per_color"] * cfg["rate_pph"] * efficiency / 60.0
+    # Velocidad por tamaño de corrida. El turno se mide en "hits de referencia"
+    # (a rate_pph); imprimir a otra velocidad cuesta rate_pph/velocidad de la
+    # corrida: un Alto (más rápido) cabe más en el turno, un Bajo menos. Sin
+    # histórico, _rate_of cae a rate_pph y el programa queda IGUAL que antes.
+    rate_pph = float(cfg["rate_pph"])
+    _rates = (run_rates or {}).get("rates") or {}
+    _glob = (run_rates or {}).get("global_rate")
+
+    def _rate_of(j):
+        return float(_rates.get(j["volume"]) or _glob or rate_pph)
 
     pool = []
     for j in jobs:
@@ -663,17 +673,19 @@ def schedule(jobs: List[dict], machines: List[dict], cfg: dict, cal: Calendar,
             if j["volume"] == "ALTO" and not j.get("_counted_alto"):
                 alto_in_shift[mname] = alto_in_shift.get(mname, 0) + 1
                 j["_counted_alto"] = True
-            need = j["setup_left"] + j["remaining"]
+            f = rate_pph / _rate_of(j)          # costo en hits de referencia por hit real
+            need = j["setup_left"] + j["remaining"] * f
             take = min(need, cap - used[mname])
             seg_start = w0 + (w1 - w0) * (used[mname] / cap)
             used[mname] += take
             seg_end = w0 + (w1 - w0) * (used[mname] / cap)
             setup_take = min(j["setup_left"], take)
             j["setup_left"] -= setup_take
-            j["remaining"] -= (take - setup_take)
+            printed = (take - setup_take) / f   # hits reales impresos en ese tiempo
+            j["remaining"] -= printed
             rec = scheduled.setdefault(j["job_id"], {"segments": [], "machines": []})
             rec["segments"].append({"machine": mname, "date": d.isoformat(), "shift": shift,
-                                    "hits": round(take - setup_take), "setup_hits": round(setup_take),
+                                    "hits": round(printed), "setup_hits": round(setup_take),
                                     "start": seg_start.isoformat(), "end": seg_end.isoformat()})
             if mname not in rec["machines"]:
                 rec["machines"].append(mname)

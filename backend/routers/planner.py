@@ -496,7 +496,8 @@ async def shadow_run(request: Request, trigger: str = "manual", max_age: int = 0
     active_ov = await _active_overrides()
     ov = _resolve_overrides(ctx["jobs"], active_ov)
     scheduled = pe.schedule(ctx["jobs"], ctx["machines"], ctx["cfg"], ctx["cal"], ctx["now"],
-                            ctx["eff"]["applied"], board_of, ov)
+                            ctx["eff"]["applied"], board_of, ov,
+                            ctx["eff"]["measured"].get("run_rates"))
     in_plan = {j["job_id"] for j in scheduled}
     blocked = []
     for j in ctx["jobs"]:

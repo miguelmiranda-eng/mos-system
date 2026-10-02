@@ -253,6 +253,20 @@ j8, _ = pe.build_jobs([order(80, 1000, ["FRENTE"], colors=6)], {}, cfg8, cal8, [
 s8 = pe.schedule(j8, machines(1), cfg8, cal8, LUNES, 1.0, {})[0]["segments"][0]
 check("setup = colores × 15 min consume capacidad (6×15min×400/h = 600 hits)", s8["setup_hits"] == 600, s8)
 
+# Velocidad por tamaño de corrida: un Alto a doble velocidad rinde el doble de
+# hits en el mismo turno; sin histórico (run_rates) el turno rinde lo base.
+cfg9 = cfg_with(shifts=[{"key": "DIA", "start": "07:00", "hours": 12, "crews": 1},
+                        {"key": "NOCHE", "start": "19:00", "hours": 12, "crews": 0}],
+                setup_min_per_color=0, rate_pph=400, hits_per_shift=4000)
+cal9 = pe.Calendar(cfg9, [], max_machines=1)
+j9a, _ = pe.build_jobs([order(90, 20000, ["FRENTE"], cancel="2026-12-31")], {}, cfg9, cal9, ["MAQUINA1"], LUNES.date())
+s_fix = pe.schedule(j9a, machines(1), cfg9, cal9, LUNES, 1.0, {})[0]["segments"][0]["hits"]
+j9b, _ = pe.build_jobs([order(90, 20000, ["FRENTE"], cancel="2026-12-31")], {}, cfg9, cal9, ["MAQUINA1"], LUNES.date())
+s_alto = pe.schedule(j9b, machines(1), cfg9, cal9, LUNES, 1.0, {}, {},
+                     {"rates": {"ALTO": 800}, "global_rate": 400})[0]["segments"][0]["hits"]
+check("sin histórico: el turno rinde lo base (4000 hits)", abs(s_fix - 4000) <= 2, s_fix)
+check("velocidad por corrida: Alto a 800/h rinde el doble en el turno (8000)", abs(s_alto - 8000) <= 2, s_alto)
+
 print("== Ajustes manuales ==")
 cfgm = cfg_with(shifts=[{"key": "DIA", "start": "07:00", "hours": 12, "crews": 2},
                         {"key": "NOCHE", "start": "19:00", "hours": 12, "crews": 0}],
