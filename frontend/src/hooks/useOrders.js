@@ -327,6 +327,14 @@ export const useOrders = (currentBoard, boardFilters) => {
     const isNewBoard = lastBoardRef.current !== currentBoard;
     lastBoardRef.current = currentBoard;
     if (isNewBoard) {
+      // Sin caché del tablero nuevo, NO dejar las órdenes del anterior en
+      // pantalla mientras llega la respuesta: un tablero por día (sin ventana)
+      // pintaba completas las ~2k de FINAL BILL durante ese lapso. Con la lista
+      // vacía se ve el indicador de carga.
+      if (!boardDataCache[currentBoard]) {
+        setUnfilteredOrders([]);
+        setOrders([]);
+      }
       fetchOrders(false);
     } else {
       applyFilters(unfilteredOrders);

@@ -35,6 +35,7 @@ import { LoadingOverlay } from "./dashboard/LoadingOverlay";
 import { ColoredBadge } from "./dashboard/ColoredBadge";
 import { EditableCell } from "./dashboard/EditableCell";
 import SearchBox from "./dashboard/SearchBox";
+import WindowedRows, { windowOffsetOf } from "./dashboard/WindowedRows";
 import GuidedTour from "./GuidedTour";
 import WorkOrderModal from "./WorkOrderModal";
 import { CommentsModal } from "./dashboard/CommentsModal";
@@ -199,6 +200,12 @@ const Dashboard = () => {
   // altura real del encabezado de columnas y de la cabecera de cola para apilar
   // los niveles sin adivinar pixeles (el zoom/tema los cambia).
   const colHeadRef = useRef(null);
+  // Contenedor de scroll del tablero y lista que está "en ventana" (ver
+  // WindowedRows): el scroll a una orden resaltada necesita saber su índice
+  // cuando su fila todavía no está montada.
+  const mainScrollRef = useRef(null);
+  const windowItemsRef = useRef([]);
+  const ROW_PX = 44;   // ROW_H = h-11
   const queueHeadRef = useRef(null);
   const [freezeTops, setFreezeTops] = useState({ col: 52, queue: 40 });
   // Órdenes programadas para envío (viven en scheduled_shipments, no en la orden).
@@ -316,7 +323,18 @@ const Dashboard = () => {
       const row = document.querySelector(`[data-order-id="${highlightedOrderId}"]`);
       if (row) {
         row.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      } else if (attempts < 8) {
+        return;
+      }
+      // Tablero en ventana: la fila puede no estar montada. Se lleva el scroll
+      // a su posición calculada; el siguiente intento ya la encuentra.
+      const y = windowOffsetOf(windowItemsRef.current, highlightedOrderId, ROW_PX);
+      const sc = mainScrollRef.current;
+      const anchor = document.querySelector('[data-grid-window-anchor]');
+      if (y >= 0 && sc && anchor) {
+        const bodyTop = anchor.getBoundingClientRect().top - sc.getBoundingClientRect().top + sc.scrollTop;
+        sc.scrollTop = Math.max(0, bodyTop + y - sc.clientHeight / 2);
+      }
+      if (attempts < 8) {
         setTimeout(() => attemptScroll(attempts + 1), 200);
       }
     };
@@ -388,15 +406,6 @@ const Dashboard = () => {
     setMobileLimit(50);
   }, [currentBoard]);
 
-  useEffect(() => {
-    if (orders && Array.isArray(orders) && orders.length > displayLimit) {
-      const timer = setTimeout(() => {
-        setDisplayLimit(prev => prev + 200);
-      }, 3000);
-      return () => clearTimeout(timer);
-    }
-  }, [orders, displayLimit]);
-
   const activeBoards = (dynamicBoards.length > 0 ? dynamicBoards : BOARDS).filter(b => !hiddenBoards.includes(b));
   const allBoardsIncludingHidden = dynamicBoards.length > 0 ? dynamicBoards : BOARDS;
 
@@ -416,6 +425,23 @@ const Dashboard = () => {
   const isDaySupportedBoard = (b) => !!b && (b.startsWith('MAQUINA') || DAY_SUPPORTED_NON_MACHINE.has(b));
   const isQueueSupportedBoard = (b) => !!b && (b.startsWith('MAQUINA') || QUEUE_SUPPORTED_NON_MACHINE.has(b));
   const dayLabel = (key) => (lang === 'en' ? DAY_LABEL_EN : DAY_LABEL_ES)[key] || key;
+
+  // Escritorio/tablet: las filas del tablero se montan "en ventana"
+  // (WindowedRows) — solo las visibles, en tableros planos, por día/cola y
+  // agrupados. Ya no hace falta el render progresivo ni "Cargar más": todas
+  // las órdenes están, sin costo. El celular sigue con sus tarjetas.
+  const windowed = !isMobile;
+
+  useEffect(() => {
+    if (windowed) return undefined;
+    if (orders && Array.isArray(orders) && orders.length > displayLimit) {
+      const timer = setTimeout(() => {
+        setDisplayLimit(prev => prev + 200);
+      }, 3000);
+      return () => clearTimeout(timer);
+    }
+    return undefined;
+  }, [orders, displayLimit, windowed]);
 
   const isAdmin = ['admin', 'supersu', 'inspector_qc', 'qc'].includes(user?.role);
   // Mover columnas cambia el layout GLOBAL: privilegio exclusivo del supersu.
@@ -1539,7 +1565,7 @@ const Dashboard = () => {
     // día. El recorte con "Cargar más" aplica a los planos grandes (MASTER).
     const visibleOrders = debouncedSearchQuery
       ? _allOrders.filter(matchesSearch).slice(0, 500)
-      : (isDaySupportedBoard(currentBoard) && !groupByDate)
+      : (windowed || (isDaySupportedBoard(currentBoard) && !groupByDate))
         ? _allOrders
         : _allOrders.slice(0, displayLimit);
 
@@ -1590,9 +1616,10 @@ const Dashboard = () => {
         const isEmpty = list.length === 0;
         const totalQty = list.reduce((sum, o) => sum + (Number(o.quantity) || 0), 0);
         const pad = level === 0 ? 'px-4' : 'pl-10 pr-4';
-        return (
-          <React.Fragment key={key}>
+        const header = (
             <div
+              key={`h_${key}`}
+              data-wh={key}
               style={{ gridColumn: '1 / -1', ...freezeSticky(level >= 1 ? freezeTops.col + freezeTops.queue : freezeTops.col, 40) }}
               className={`py-0 px-0 border-b ${tone.bar} ${isEmpty ? 'opacity-60' : ''}`}
               data-testid={`group-${key}`}
@@ -1617,9 +1644,10 @@ const Dashboard = () => {
                 </span>
               </button>
             </div>
-            {!isCollapsed && !isEmpty && list.map(renderOrderRow)}
-          </React.Fragment>
         );
+        // Entradas para WindowedRows: el encabezado siempre; las filas solo si
+        // el grupo está abierto (en ventana, no todas montadas).
+        return [{ h: header, key }, ...((!isCollapsed && !isEmpty) ? list : [])];
       };
 
       // Bucket orders by scheduled_day → returns ordered [{key, label, list}].
@@ -1668,9 +1696,10 @@ const Dashboard = () => {
           const isQueueCollapsed = !!collapsedGroups[queueGroupKey];
           const queueTotalQty = queueList.reduce((s, o) => s + (Number(o.quantity) || 0), 0);
           const isQueueEmpty = queueList.length === 0;
-          return (
-            <React.Fragment key={queueGroupKey}>
+          const header = (
               <div
+                key={`h_${queueGroupKey}`}
+                data-wh={queueGroupKey}
                 ref={queueKey === 'active' ? queueHeadRef : undefined}
                 style={{ gridColumn: '1 / -1', ...freezeSticky(freezeTops.col, 42) }}
                 className={`py-0 px-0 border-b ${queueTone.bar} ${isQueueEmpty ? 'opacity-70' : ''}`}
@@ -1693,31 +1722,43 @@ const Dashboard = () => {
                   </span>
                 </button>
               </div>
-              {/* "En Cola" is intentionally flat — the queue is a single
-                  waiting list, no need to split by day. "Activa" still gets
-                  the per-day breakdown so the floor can plan the week. */}
-              {!isQueueCollapsed && queueKey === 'active' && bucketByDay(queueList).map(bucket =>
-                renderSection(`__${queueKey}_${bucket.key}`, bucket.label, bucket.list, null, bucket.key === 'none' ? noDayTone : dayTone, 1)
-              )}
-              {!isQueueCollapsed && queueKey !== 'active' && queueList.map(renderOrderRow)}
-            </React.Fragment>
           );
+          // "En Cola" is intentionally flat — the queue is a single waiting
+          // list, no need to split by day. "Activa" still gets the per-day
+          // breakdown so the floor can plan the week.
+          if (isQueueCollapsed) return [{ h: header, key: queueGroupKey }];
+          if (queueKey === 'active') {
+            return [{ h: header, key: queueGroupKey }, ...bucketByDay(queueList).flatMap(bucket =>
+              renderSection(`__${queueKey}_${bucket.key}`, bucket.label, bucket.list, null, bucket.key === 'none' ? noDayTone : dayTone, 1)
+            )];
+          }
+          return [{ h: header, key: queueGroupKey }, ...queueList];
         };
-        return (
-          <>
-            {renderQueueGroup('active', t('active'), activeOrders, '▶', queueTones.active)}
-            {renderQueueGroup('queued', t('dash_queue_queued'), queuedOrders, '⏸', queueTones.queued)}
-          </>
-        );
+        const entries = [
+          ...renderQueueGroup('active', t('active'), activeOrders, '▶', queueTones.active),
+          ...renderQueueGroup('queued', t('dash_queue_queued'), queuedOrders, '⏸', queueTones.queued),
+        ];
+        windowItemsRef.current = entries;
+        return <WindowedRows entries={entries} renderRow={renderOrderRow} rowHeight={ROW_PX} scrollRef={mainScrollRef} />;
       }
 
       // Non-machine day-supported boards: just bucket by day.
-      return bucketByDay(visibleOrders).map(bucket =>
+      const entries = bucketByDay(visibleOrders).flatMap(bucket =>
         renderSection(`__day_${bucket.key}`, bucket.label, bucket.list, null, bucket.key === 'none' ? noDayTone : dayTone, 0)
       );
+      windowItemsRef.current = entries;
+      return <WindowedRows entries={entries} renderRow={renderOrderRow} rowHeight={ROW_PX} scrollRef={mainScrollRef} />;
     }
 
-    if (!groupByDate) return visibleOrders.map(renderOrderRow);
+    if (!groupByDate) {
+      if (windowed) {
+        // Sin recorte por displayLimit: con ventana, todas cuestan lo mismo.
+        const items = debouncedSearchQuery ? visibleOrders : _allOrders;
+        windowItemsRef.current = items;
+        return <WindowedRows items={items} renderRow={renderOrderRow} rowHeight={ROW_PX} scrollRef={mainScrollRef} />;
+      }
+      return visibleOrders.map(renderOrderRow);
+    }
     const groups = {};
     const isDateField = groupByDate === 'cancel_date' || columns.find(c => c.key === groupByDate)?.type === 'date';
     const groupLabelMap = {
@@ -1741,12 +1782,11 @@ const Dashboard = () => {
       if (b === noValueLabel) return -1;
       return sortKey(a, la).localeCompare(sortKey(b, lb));
     });
-    return sortedEntries.map(([dateKey, groupOrders]) => {
+    const groupEntries = sortedEntries.flatMap(([dateKey, groupOrders]) => {
       const isCollapsed = !!collapsedGroups[dateKey];
       const totalQty = groupOrders.reduce((sum, o) => sum + (Number(o.quantity) || 0), 0);
-      return (
-        <React.Fragment key={dateKey}>
-          <div style={{ gridColumn: '1 / -1', ...freezeSticky(freezeTops.col, 42) }} className={`py-0 px-0 border-b ${isDark ? 'border-border/40' : 'border-border/60'}`} data-testid={`date-group-${dateKey}`}>
+      const header = (
+          <div key={`h_${dateKey}`} data-wh={`date_${dateKey}`} style={{ gridColumn: '1 / -1', ...freezeSticky(freezeTops.col, 42) }} className={`py-0 px-0 border-b ${isDark ? 'border-border/40' : 'border-border/60'}`} data-testid={`date-group-${dateKey}`}>
             <button onClick={() => setCollapsedGroups(prev => ({ ...prev, [dateKey]: !prev[dateKey] }))} className={`w-full flex items-center py-0 text-left font-roboto font-bold text-sm uppercase tracking-wide transition-colors ${isDark ? 'text-primary hover:bg-muted/20' : 'text-blue-700 hover:bg-muted/40'}`}>
               <span className="sticky left-0 inline-flex items-center gap-2 py-2 px-4" style={{ background: freezeBg }}>
                 <ChevronDown className={`w-4 h-4 flex-shrink-0 transition-transform duration-200 ${isCollapsed ? '-rotate-90' : ''}`} />
@@ -1759,10 +1799,11 @@ const Dashboard = () => {
               </span>
             </button>
           </div>
-          {!isCollapsed && groupOrders.map(renderOrderRow)}
-        </React.Fragment>
       );
+      return [{ h: header, key: `date_${dateKey}` }, ...(isCollapsed ? [] : groupOrders)];
     });
+    windowItemsRef.current = groupEntries;
+    return <WindowedRows entries={groupEntries} renderRow={renderOrderRow} rowHeight={ROW_PX} scrollRef={mainScrollRef} />;
   };
 
   return (
@@ -2431,7 +2472,7 @@ const Dashboard = () => {
       )}
 
       {/* Main Content */}
-      <main className={cn(
+      <main ref={mainScrollRef} className={cn(
         "flex-1 overflow-auto relative isolation-isolate",
         (isMobile || isTablet) && detailsOrder && "hidden"
       )}>
@@ -2726,7 +2767,7 @@ const Dashboard = () => {
                   <div className={`py-4 px-3 text-left text-[10px] font-bold tracking-[0.2em] uppercase border-b border-border/40 sticky top-0 z-20 ${isDark ? 'bg-[hsl(220,30%,9%)] text-slate-300' : 'bg-gray-50 text-slate-700'}`} style={{ minWidth: 180 }} data-testid="column-header-restante">Remaining</div>
                   <div className={`py-4 px-3 text-left text-[10px] font-bold tracking-[0.2em] uppercase border-b border-border/40 sticky top-0 z-20 ${isDark ? 'bg-[hsl(220,30%,9%)] text-pink-300' : 'bg-gray-50 text-pink-600'}`} style={{ minWidth: 110 }} data-testid="column-header-restante-neck">Neck %</div>
                   {renderTableBody()}
-                  {!debouncedSearchQuery && !(isDaySupportedBoard(currentBoard) && !groupByDate) && orders.length > displayLimit && (
+                  {!windowed && !debouncedSearchQuery && !(isDaySupportedBoard(currentBoard) && !groupByDate) && orders.length > displayLimit && (
                     <button
                       onClick={() => setDisplayLimit(n => n + 200)}
                       style={{ gridColumn: '1 / -1' }}
