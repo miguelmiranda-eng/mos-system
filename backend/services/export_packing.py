@@ -25,18 +25,16 @@ import os
 import re
 import time
 import zipfile
+from copy import copy
 from datetime import date
 
 import httpx
 import openpyxl
-from openpyxl.drawing.image import Image as XLImage
-from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+from openpyxl.utils import get_column_letter
 
 from deps import db
 
 PAPELERA = "PAPELERA DE RECICLAJE"
-LOGO = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "static", "images", "prosper_pl_logo.png")
-SHIP_TO_DEFAULT = ["TSC BROKER", "8140 ST ANDREWS AVE", "SAN DIEGO CA 92154"]
 CLIENT_CODES = {"GTS": "GTS", "GOODIE TWO SLEEVES": "GTS", "GOODIE TWO SLEEVES LLC": "GTS", "SPEKTRUM": "SKT"}
 
 # Tallas del PL (columnas I..Q) y sus nombres en MOS / DPL.
@@ -492,33 +490,33 @@ async def build_context(export_id: str, shipment_id: str | None = None) -> dict:
     return {"export": exp, "groups": groups, "warnings": warnings}
 
 
-# ── Excel con el formato del PL original ─────────────────────────────────────
+# ── Excel: se llena la PLANTILLA = el PL GTS 09-26-0085 real de Envíos ───────
+# templates/packing/export_pl_template.xlsx es su archivo con los datos
+# vaciados (mismo logo, colores del tema, anchos, combinaciones y pie). Tiene
+# 32 renglones de datos (11..42) y el pie en 43..51; si el PL trae más o menos
+# renglones, el pie se recorre.
 
-_THIN = Side(style="thin")
-_BOX = Border(left=_THIN, right=_THIN, top=_THIN, bottom=_THIN)
-_B = Font(name="Calibri", size=11, bold=True)
-_TEAL = PatternFill("solid", fgColor="4BACC6")
-_CREAM = PatternFill("solid", fgColor="EAF1DD")
-_C = Alignment(horizontal="center", vertical="center", wrap_text=True)
-HEAD = ["INV#", "PO#", "CUST PO", "STYLE #", "COLOR", "CONTENT", "DESCRIPTION", "ORIGEN", *SIZE_HEAD,
-        "TOTAL UNITS", "TOTAL BOXES", "TOTAL PALLET", "CUSTOMER", "SHIP TO:"]
-_WIDTHS = {"A": 10.3, "B": 9.7, "C": 11.5, "D": 18.9, "E": 14, "F": 22, "G": 18, "H": 20,
-           "R": 9.9, "S": 9.7, "T": 10.3, "U": 15.4, "V": 10.7, "W": 11.4}
+TEMPLATE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        "templates", "packing", "export_pl_template.xlsx")
+DATA_FIRST, DATA_LAST = 11, 42
+FOOT_FIRST, FOOT_LAST = 43, 51
+LAST_COL = 23                                   # W
+# Como Envíos los escribe en el PL (CUSTOMER corto, SHIP TO singular).
+CUSTOMER_PREFIX = {"SPENCER": "SPENCER"}
+SHIP_TO_ALIAS = {"ST ANDREWS": "ST ANDREW"}
 
 
-def _cell(ws, ref, value=None, fill=None, fmt=None, border=True, align=_C):
-    c = ws[ref]
-    if value is not None:
-        c.value = value
-    c.font = _B
-    c.alignment = align
-    if border:
-        c.border = _BOX
-    if fill:
-        c.fill = fill
-    if fmt:
-        c.number_format = fmt
-    return c
+def customer_label(branding):
+    b = re.sub(r"\s+", " ", str(branding or "")).strip().upper()
+    for pref, label in CUSTOMER_PREFIX.items():
+        if b.startswith(pref):
+            return label
+    return b
+
+
+def ship_to_label(v):
+    s = re.sub(r"\s+", " ", str(v or "")).strip().upper().replace(".", "")
+    return SHIP_TO_ALIAS.get(s, s)
 
 
 def _truck_parts(truck):
@@ -530,107 +528,106 @@ def _truck_parts(truck):
     return s, ""
 
 
+def _style_of(c):
+    return {"font": copy(c.font), "border": copy(c.border), "fill": copy(c.fill),
+            "alignment": copy(c.alignment), "number_format": c.number_format}
+
+
+def _apply(c, st):
+    c.font, c.border, c.fill = copy(st["font"]), copy(st["border"]), copy(st["fill"])
+    c.alignment, c.number_format = copy(st["alignment"]), st["number_format"]
+
+
+def _shift_footer(ws, delta):
+    """Recorre el pie (43..51) `delta` filas; las combinaciones se rehacen."""
+    if not delta:
+        return
+    merges = [(m.min_row, m.min_col, m.max_row, m.max_col)
+              for m in ws.merged_cells.ranges if m.min_row >= FOOT_FIRST]
+    for r0, c0, r1, c1 in merges:
+        ws.unmerge_cells(start_row=r0, start_column=c0, end_row=r1, end_column=c1)
+    heights = {r: ws.row_dimensions[r].height for r in range(FOOT_FIRST, FOOT_LAST + 1)}
+    ws.move_range(f"A{FOOT_FIRST}:{get_column_letter(LAST_COL)}{FOOT_LAST}", rows=delta)
+    for r, h in heights.items():
+        ws.row_dimensions[r + delta].height = h
+    for r0, c0, r1, c1 in merges:
+        ws.merge_cells(start_row=r0 + delta, start_column=c0, end_row=r1 + delta, end_column=c1)
+    if delta < 0:                                   # lo que quedó debajo del pie
+        for r in range(FOOT_LAST + delta + 1, FOOT_LAST + 1):
+            for c in range(1, LAST_COL + 1):
+                cell = ws.cell(r, c)
+                cell.value = None
+                cell.style = "Normal"
+            ws.row_dimensions[r].height = None
+
+
 def render_pl(pl_number: str, export: dict, groups: list) -> bytes:
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = "PACKING"
-    for col, w in _WIDTHS.items():
-        ws.column_dimensions[col].width = w
-    for col in "IJKLMNOPQ":
-        ws.column_dimensions[col].width = 6.9
+    wb = openpyxl.load_workbook(TEMPLATE)
+    ws = wb["PACKING"]
+    # Estilo de cada columna de datos tomado del renglón 11 de la plantilla
+    # (si alguna celda vino sin borde en el original, se usa el de INV#).
+    base = _style_of(ws.cell(DATA_FIRST, 1))
+    model = {}
+    for c in range(1, LAST_COL + 1):
+        cell = ws.cell(DATA_FIRST, c)
+        model[c] = _style_of(cell) if cell.border and cell.border.left and cell.border.left.style else base
+    rows = [(g, row) for g in groups for row in g["rows"]]
+    n = max(len(rows), 1)
+    _shift_footer(ws, n - (DATA_LAST - DATA_FIRST + 1))
+    last = DATA_FIRST + n - 1
+    for r in range(DATA_FIRST, last + 1):
+        for c in range(1, LAST_COL + 1):
+            _apply(ws.cell(r, c), model[c])
+        ws.row_dimensions[r].height = 16.9
     # Encabezado
-    if os.path.exists(LOGO):
-        img = XLImage(LOGO)
-        img.width, img.height = 311, 115
-        ws.add_image(img, "A1")
-    ws.merge_cells("A1:H7")
+    ws["V1"] = pl_number
     ship_date = export.get("date")
-    for r, (lab, val, fill) in enumerate((
-            ("# PACKING LIST:", pl_number, _CREAM),
-            ("SHIPPING DATE:", date.fromisoformat(ship_date) if ship_date else None, _TEAL),
-            (None, "EXPORT", None)), start=1):
-        if lab:
-            _cell(ws, f"U{r}", lab, fill)
-        ws.merge_cells(f"V{r}:W{r}")
-        _cell(ws, f"V{r}", val, _CREAM if r == 1 else None, fmt="mm-dd-yy" if r == 2 else None)
-        _cell(ws, f"W{r}")
-    _cell(ws, "U6", "SHIP TO:", _TEAL)
-    for i, line in enumerate(SHIP_TO_DEFAULT):
-        r = 6 + i
-        ws.merge_cells(f"V{r}:W{r}")
-        _cell(ws, f"V{r}", line)
-        _cell(ws, f"W{r}")
-    # Tabla
-    ws.row_dimensions[10].height = 39.75
-    for i, h in enumerate(HEAD, start=1):
-        _cell(ws, f"{openpyxl.utils.get_column_letter(i)}10", h, _TEAL)
-    ws.merge_cells("V10:W10")
-    _cell(ws, "W10", None, _TEAL)
-    r = 11
-    first = r
-    spans = []                     # (col, r0, r1, value) para combinar CUSTOMER / SHIP TO
+    ws["V2"] = date.fromisoformat(ship_date) if ship_date else None
+    # Renglones
+    r = DATA_FIRST
+    spans = []
     for g in groups:
         g0 = r
         for row in g["rows"]:
-            vals = [g["inv"], g["po"], g["cust_po"], g["style"], g["color"], row["fabric"], g["description"], row["country"]]
+            vals = [g["inv"], g["po"], g["cust_po"], g["style"] or None, g["color"] or None,
+                    row["fabric"] or None, g["description"] or None, row["country"] or None]
             for i, v in enumerate(vals, start=1):
-                _cell(ws, f"{openpyxl.utils.get_column_letter(i)}{r}", v if v not in ("", None) else None)
+                ws.cell(r, i).value = v
             for i, sz in enumerate(SIZES):
-                col = openpyxl.utils.get_column_letter(9 + i)
-                _cell(ws, f"{col}{r}", row["sizes"].get(sz) or None)
-            _cell(ws, f"R{r}", f"=SUM(I{r}:Q{r})")
-            for col in "STUVW":
-                _cell(ws, f"{col}{r}")
-            ws.row_dimensions[r].height = 16.9
+                ws.cell(r, 9 + i).value = row["sizes"].get(sz) or None
+            ws.cell(r, 18).value = f"=SUM(I{r}:Q{r})"
             r += 1
-        _cell(ws, f"S{g0}", g["boxes"])
-        _cell(ws, f"T{g0}", g["pallets"])
+        ws.cell(g0, 19).value = g["boxes"]
+        ws.cell(g0, 20).value = g["pallets"]
         if r - 1 > g0:
-            ws.merge_cells(f"S{g0}:S{r - 1}")
-            ws.merge_cells(f"T{g0}:T{r - 1}")
-        spans.append((g0, r - 1, g["customer"], g["ship_to"]))
-    last = r - 1
-    # CUSTOMER / SHIP TO combinados por tramos iguales (como el PL original).
+            ws.merge_cells(start_row=g0, start_column=19, end_row=r - 1, end_column=19)
+            ws.merge_cells(start_row=g0, start_column=20, end_row=r - 1, end_column=20)
+        spans.append((g0, r - 1, customer_label(g["customer"]), ship_to_label(g["ship_to"])))
+    # CUSTOMER / SHIP TO combinados por tramos iguales (en el original, todo el PL).
     i = 0
     while i < len(spans):
         j = i
         while j + 1 < len(spans) and spans[j + 1][2:] == spans[i][2:]:
             j += 1
         r0, r1 = spans[i][0], spans[j][1]
-        _cell(ws, f"U{r0}", spans[i][2] or None)
-        _cell(ws, f"V{r0}", spans[i][3] or None)
+        ws.cell(r0, 21).value = spans[i][2] or None
+        ws.cell(r0, 22).value = spans[i][3] or None
         if r1 > r0:
-            ws.merge_cells(f"U{r0}:U{r1}")
-        ws.merge_cells(f"V{r0}:W{r1}")
+            ws.merge_cells(start_row=r0, start_column=21, end_row=r1, end_column=21)
+        ws.merge_cells(start_row=r0, start_column=22, end_row=r1, end_column=23)
         i = j + 1
-    # Totales y pie
-    tot = last + 2
-    _cell(ws, f"S{tot}", f"=SUM(S{first}:S{last})", border=False)
-    _cell(ws, f"T{tot}", f"=SUM(T{first}:T{last})", border=False)
+    # Totales y pie (posiciones de la plantilla recorridas)
+    d = last - DATA_LAST
+    tot = 44 + d
+    ws[f"S{tot}"] = f"=SUM(S{DATA_FIRST}:S{last})"
+    ws[f"T{tot}"] = f"=SUM(T{DATA_FIRST}:T{last})"
     truck, eco = _truck_parts(export.get("truck"))
-    foot = [("Transport Company:", export.get("transport_company")), ("Drivers Name", export.get("driver_name")),
-            ("License Plate:", export.get("license_plate")), ("Truck:", truck), ("Signature", None),
-            ("Security Seal#", export.get("seal_numbers")), ("No.Eco:", _digits_or_text(eco))]
-    for k, (lab, val) in enumerate(foot):
-        rr = tot + 1 + k
-        _cell(ws, f"D{rr}", lab, _TEAL)
-        ws.merge_cells(f"E{rr}:F{rr}")
-        _cell(ws, f"E{rr}", val)
-        _cell(ws, f"F{rr}")
-    for k, (lab, val) in enumerate((("Total Units:", f"=SUM(R{first}:R{last})"), ("Total Boxes", f"=S{tot}"),
-                                    ("Pallets Count", f"=T{tot}"), ("Released By:", None))):
-        rr = tot + 3 + k
-        ws.merge_cells(f"K{rr}:M{rr}")
-        ws.merge_cells(f"N{rr}:R{rr}")
-        _cell(ws, f"K{rr}", lab, _TEAL)
-        _cell(ws, f"N{rr}", val, fmt="#,##0" if val else None)
-        for col in "LMOPQR":
-            _cell(ws, f"{col}{rr}")
-    ws.freeze_panes = "A11"
-    ws.page_setup.orientation = "landscape"
-    ws.sheet_properties.pageSetUpPr.fitToPage = True
-    ws.page_setup.fitToWidth = 1
-    ws.page_setup.fitToHeight = 0
+    for k, val in enumerate((export.get("transport_company"), export.get("driver_name"), export.get("license_plate"),
+                             truck or None, None, export.get("seal_numbers"), _digits_or_text(eco))):
+        ws[f"E{45 + d + k}"] = val
+    ws[f"N{47 + d}"] = f"=SUM(R{DATA_FIRST}:R{last})"
+    ws[f"N{48 + d}"] = f"=S{tot}"
+    ws[f"N{49 + d}"] = f"=T{tot}"
     bio = io.BytesIO()
     wb.save(bio)
     return bio.getvalue()
