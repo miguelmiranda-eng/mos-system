@@ -5,6 +5,9 @@ import { API, DEFAULT_COLUMNS, STATUS_COLORS, getActionLabels } from "../lib/con
 import { apiFetch } from "../lib/http";
 import { localDateLabel } from "../lib/utils";
 
+// Tamaño de página de la búsqueda global (modal de resultados).
+export const SEARCH_FETCH_PAGE = 200;
+
 // Re-export so existing consumers keep their import path working
 export { apiFetch };
 
@@ -603,23 +606,32 @@ export const useOrders = (currentBoard, boardFilters) => {
     }
     safeSetOperationLoading(true);
     try {
-      const res = await fetch(`${API}/orders?search=${encodeURIComponent(searchQuery)}`, { credentials: 'include' });
+      // Primera página (200) + total. Antes bajaban hasta 1,000 órdenes
+      // completas (~2.6 MB) aunque el modal muestra 50; el resto se pide solo
+      // si el usuario lo solicita (ver loadMoreSearch en Dashboard). La
+      // papelera se excluye en el server para que `total` sea lo que se ve.
+      const res = await fetch(`${API}/orders?search=${encodeURIComponent(searchQuery)}&skip=0&limit=${SEARCH_FETCH_PAGE}&hide_trash=true`, { credentials: 'include' });
       if (res.ok) {
-        const results = await res.json();
-        const filtered = results.filter(o => o.board !== 'PAPELERA DE RECICLAJE');
+        const data = await res.json();
+        const filtered = data.items || [];
+        const total = data.total ?? filtered.length;
         if (filtered.length >= 1) {
           const found = filtered[0];
-          setCurrentBoard(found.board);
-          if (filtered.length === 1) {
+          // Solo saltar de tablero con UN resultado. Con varios, el tablero del
+          // "primero" es arbitrario y cargarlo detrás del modal era caro (p. ej.
+          // FINAL BILL, ~2k filas: 2 s extra al cerrar). Cada fila del modal ya
+          // trae su botón "Ir al tablero".
+          if (total === 1) setCurrentBoard(found.board);
+          if (total === 1) {
             const isExactOrderedMatch = found.order_number && String(found.order_number).trim().toLowerCase() === searchQuery.trim().toLowerCase();
             const msg = isExactOrderedMatch 
               ? `${t('order')} ${found.order_number} → ${found.board}`
               : `Referencia encontrada en orden: ${found.order_number} (${found.board})`;
             toast.success(msg);
           } else {
-            toast.info(`${filtered.length} coincidencias encontradas`);
+            toast.info(`${total} coincidencias encontradas`);
           }
-          return filtered;
+          return { items: filtered, total, query: searchQuery };
         } else {
           toast.error(`Referencia no encontrada globalmente`);
           return null;

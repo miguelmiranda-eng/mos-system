@@ -75,9 +75,10 @@ def _invalidate_orders_cache(data):
         if isinstance(raw, (list, tuple)) and raw and all(
                 isinstance(b, str) and b.strip() for b in raw):
             boards = set(raw)
-    # El corpus de búsqueda abarca TODOS los tableros: cualquier cambio de orden
-    # lo invalida (se reconstruye perezosamente en la siguiente búsqueda).
-    _search_corpus["entries"] = None
+    # Corpus de búsqueda: si el cambio es de UNA orden identificada (acción en
+    # la lista blanca + order_id), solo esa se re-lee en la próxima búsqueda;
+    # cualquier otro cambio (crear, lote, import, gemelas…) lo tira completo.
+    _search_corpus_mark(data)
     if boards is None:
         _orders_cache.clear()
         return
@@ -96,12 +97,44 @@ def _invalidate_orders_cache(data):
 # Ahora cada orden se aplana UNA vez por cambio de órdenes y se guarda aquí;
 # una búsqueda es solo un `in` sobre ~3k cadenas (milisegundos). Misma
 # semántica que antes: coincidencia por campo, exactas primero, y dentro de
-# cada grupo el orden por created_at desc. Se invalida junto con el caché de
-# listados (order_change) y tiene el mismo TTL de seguridad.
+# cada grupo el orden por created_at desc.
+#
+# Mantenimiento (2026-10-02): tirar el corpus en CADA order_change lo dejaba
+# frío casi siempre en hora pico (un cambio cada ~20 s) y la búsqueda con Enter
+# pagaba la reconstrucción completa (~2.4 s medido). Ahora:
+#   - cambio de UNA orden (acciones de _SEARCH_PATCH_ACTIONS con order_id):
+#     se marca "sucia" y la próxima búsqueda re-lee solo esa(s) orden(es);
+#   - cualquier otro order_change: reconstrucción completa ANTES de responder
+#     (nunca se sirve un corpus viejo tras crear/mover en lote/importar);
+#   - TTL de seguridad vencido (mutaciones que no avisan): se sigue sirviendo
+#     y se reconstruye en segundo plano.
 _SEARCH_SKIP_KEY = re.compile(r"(_id$|_at$|^id$|created|updated|timestamp|^images$|^attachments$|^files$)", re.I)
 _SEARCH_SEP = "\x00"   # separa campos: una coincidencia nunca cruza de un campo a otro
-_search_corpus = {"entries": None, "ts": 0.0}
+# Acciones que modifican SOLO la orden de su order_id (verificado en cada
+# broadcast). Las que tocan varias (gemelas, lote) o crean órdenes NO van aquí.
+_SEARCH_PATCH_ACTIONS = {
+    "update", "move", "delete", "add_comment", "update_comment", "delete_comment",
+    "pin_comment", "comment_reaction", "add_link", "delete_link", "art_status",
+}
+# entries: lista de (orden, texto, exactas) o None en huecos borrados.
+# pos: order_id -> índice en entries.  dirty: order_ids por re-leer.
+_search_corpus = {"entries": None, "pos": {}, "ts": 0.0, "dirty": set(),
+                  "refreshing": False, "gen": 0}
 _search_corpus_lock = asyncio.Lock()
+
+
+def _search_corpus_mark(data):
+    oid = data.get("order_id") if isinstance(data, dict) else None
+    action = data.get("action") if isinstance(data, dict) else None
+    if (_search_corpus["entries"] is not None and isinstance(oid, str) and oid
+            and action in _SEARCH_PATCH_ACTIONS):
+        _search_corpus["dirty"].add(oid)
+    else:
+        # gen: una reconstrucción que ya estaba leyendo ANTES de este cambio no
+        # debe guardar su resultado (podría no incluirlo).
+        _search_corpus["gen"] += 1
+        _search_corpus["entries"] = None
+        _search_corpus["dirty"] = set()
 
 
 def _search_flat(v):
@@ -125,20 +158,76 @@ def _search_entry(order):
     return order, _SEARCH_SEP.join(parts), exact
 
 
+async def _build_search_corpus(projection):
+    # Lo que se marque sucio DURANTE la lectura completa ya viene incluido en
+    # ella o se vuelve a marcar después: se limpia ANTES de leer, no después.
+    _search_corpus["dirty"] = set()
+    gen = _search_corpus["gen"]
+    raw = await db.orders.find({}, projection).sort("created_at", -1).to_list(None)
+    # El aplanado es CPU puro: en un hilo para no detener el event loop.
+    entries = await asyncio.to_thread(lambda: [_search_entry(o) for o in raw])
+    if gen != _search_corpus["gen"]:
+        return entries        # hubo un cambio completo mientras leíamos: no guardar
+    _search_corpus["entries"] = entries
+    _search_corpus["pos"] = {e[0].get("order_id"): i for i, e in enumerate(entries)
+                             if e[0].get("order_id")}
+    _search_corpus["ts"] = time.time()
+    return entries
+
+
+async def _patch_search_corpus(projection):
+    """Re-lee solo las órdenes sucias. Devuelve False si hace falta reconstruir
+    (una orden nueva que no estaba en el corpus: su lugar en el orden por
+    created_at no se puede deducir sin comparar tipos mixtos)."""
+    ids = list(_search_corpus["dirty"])
+    _search_corpus["dirty"] = set()
+    if not ids:
+        return True
+    docs = {d.get("order_id"): d async for d in
+            db.orders.find({"order_id": {"$in": ids}}, projection)}
+    entries, pos = _search_corpus["entries"], _search_corpus["pos"]
+    for oid in ids:
+        i = pos.get(oid)
+        doc = docs.get(oid)
+        if i is None:
+            if doc is not None:
+                return False      # orden que el corpus no conocía
+            continue              # ya no existe y nunca estuvo: nada que hacer
+        if doc is None:
+            entries[i] = None     # borrada definitivamente: hueco
+            pos.pop(oid, None)
+        else:
+            entries[i] = _search_entry(doc)
+    return True
+
+
+async def _refresh_search_corpus_bg(projection):
+    try:
+        async with _search_corpus_lock:
+            await _build_search_corpus(projection)
+    except Exception as e:
+        logger.warning(f"[search] reconstrucción en segundo plano falló: {e}")
+    finally:
+        _search_corpus["refreshing"] = False
+
+
 async def _get_search_corpus(projection):
-    entries = _search_corpus["entries"]
-    if entries is not None and time.time() - _search_corpus["ts"] <= _ORDERS_CACHE_TTL:
-        return entries
-    async with _search_corpus_lock:
+    if _search_corpus["entries"] is not None and not _search_corpus["dirty"]:
         entries = _search_corpus["entries"]
-        if entries is not None and time.time() - _search_corpus["ts"] <= _ORDERS_CACHE_TTL:
-            return entries
-        raw = await db.orders.find({}, projection).sort("created_at", -1).to_list(None)
-        # El aplanado es CPU puro: en un hilo para no detener el event loop.
-        entries = await asyncio.to_thread(lambda: [_search_entry(o) for o in raw])
-        _search_corpus["entries"] = entries
-        _search_corpus["ts"] = time.time()
-        return entries
+    else:
+        async with _search_corpus_lock:
+            if _search_corpus["entries"] is None:
+                entries = await _build_search_corpus(projection)
+            elif not await _patch_search_corpus(projection):
+                entries = await _build_search_corpus(projection)
+            else:
+                entries = _search_corpus["entries"]
+    # TTL de seguridad: servir lo que hay y rehacer en segundo plano.
+    if (time.time() - _search_corpus["ts"] > _ORDERS_CACHE_TTL
+            and not _search_corpus["refreshing"]):
+        _search_corpus["refreshing"] = True
+        asyncio.create_task(_refresh_search_corpus_bg(projection))
+    return entries
 
 # Intercepta ws_manager.broadcast para invalidar el caché de listados, pero
 # SOLO en eventos que cambian órdenes. production_update / neck_update se
@@ -176,7 +265,7 @@ async def _run_automations(trigger_type, order, user, context=None):
     return await run_automations(trigger_type, order, user, context)
 
 async def _fetch_orders(board, search, limit, include_images, filtro_cliente=None,
-                        skip=None):
+                        skip=None, hide_trash=False):
     """skip=None → comportamiento clásico: lista de hasta `limit` órdenes.
     skip=int (Tarea 5.1): página skip/limit y devuelve (items, total)."""
     total = None
@@ -217,8 +306,14 @@ async def _fetch_orders(board, search, limit, include_images, filtro_cliente=Non
             in_board = lambda o: o.get("board") == board
         else:
             in_board = lambda o: True
+        if hide_trash:
+            _in = in_board
+            in_board = lambda o: o.get("board") != "PAPELERA DE RECICLAJE" and _in(o)
         exact_hits, partial_hits = [], []
-        for o, blob, exact in await _get_search_corpus(projection):
+        for entry in await _get_search_corpus(projection):
+            if entry is None:
+                continue
+            o, blob, exact = entry
             if sq in blob and in_board(o):
                 (exact_hits if sq in exact else partial_hits).append(o)
         ranked = exact_hits + partial_hits
@@ -285,7 +380,7 @@ async def _fetch_orders(board, search, limit, include_images, filtro_cliente=Non
 
 @router.get("")
 async def get_orders(request: Request, board: str = None, search: str = None, limit: int = 1000,
-                     include_images: bool = False, skip: int = None):
+                     include_images: bool = False, skip: int = None, hide_trash: bool = False):
     # deps.get_current_user tambien autentica la llave (header o query legado),
     # asi que el viejo bypass explicito por api_key sobraba. Tarea 2.1: para
     # llaves de API, `customer` es OBLIGATORIO (403 si falta o esta fuera del
@@ -301,8 +396,11 @@ async def get_orders(request: Request, board: str = None, search: str = None, li
     if skip is not None:
         skip_v = max(0, skip)
         limit_v = max(1, min(limit, 5000))
+        # hide_trash: la búsqueda global del tablero no muestra la papelera; si
+        # se filtrara en el cliente, el `total` contaría órdenes que no se ven.
         items, total = await _fetch_orders(board, search, limit_v, include_images,
-                                           filtro_cliente, skip=skip_v)
+                                           filtro_cliente, skip=skip_v,
+                                           hide_trash=hide_trash)
         return {"total": total, "skip": skip_v, "limit": limit_v, "items": items}
 
     if filtro_cliente:
@@ -842,7 +940,7 @@ async def move_order_core(user: dict, order_id: str, target_board: str, extra_se
     final_board = (final_order or {}).get("board")
     if final_board and final_board not in moved_boards:
         moved_boards.append(final_board)
-    await ws_manager.broadcast("order_change", {"action": "move", "boards": moved_boards})
+    await ws_manager.broadcast("order_change", {"action": "move", "order_id": order_id, "boards": moved_boards})
     return {**(_merge_custom_fields(final_order or updated)), "_automations_executed": executed_automations}
 
 @router.delete("/{order_id}")
@@ -863,7 +961,7 @@ async def delete_order(order_id: str, request: Request):
     )
     
     await log_activity(user, "delete_order", {"order_id": order_id, "order_number": existing.get("order_number")}, previous_data={"order_id": order_id, "fields": {"board": existing.get("board")}})
-    await ws_manager.broadcast("order_change", {"action": "delete", "boards": [existing.get("board"), "PAPELERA DE RECICLAJE"]})
+    await ws_manager.broadcast("order_change", {"action": "delete", "order_id": order_id, "boards": [existing.get("board"), "PAPELERA DE RECICLAJE"]})
     return {"message": "Order moved to trash", "deleted_at": now}
 
 @router.delete("/{order_id}/permanent")

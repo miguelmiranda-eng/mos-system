@@ -16,6 +16,7 @@ USO: set MONGODB_URL=mongodb://localhost:27017 ;
      backend/venv/Scripts/python.exe backend/tests/smoke_rendimiento_oct2026.py
 """
 import asyncio
+import time
 import os
 import sys
 
@@ -181,6 +182,84 @@ async def main():
         check("la búsqueda no deja llaves en la caché de listados",
               not any(k[0] == "orders" and k[1] is None and k[2] != 1000 for k in ordmod._orders_cache
                       if isinstance(k, tuple)), f"{list(ordmod._orders_cache)}")
+
+        print("\n== corpus incremental (2026-10-02) ==")
+        # Corpus caliente
+        await c.get("/api/orders?search=RN-")
+        antes = ordmod._search_corpus["entries"]
+        r = await c.put("/api/orders/o3", json={"client": "OMEGA-PATCH"})
+        check("PUT 200", r.status_code == 200, r.text[:200])
+        check("update con order_id solo marca sucia (no tira el corpus)",
+              ordmod._search_corpus["entries"] is antes and "o3" in ordmod._search_corpus["dirty"],
+              f"dirty={ordmod._search_corpus['dirty']}")
+        r = await c.get("/api/orders?search=omega-patch")
+        check("la búsqueda ve el cambio parchado", [o["order_id"] for o in r.json()] == ["o3"], r.text[:200])
+        check("y siguió siendo el MISMO corpus (sin reconstruir)",
+              ordmod._search_corpus["entries"] is antes and not ordmod._search_corpus["dirty"])
+        r = await c.post("/api/orders/o3/move", json={"board": "BLANKS"})
+        check("move responde 200", r.status_code == 200, f"{r.status_code} {r.text[:300]}")
+        r = await c.get("/api/orders?search=omega-patch")
+        check("move parchado: el resultado trae el tablero nuevo",
+              r.json() and r.json()[0]["board"] == "BLANKS", r.text[:200])
+        check("move tampoco reconstruyó", ordmod._search_corpus["entries"] is antes)
+        r = await c.delete("/api/orders/o3")
+        r1 = (await c.get("/api/orders?search=omega-patch")).json()
+        r2 = (await c.get("/api/orders?search=omega-patch&skip=0&limit=200&hide_trash=true")).json()
+        check("delete (papelera) parchado: sin hide_trash sigue apareciendo en papelera",
+              r1 and r1[0]["board"] == "PAPELERA DE RECICLAJE", f"{r1}")
+        check("con hide_trash no aparece y el total es 0",
+              r2.get("total") == 0 and r2.get("items") == [], f"{r2}")
+        r = await c.post("/api/orders", json={"order_number": "RN-NUEVA-77", "board": "BLANKS", "client": "ACME"})
+        check("create tira el corpus completo", ordmod._search_corpus["entries"] is None)
+        r = await c.get("/api/orders?search=rn-nueva-77")
+        check("y la orden nueva se encuentra", len(r.json()) == 1, r.text[:200])
+        # Orden que el corpus no conocía marcada como sucia -> reconstruye
+        sdb.orders.insert_one({"order_id": "fantasma1", "order_number": "RN-FANT", "board": "BLANKS",
+                               "created_at": "2026-01-02T00:00:00+00:00"})
+        ordmod._search_corpus_mark({"action": "update", "order_id": "fantasma1"})
+        r = await c.get("/api/orders?search=rn-fant")
+        check("orden desconocida marcada sucia -> reconstrucción y aparece",
+              [o["order_id"] for o in r.json()] == ["fantasma1"], r.text[:200])
+        # Corte por generación: un cambio completo durante la lectura no se pisa
+        ordmod._search_corpus["entries"] = None
+        # Se parchea en la CLASE: db.orders devuelve un objeto nuevo en cada acceso.
+        from motor.motor_asyncio import AsyncIOMotorCollection
+        real_find = AsyncIOMotorCollection.find
+        disparado = {"v": False}
+
+        def find_con_cambio(self, *a, **kw):
+            if self.name == "orders" and not disparado["v"]:
+                disparado["v"] = True
+                ordmod._search_corpus_mark({"action": "create"})   # cambio completo a media lectura
+            return real_find(self, *a, **kw)
+        AsyncIOMotorCollection.find = find_con_cambio
+        try:
+            await c.get("/api/orders?search=rn-")
+        finally:
+            AsyncIOMotorCollection.find = real_find
+        check("(el cambio sí se disparó a media lectura)", disparado["v"])
+        check("cambio completo durante la lectura: el resultado NO se guarda",
+              ordmod._search_corpus["entries"] is None)
+        # TTL vencido: se sirve lo que hay y se rehace en segundo plano
+        await c.get("/api/orders?search=rn-")
+        viejo = ordmod._search_corpus["entries"]
+        ordmod._search_corpus["ts"] -= 3600
+        r = await c.get("/api/orders?search=rn-0")
+        check("TTL vencido: responde con el corpus actual sin bloquear",
+              r.status_code == 200 and ordmod._search_corpus["refreshing"] is True)
+        for _ in range(50):
+            if not ordmod._search_corpus["refreshing"]:
+                break
+            await asyncio.sleep(0.05)
+        check("y la reconstrucción en segundo plano termina con corpus nuevo",
+              ordmod._search_corpus["entries"] is not viejo
+              and time.time() - ordmod._search_corpus["ts"] < 60)
+        # Paginado + total
+        r = (await c.get("/api/orders?search=rn-&skip=0&limit=2&hide_trash=true")).json()
+        r_all = (await c.get("/api/orders?search=rn-&hide_trash=true")).json()
+        sin_papelera = [o for o in r_all if o["board"] != "PAPELERA DE RECICLAJE"]
+        check("paginado: 2 items y total = coincidencias fuera de papelera",
+              len(r["items"]) == 2 and r["total"] == len(sin_papelera), f"{r.get('total')} vs {len(sin_papelera)}")
 
     print("\n== retención: activity_logs 30 días + sesiones vencidas ==")
     from datetime import datetime, timedelta, timezone

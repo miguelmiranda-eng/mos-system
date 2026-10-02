@@ -62,7 +62,7 @@ import CommandPalette from "./dashboard/CommandPalette";
 // Shared constants and hooks
 import { cn, localDateLabel } from "../lib/utils";
 import { BOARDS, BOARD_COLORS, FILTER_COLUMNS, STATUS_COLORS, getBoardStyle, evaluateFormulaValue, API, normalizePublicUrl } from "../lib/constants";
-import { useOrders, apiFetch } from "../hooks/useOrders";
+import { useOrders, apiFetch, SEARCH_FETCH_PAGE } from "../hooks/useOrders";
 
 // ── Global order search ────────────────────────────────────────────────────
 // Flatten every value of an order (including dynamic/custom columns and nested
@@ -241,6 +241,36 @@ const Dashboard = () => {
   }, [currentBoard, groupByDate]);
   const [openFilterKey, setOpenFilterKey] = useState(null);
   const [searchResults, setSearchResults] = useState(null);
+  // El modal de resultados pinta cada coincidencia con TODAS sus columnas como
+  // celdas editables. Con una búsqueda amplia (p. ej. un cliente: ~900
+  // resultados) eran decenas de miles de celdas: 12 s congelado al abrir y 4 s
+  // al cerrar (medido 2026-10-02). Se muestran de 50 en 50; el total se sigue
+  // viendo en el encabezado.
+  const SEARCH_PAGE = 50;
+  const [searchShown, setSearchShown] = useState(SEARCH_PAGE);
+  useEffect(() => { setSearchShown(SEARCH_PAGE); }, [searchResults === null]); // eslint-disable-line react-hooks/exhaustive-deps
+  // El servidor manda la búsqueda por páginas (SEARCH_FETCH_PAGE) + el total;
+  // las siguientes se piden solo cuando el usuario quiere ver más.
+  const [searchTotal, setSearchTotal] = useState(0);
+  const [searchQueryLast, setSearchQueryLast] = useState('');
+  const [searchLoadingMore, setSearchLoadingMore] = useState(false);
+  const loadMoreSearch = useCallback(async (wanted) => {
+    // wanted: cuántas filas se quieren MOSTRAR; se piden las que falten.
+    const loaded = searchResults?.length || 0;
+    const target = Math.min(wanted, searchTotal);
+    if (target > loaded && !searchLoadingMore) {
+      setSearchLoadingMore(true);
+      try {
+        const need = target - loaded;
+        const res = await fetch(`${API}/orders?search=${encodeURIComponent(searchQueryLast)}&skip=${loaded}&limit=${Math.max(need, SEARCH_FETCH_PAGE)}&hide_trash=true`, { credentials: 'include' });
+        if (res.ok) {
+          const data = await res.json();
+          setSearchResults(prev => [...(prev || []), ...(data.items || [])]);
+        }
+      } catch { /* el botón queda para reintentar */ } finally { setSearchLoadingMore(false); }
+    }
+    setSearchShown(target);
+  }, [searchResults, searchTotal, searchQueryLast, searchLoadingMore]);
   const [showNewBoard, setShowNewBoard] = useState(false);
   const [newBoardName, setNewBoardName] = useState('');
   const [deleteBoardConfirm, setDeleteBoardConfirm] = useState(null); // null | { step: 1|2, name: string }
@@ -336,7 +366,11 @@ const Dashboard = () => {
   const handleSearchEnter = useCallback(async (v) => {
     const results = await handleGlobalSearch(v, setCurrentBoard);
     if (results === '__GUIDE__') { setShowGuide(true); clearSearch(); }
-    else if (results) setSearchResults(results);
+    else if (results) {
+      setSearchTotal(results.total);
+      setSearchQueryLast(results.query);
+      setSearchResults(results.items);
+    }
   }, [handleGlobalSearch, clearSearch]);
 
   const [displayLimit, setDisplayLimit] = useState(100);
@@ -2803,13 +2837,13 @@ const Dashboard = () => {
         <DialogContent className="max-w-[96vw] w-[96vw] max-h-[92vh] h-[92vh] bg-card border-border overflow-hidden flex flex-col p-0" data-testid="search-results-modal">
           <DialogHeader className="p-6 pb-2">
             <DialogTitle className="font-roboto text-2xl font-bold uppercase tracking-tight flex items-center gap-3 text-glow-primary">
-              <Search className="w-6 h-6 text-primary" /> {t('dash_search_results')} <span className="text-sm font-mono font-normal text-muted-foreground bg-secondary/50 px-3 py-1 rounded-full border border-border/50 ml-2">({searchResults?.length || 0})</span>
+              <Search className="w-6 h-6 text-primary" /> {t('dash_search_results')} <span className="text-sm font-mono font-normal text-muted-foreground bg-secondary/50 px-3 py-1 rounded-full border border-border/50 ml-2">({searchTotal || searchResults?.length || 0})</span>
             </DialogTitle>
           </DialogHeader>
           <div className="flex-1 overflow-auto px-4 sm:px-6 pb-6">
             {isMobile ? (
               <div className="flex flex-col gap-2.5">
-                {searchResults?.map(order => (
+                {searchResults?.slice(0, searchShown).map(order => (
                   <div
                     key={order.order_id}
                     role="button"
@@ -2863,7 +2897,7 @@ const Dashboard = () => {
                   </div>
                 </div>
                 <div>
-                  {searchResults?.map(order => (
+                  {searchResults?.slice(0, searchShown).map(order => (
                     <div role="row" className="flex border-b border-border/20 hover:bg-primary/5 transition-all duration-200 group" key={order.order_id}
                       data-testid={`search-result-${order.order_id}`}>
                       <div role="cell" className="py-3 px-4 min-w-[120px] sticky left-0 bg-card z-20 group-hover:bg-primary/10 border-r border-border/30 shadow-[4px_0_10px_rgba(0,0,0,0.05)] transition-colors !bg-card cursor-pointer" onClick={() => { setDetailsOrder(order); setSearchResults(null); clearSearch(); }}>
@@ -2924,6 +2958,27 @@ const Dashboard = () => {
                 </div>
               </div>
             </div>
+            )}
+            {searchResults && Math.max(searchTotal, searchResults.length) > searchShown && (
+              <div className="flex flex-wrap items-center justify-center gap-3 pt-4" data-testid="search-results-more">
+                <span className="text-xs text-muted-foreground">
+                  {t('dash_search_showing', { shown: Math.min(searchShown, searchResults.length), total: Math.max(searchTotal, searchResults.length) })}
+                </span>
+                <button
+                  disabled={searchLoadingMore}
+                  onClick={() => loadMoreSearch(searchShown + SEARCH_PAGE)}
+                  className="px-4 py-2 rounded-xl bg-primary/10 text-primary hover:bg-primary hover:text-white text-xs font-bold transition-all disabled:opacity-50"
+                >
+                  {t('dash_search_show_more', { n: Math.min(SEARCH_PAGE, Math.max(searchTotal, searchResults.length) - searchShown) })}
+                </button>
+                <button
+                  disabled={searchLoadingMore}
+                  onClick={() => loadMoreSearch(Math.max(searchTotal, searchResults.length))}
+                  className="px-4 py-2 rounded-xl bg-secondary/60 text-muted-foreground hover:bg-secondary text-xs font-bold transition-all disabled:opacity-50"
+                >
+                  {t('dash_search_show_all', { n: Math.max(searchTotal, searchResults.length) })}
+                </button>
+              </div>
             )}
           </div>
         </DialogContent>
