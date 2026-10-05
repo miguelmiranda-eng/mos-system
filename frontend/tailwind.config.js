@@ -5,10 +5,10 @@ module.exports = {
   theme: {
     extend: {
       fontFamily: {
-        sans: ['JetBrains Mono', 'ui-monospace', 'monospace'],
+        sans: ['Fira Code', 'ui-monospace', 'monospace'],
         blinker: ['Blinker', 'sans-serif'],
         inter: ['Inter', 'sans-serif'],
-        mono: ['JetBrains Mono', 'monospace'],
+        mono: ['Fira Code', 'monospace'],
       },
       borderRadius: {
         lg: '4px',
