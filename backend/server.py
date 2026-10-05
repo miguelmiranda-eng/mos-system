@@ -252,6 +252,7 @@ from routers.wms import router as wms_router
 from routers.reports import router as reports_router
 from routers.wms_reports import router as wms_reports_router
 from routers.wms_returns import router as wms_returns_router
+from routers.wms_staging import router as wms_staging_router
 from routers.import_router import router as import_router
 from routers.qc import router as qc_router
 from routers.insights import router as insights_router
@@ -289,6 +290,7 @@ app.include_router(wms_router)
 app.include_router(reports_router)
 app.include_router(wms_reports_router)
 app.include_router(wms_returns_router)
+app.include_router(wms_staging_router)
 app.include_router(import_router)
 app.include_router(qc_router)
 app.include_router(insights_router)
@@ -382,6 +384,8 @@ async def startup_event():
         from optimize_db import ensure_wms_indexes, ensure_core_indexes
         await ensure_core_indexes(db)
         await ensure_wms_indexes(db)
+        from services.staging import ensure_indexes as ensure_staging_indexes
+        await ensure_staging_indexes()
         logging.info("Core + WMS indexes ensured on startup.")
     except Exception as e:
         logging.error(f"Index creation failed: {e}")

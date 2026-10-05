@@ -16,6 +16,9 @@ export const MV_TYPE_KEYS = {
   // de la caja al surtir una orden) salía como chip crudo "pick deduction", y el
   // resto de eventos de conteo/generación sin etiqueta legible.
   pick_deduction: "wms_bs_mv_pick_deduction", exit_to_production: "wms_bs_mv_exit_to_production",
+  // Cajas de surtido (services/staging.py): el surtido ya no desaparece.
+  staged_pick: "wms_bs_mv_staged_pick", staged_unpick: "wms_bs_mv_staged_unpick",
+  staged_store: "wms_bs_mv_staged_store", staged_issue: "wms_bs_mv_staged_issue",
   cycle_count_shrink: "wms_bs_mv_cycle_count_shrink", cycle_count_manual_discard: "wms_bs_mv_cycle_count_manual_discard",
   cycle_count_manual_create: "wms_bs_mv_cycle_count_manual_create", cycle_count_bind_box: "wms_bs_mv_cycle_count_bind_box",
   box_generated: "wms_bs_mv_box_generated", box_style_restored: "wms_bs_mv_box_style_restored",

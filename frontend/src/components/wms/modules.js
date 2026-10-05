@@ -16,7 +16,7 @@
 import {
   Package, MapPin, ClipboardList, BarChart3, ClipboardCheck,
   CheckCircle, History, FileDown, ScanLine, Settings,
-  LayoutDashboard, Scissors, Clock, Truck, Move, ShieldCheck, ShieldAlert, Boxes,
+  LayoutDashboard, Scissors, Clock, Truck, Move, ShieldCheck, ShieldAlert, Boxes, PackageCheck,
 } from "lucide-react";
 
 /* Grupos del menú. `label`/`hint` son el respaldo en español para quien llame
@@ -87,6 +87,8 @@ export const buildModules = (t) => [
     desc: t('wms_mod_directed_desc') },
   { id: 'picking', group: 'out', label: t('wms_mod_picking'), icon: ClipboardCheck, color: 'text-indigo-400',
     desc: t('wms_mod_picking_desc') },
+  { id: 'staging', group: 'out', label: t('wms_mod_staging'), icon: PackageCheck, color: 'text-blue-400',
+    desc: t('wms_mod_staging_desc') },
   { id: 'neck_cutting', group: 'out', label: t('wms_mod_neck_cutting'), icon: Scissors, color: 'text-pink-400',
     desc: t('wms_mod_neck_cutting_desc') },
   { id: 'finished', group: 'out', label: t('wms_mod_finished'), icon: CheckCircle, color: 'text-cyan-400',
@@ -120,7 +122,7 @@ export const buildModules = (t) => [
    discrepar sobre qué ve cada quien. El backend valida igual por su cuenta. */
 // Respaldo de la escalera de inventarios por módulo (= WMS_MODULE_INVENTORY_DEFAULTS
 // del backend) por si /module-access aún no cargó: la lista blanca histórica.
-const INVENTORY_LEVEL_DEFAULTS = { locations: 1, mover: 1, cycle_count: 1, inventory: 1, aging: 1, movements: 1 };
+const INVENTORY_LEVEL_DEFAULTS = { locations: 1, mover: 1, cycle_count: 1, inventory: 1, aging: 1, movements: 1, staging: 1 };
 
 export const filterModules = (modules, currentUser, moduleLevels = {}, inventoryLevels = null) => modules.filter(m => {
   const invLevels = inventoryLevels || INVENTORY_LEVEL_DEFAULTS;
@@ -136,7 +138,7 @@ export const filterModules = (modules, currentUser, moduleLevels = {}, inventory
   if (invGrants) return true;
   // Roles con lista blanca propia — su piso NO lo mueve el panel de accesos.
   if (currentUser?.role === 'customer') return m.id === 'dashboard';
-  if (currentUser?.role === 'picker') return ['picking', 'transit', 'mover'].includes(m.id);
+  if (currentUser?.role === 'picker') return ['picking', 'transit', 'mover', 'staging'].includes(m.id);
 
   // Acceso configurable desde la app (Centro de usuarios / Configuración WMS).
   // Rige el MENÚ de todos los módulos para admin/general/ceo/supersu. Escala:

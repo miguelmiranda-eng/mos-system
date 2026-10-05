@@ -108,6 +108,10 @@ ACTIONS: dict = {
                          desc="Asignar picker, prioridad y ligar caja a un pick ticket."),
     "picking.priority_config": _a("Configurar prioridad de ubicaciones al surtir", "picking", 3, 3, floor_admin=1, floor_inventory=1,
                                   desc="Orden en que el surtido ofrece las familias de ubicación (piso, narrow, reserva…)."),
+    "staging.operate": _a("Guardar surtido en OM / entregar a piso", "picking", 1, 1, floor_admin=0, floor_inventory=0,
+                          desc="Escanear cajas de surtido hacia su ubicación destino (OM…) o entregarlas a producción."),
+    "staging.config": _a("Configurar ubicaciones de surtido", "picking", 3, 3, floor_admin=1, floor_inventory=1,
+                         desc="Ubicación de tránsito, ubicaciones destino (rangos OM) y tableros que cierran solos."),
     "finished.edit": _a("Editar producto terminado", "picking", 3, 3, floor_admin=1, floor_inventory=1,
                         desc="Modificar una caja de terminados."),
     # ── Catálogo UPC ────────────────────────────────────────────────────────

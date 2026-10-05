@@ -13,6 +13,7 @@ from wms_constants import (
 )
 from services import inventory_ledger as ledger
 from services import part_number as pn
+from services import staging
 from datetime import datetime, timezone, timedelta
 from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError
@@ -4338,6 +4339,27 @@ async def _deduct_pick_boxes(style, color, size, location, qty, inv_operation,
             ",".join(t["box_id"] for t in touched if t.get("box_id")) or "-",
             remaining if remaining > 0 else 0,
         )
+    # El material surtido NO desaparece: queda como caja de surtido (ticket ×
+    # talla) en la ubicación de tránsito hasta que se guarda en OM o se entrega
+    # a piso. Solo el surtido a producción ("deduct"); neck cutting y las
+    # reposiciones por incidencia tienen su propio destino. Un fallo aquí NO
+    # revierte el pick (las cajas de origen ya se descontaron): se registra
+    # como incidencia para crear la caja de surtido a mano.
+    if ticket_id and inv_operation == "deduct":
+        try:
+            await staging.stage_pick(
+                user=user, ticket_id=ticket_id, order_number=order_number, order_id=order_id,
+                customer=customer, style=style, color=color, size=size, qty=int(qty or 0),
+                origin_box_ids=[t["box_id"] for t in touched if t.get("box_id")],
+                origin_location=location or "")
+        except Exception:
+            logger.exception("stage_pick falló ticket=%s size=%s qty=%s", ticket_id, size, qty)
+            await _record_incident(
+                "surtido_sin_caja_de_surtido", user,
+                f"Se surtieron {int(qty or 0)} u de {style}/{color}/{size} para la orden "
+                f"{order_number} pero no se pudo crear su caja de surtido.",
+                material=f"{style}/{color}/{size}", location=location or "",
+                unidades=int(qty or 0), ticket_id=ticket_id, order_number=order_number)
 
 
 async def _available_units(style, color, size, location=""):
@@ -6808,6 +6830,8 @@ async def save_pick_progress(ticket_id: str, request: Request):
         for sz, loc, d in neg:
             # Correction downward: return the units to the shelf they came from.
             await _update_inventory_enhanced(style, color, sz, d, "add", location=loc, customer=customer)
+            if inv_op == "deduct":
+                await staging.unstage_pick(user=user, ticket_id=ticket_id, size=sz, qty=d)
     except HTTPException:
         raise
     except Exception as e:
@@ -7525,6 +7549,8 @@ async def pick_size(ticket_id: str, request: Request):
             applied.append((sz, loc, d))
         for sz, loc, d in neg:
             await _update_inventory_enhanced(style, color, sz, d, "add", location=loc, customer=customer)
+            if inv_op == "deduct":
+                await staging.unstage_pick(user=user, ticket_id=ticket_id, size=sz, qty=d)
             applied.append((sz, loc, -d))
     except Exception as exc:
         is_http = isinstance(exc, HTTPException)
@@ -8507,7 +8533,7 @@ WMS_MODULE_ACCESS_DEFAULTS = {
     "inventory": 0, "locations": 0, "mover": 0, "aging": 0, "cycle_count": 0,
     "reconciliation": SUPERSU_ONLY_LEVEL,
     # Salidas
-    "directed": 0, "picking": 0, "neck_cutting": 0, "finished": 0,
+    "directed": 0, "picking": 0, "neck_cutting": 0, "finished": 0, "staging": 0,
     # Analisis
     "dashboard": 0, "reports": 1, "movements": 0,
     # Sistema
@@ -8519,7 +8545,7 @@ WMS_MODULE_ACCESS_LABELS = {
     "aging": "Antigüedad", "cycle_count": "Conteo cíclico",
     "reconciliation": "Conciliación",
     "directed": "Trabajo Dirigido", "picking": "Picking",
-    "neck_cutting": "Corte de Neck", "finished": "Terminados",
+    "neck_cutting": "Corte de Neck", "finished": "Terminados", "staging": "Surtido por orden",
     "dashboard": "Dashboard", "reports": "Reportes", "movements": "Movimientos",
     "audit": "Auditoría", "incidents": "Incidencias", "home": "Configuración WMS",
 }
@@ -8534,7 +8560,7 @@ WMS_MODULE_INVENTORY_DEFAULTS = {
     "asn": None, "receiving": None, "transit": None,
     "inventory": 1, "locations": 1, "mover": 1, "aging": 1, "cycle_count": 1,
     "reconciliation": None,
-    "directed": None, "picking": None, "neck_cutting": None, "finished": None,
+    "directed": None, "picking": None, "neck_cutting": None, "finished": None, "staging": 1,
     "dashboard": None, "reports": None, "movements": 1,
     "audit": None, "incidents": None, "home": None,
 }
@@ -9480,6 +9506,7 @@ async def _selftest_cleanup(receiving_id, ticket_id, box_ids):
         {"details.box_id": {"$in": box_ids}} if box_ids else {"_id": None},
     ]})).deleted_count
     deleted["tasks"] = (await db.wms_tasks.delete_many({"context.sku": _SELFTEST_STYLE})).deleted_count
+    deleted["staged"] = (await db[staging.COLL].delete_many({"style": _SELFTEST_STYLE})).deleted_count
     return deleted
 
 

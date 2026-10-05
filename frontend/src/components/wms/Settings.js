@@ -7,9 +7,10 @@
    · Número de parte — IMMEX: prefijos, prendas, fibras… (asn.part_number_config);
                        Entradas conserva el botón como atajo al mismo panel
    · Columnas        — columnas personalizadas de Entradas (asn.columns)
+   · Surtido → OM    — tránsito y ubicaciones destino del surtido (staging.config)
    · Notificaciones  — alertas push de ESTE dispositivo (notifications.push) */
 import { useState } from "react";
-import { ShieldCheck, BookOpen, ScanLine, Hash, Columns3, Bell, BellOff, Send, Loader2, ClipboardCheck, EyeOff } from "lucide-react";
+import { ShieldCheck, BookOpen, ScanLine, Hash, Columns3, Bell, BellOff, Send, Loader2, ClipboardCheck, EyeOff, PackageCheck } from "lucide-react";
 import { useLang } from "../../contexts/LanguageContext";
 import { useWms } from "./lib";
 import { HomeModule } from "./Home";
@@ -19,6 +20,7 @@ import { AsnConfigPanel } from "./AsnConfigModal";
 import { AsnColumnsPanel } from "./AsnColumnsPanel";
 import { PickPriorityPanel } from "./PickPriorityPanel";
 import { HiddenLocationsPanel } from "./HiddenLocationsPanel";
+import { StagingConfigPanel } from "./StagingConfigPanel";
 import { Btn } from "./ui";
 
 const TAB_KEY = 'mos_wms_settings_tab';
@@ -35,6 +37,7 @@ export const SettingsModule = () => {
     ...(can('asn.part_number_config') ? [{ id: 'part_number', label: t('wms_settings_tab_part_number'), icon: Hash }] : []),
     ...(can('asn.columns') ? [{ id: 'columns', label: t('wms_settings_tab_columns'), icon: Columns3 }] : []),
     ...(can('picking.priority_config') ? [{ id: 'picking', label: t('wms_settings_tab_picking'), icon: ClipboardCheck }] : []),
+    ...(can('staging.config') ? [{ id: 'staging', label: t('wms_settings_tab_staging'), icon: PackageCheck }] : []),
     ...(can('inventory.hide_locations') ? [{ id: 'hidden', label: t('wms_settings_tab_hidden'), icon: EyeOff }] : []),
     ...(can('notifications.push') ? [{ id: 'notifications', label: t('wms_settings_tab_notifications'), icon: Bell }] : []),
   ];
@@ -65,6 +68,7 @@ export const SettingsModule = () => {
       {active === 'part_number' && <AsnConfigPanel embedded />}
       {active === 'columns' && <AsnColumnsPanel />}
       {active === 'picking' && <PickPriorityPanel />}
+      {active === 'staging' && <StagingConfigPanel />}
       {active === 'hidden' && <HiddenLocationsPanel />}
       {active === 'notifications' && <NotificationsPanel />}
     </div>

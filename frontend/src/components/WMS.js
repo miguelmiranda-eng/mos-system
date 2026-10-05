@@ -39,6 +39,7 @@ const TransitModule       = named(() => import("./wms/Transit"), "TransitModule"
 const MoverModule         = named(() => import("./wms/Mover"), "MoverModule");
 const AuditModule         = named(() => import("./wms/Audit"), "AuditModule");
 const TrazabilidadModule  = named(() => import("./wms/Trazabilidad"), "TrazabilidadModule");
+const StagingModule       = named(() => import("./wms/Staging"), "StagingModule");
 const ReconciliationModule = named(() => import("./wms/Reconciliation"), "ReconciliationModule");
 const IncidentsModule     = lazy(() => import("./wms/Incidents"));
 const ReportsModule       = lazy(() => import("./wms/Reports"));
@@ -64,6 +65,7 @@ const renderActiveModule = (moduleId, ctx) => {
     case 'neck_cutting': return <NeckCuttingModule />;
     case 'finished':     return <FinishedGoodsModule />;
     case 'trazabilidad': return <TrazabilidadModule />;
+    case 'staging':      return <StagingModule />;
     case 'movements':    return <MovementsModule />;
     case 'cycle_count':  return <CycleCountModule />;
     case 'asn':          return <AsnModule currentUser={ctx.currentUser} initialDetail={ctx.asnToOpen} />;
