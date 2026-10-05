@@ -4343,12 +4343,12 @@ async def _deduct_pick_boxes(style, color, size, location, qty, inv_operation,
             ",".join(t["box_id"] for t in touched if t.get("box_id")) or "-",
             remaining if remaining > 0 else 0,
         )
-    # El material surtido NO desaparece: queda como caja de surtido (ticket ×
-    # talla) en la ubicación de tránsito hasta que se guarda en OM o se entrega
-    # a piso. Solo el surtido a producción ("deduct"); neck cutting y las
-    # reposiciones por incidencia tienen su propio destino. Un fallo aquí NO
-    # revierte el pick (las cajas de origen ya se descontaron): se registra
-    # como incidencia para crear la caja de surtido a mano.
+    # El material surtido NO desaparece: se suma al SURTIDO del ticket (uno
+    # por pick ticket, con desglose por talla) en la ubicación de tránsito
+    # hasta que se guarda en OM o se entrega a piso. Solo el surtido a
+    # producción ("deduct"); neck cutting tiene su propio destino. Un fallo
+    # aquí NO revierte el pick (las cajas de origen ya se descontaron): se
+    # registra como incidencia para corregir el surtido a mano.
     if ticket_id and inv_operation == "deduct":
         try:
             await staging.stage_pick(
@@ -4361,7 +4361,7 @@ async def _deduct_pick_boxes(style, color, size, location, qty, inv_operation,
             await _record_incident(
                 "surtido_sin_caja_de_surtido", user,
                 f"Se surtieron {int(qty or 0)} u de {style}/{color}/{size} para la orden "
-                f"{order_number} pero no se pudo crear su caja de surtido.",
+                f"{order_number} pero no se pudo registrar en su surtido.",
                 material=f"{style}/{color}/{size}", location=location or "",
                 unidades=int(qty or 0), ticket_id=ticket_id, order_number=order_number)
 

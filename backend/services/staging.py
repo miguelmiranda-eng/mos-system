@@ -1,4 +1,4 @@
-"""Cajas de SURTIDO: el material surtido sigue en el mapa hasta que entra a piso.
+"""SURTIDOS por locacionar: el material surtido sigue en el mapa hasta que entra a piso.
 
 EL HUECO QUE LLENA
 El pick descuenta piezas de la caja de origen (`_deduct_pick_boxes`) y ahí se
@@ -6,19 +6,26 @@ acababa el rastro: el material ya surtido —que todavía no entra a producción
 se guarda físicamente en los racks OM— desaparecía del WMS. Nadie podía decir
 para qué orden estaba ni en qué ubicación.
 
-EL MODELO
-Cada descuento de pick de una orden genera (o engorda) una CAJA DE SURTIDO
-por ticket × talla, en una ubicación de TRÁNSITO. De ahí:
-  · se escanea hacia una ubicación DESTINO (OM-A07…, configurable), o
-  · se escanea "a piso" (entregada a producción) y sale del mapa con rastro.
+EL MODELO: UN PICK TICKET = UN SURTIDO
+Todo lo que se surte de un pick ticket (cualquier talla, en una o varias
+pasadas) se junta en UN surtido, con el desglose por talla adentro. Cae en UNA
+ubicación fija de tránsito ("SURTIDO POR LOCACIONAR", configurable; se da de
+alta una sola vez) y desde ahí se decide: escanear la etiqueta del pick ticket
+(o teclear la orden) y luego la ubicación OM, o mandarlo a piso.
+
+HISTORIA: la primera versión (2026-10-05, commit bea2307) hacía una caja de
+surtido por ticket × TALLA con etiqueta propia. En el almacén no sirvió: un
+ticket de 5 tallas eran 5 etiquetas y 5 escaneos para locacionar. El usuario
+pidió que la unidad sea el ticket completo y que se escanee la etiqueta que ya
+imprimen. Una ronda de resurtido (<padre>-R1) es otro bulto físico y es su
+propio surtido.
 
 POR QUÉ UNA COLECCIÓN APARTE (`wms_staged_boxes`) Y NO `wms_boxes`
 `wms_boxes` es la verdad del inventario DISPONIBLE: de ahí sale el surtido, la
 reproyección de `wms_inventory`, conteos, conciliación, fantasmas, exportes.
-Una caja de surtido ya tiene dueño (la orden): si viviera en `wms_boxes`, cada
-uno de esos flujos tendría que aprender a ignorarla, y el primero que se
-olvide la vuelve a ofrecer para surtir o la reporta como stock fantasma. Aparte
-es imposible que se cuele en el disponible.
+Un surtido ya tiene dueño (la orden): si viviera en `wms_boxes`, cada uno de
+esos flujos tendría que aprender a ignorarlo, y el primero que se olvide lo
+vuelve a ofrecer para surtir o lo reporta como stock fantasma.
 
 LO QUE NO CAMBIA
 El movimiento `pick_deduction` sigue igual: qty_embarcada y el packing de
@@ -39,17 +46,17 @@ from deps import db
 COLL = "wms_staged_boxes"
 CONFIG_ID = "wms_staging_locations"
 
-# Estados de una caja de surtido.
-TRANSIT = "transit"     # recién surtida, en la ubicación de tránsito
-STORED = "stored"       # guardada en una ubicación destino (OM…)
-ISSUED = "issued"       # entregada a piso: ya no está en el mapa
+# Estados de un surtido.
+TRANSIT = "transit"     # en la ubicación de tránsito (por locacionar)
+STORED = "stored"       # guardado en una ubicación destino (OM…)
+ISSUED = "issued"       # entregado a piso: ya no está en el mapa
 LIVE = (TRANSIT, STORED)
 
 DEFAULT_CFG = {
-    "transit": ["TRANSITO SURTIDO"],
+    "transit": ["SURTIDO POR LOCACIONAR"],
     "destinations": ["OM-A07..OM-A38", "OM-B07..OM-B38", "OM-C07..OM-C38"],
-    # Órdenes en estos tableros ya no tienen material en el almacén: sus cajas
-    # vivas se cierran solas como entregadas (respaldo del escaneo).
+    # Órdenes en estos tableros ya no tienen material en el almacén: sus
+    # surtidos vivos se cierran solos como entregados (respaldo del escaneo).
     "auto_issue_boards": ["FINAL BILL", "COMPLETOS"],
 }
 
@@ -162,10 +169,9 @@ _TRANSIT_OK: set = set()
 
 
 async def ensure_transit_locations(cfg: dict | None = None) -> list[str]:
-    """Da de alta las ubicaciones de tránsito que falten, igual que el módulo
-    de retornos hace con RETORNO PRODUCCION (tipo 'transit'). Así existen para
-    el listado de Ubicaciones, para imprimir su etiqueta y para escanearlas,
-    aunque alguien cambie el nombre en Configuración. Devuelve las creadas."""
+    """Da de alta la(s) ubicación(es) de tránsito configuradas si faltan —UNA
+    vez, no una por ticket— igual que el módulo de retornos con RETORNO
+    PRODUCCION (tipo 'transit'). Devuelve las creadas."""
     cfg = cfg or await get_cfg()
     created = []
     for name in cfg["transit"]:
@@ -196,8 +202,7 @@ def is_transit(cfg: dict, name: str) -> bool:
 async def destination_locations(cfg: dict) -> list[str]:
     """Ubicaciones dadas de alta en wms_locations que caen en las reglas destino."""
     names = await db.wms_locations.distinct("name", {"active": {"$ne": False}})
-    out = sorted({_up(n) for n in names if n and is_destination(cfg, n)})
-    return out
+    return sorted({_up(n) for n in names if n and is_destination(cfg, n)})
 
 
 # ── Identificador ────────────────────────────────────────────────────────────
@@ -214,16 +219,17 @@ async def _log(user, movement_type, details):
     await log_movement(user or {"user_id": "system", "name": "system"}, movement_type, details)
 
 
+def _resupply_round(ticket_id) -> int | None:
+    m = re.search(r"-R(\d+)$", str(ticket_id or ""))
+    return int(m.group(1)) if m else None
+
+
 # ── Altas y bajas desde el pick ──────────────────────────────────────────────
 async def stage_pick(*, user, ticket_id, order_number, order_id, customer,
                      style, color, size, qty, origin_box_ids=None, origin_location=""):
-    """Suma `qty` piezas surtidas a la caja de surtido de (ticket, talla) que
-    sigue en tránsito; si no hay (o ya se guardó en OM), abre una nueva.
-
-    Una sola caja por talla mientras esté en tránsito: el picker puede surtir
-    la talla M de tres cajas de origen y físicamente es UN bulto para la orden.
-    Si ese bulto ya se guardó en OM y luego se surte más M, eso es otro bulto
-    físico y merece su propia etiqueta."""
+    """Suma `qty` piezas de `size` al surtido del ticket. Un ticket tiene UN
+    surtido vivo: si ya existe (en tránsito o guardado en OM) se le suman las
+    piezas; si no, nace en la ubicación de tránsito."""
     qty = int(qty or 0)
     if qty <= 0 or not ticket_id:
         return None
@@ -233,22 +239,23 @@ async def stage_pick(*, user, ticket_id, order_number, order_id, customer,
         await ensure_transit_locations(cfg)
     size = _up(size)
     origin_box_ids = [b for b in (origin_box_ids or []) if b]
-    origin = {"location": _up(origin_location), "box_ids": origin_box_ids, "qty": qty, "at": _now()}
+    origin = {"size": size, "location": _up(origin_location), "box_ids": origin_box_ids,
+              "qty": qty, "at": _now()}
     doc = await db[COLL].find_one_and_update(
-        {"ticket_id": ticket_id, "size": size, "status": TRANSIT},
-        {"$inc": {"units": qty, "picked_units": qty},
-         "$push": {"origins": {"$each": [origin], "$slice": -200}},
+        {"ticket_id": ticket_id, "status": {"$in": list(LIVE)}},
+        {"$inc": {"units": qty, "picked_units": qty, f"sizes.{size}": qty},
+         "$push": {"origins": {"$each": [origin], "$slice": -500}},
          "$set": {"updated_at": _now()}},
-        sort=[("created_at", -1)], return_document=ReturnDocument.AFTER)
+        return_document=ReturnDocument.AFTER)
     created = False
     if not doc:
-        staged_id = await _next_staged_id()
         doc = {
-            "staged_id": staged_id, "status": TRANSIT, "location": transit,
+            "staged_id": await _next_staged_id(), "status": TRANSIT, "location": transit,
             "ticket_id": ticket_id, "order_number": str(order_number or ""),
             "order_id": order_id, "customer": customer or "",
-            "style": _up(style), "color": _up(color), "size": size,
+            "style": _up(style), "color": _up(color), "sizes": {size: qty},
             "units": qty, "picked_units": qty, "origins": [origin],
+            "resupply_round": _resupply_round(ticket_id),
             "created_at": _now(), "updated_at": _now(),
             "created_by": (user or {}).get("user_id"),
             "created_by_name": (user or {}).get("name", ""),
@@ -268,36 +275,28 @@ async def stage_pick(*, user, ticket_id, order_number, order_id, customer,
 
 async def unstage_pick(*, user, ticket_id, size, qty, reason="pick_correction"):
     """El picker corrigió a la baja: esas piezas vuelven al rack, así que salen
-    de las cajas de surtido de ese ticket/talla. Primero de lo que sigue en
-    tránsito (lo más reciente), luego de lo guardado. Lo que no alcance se
-    registra — significa que ya se había entregado a piso."""
-    remaining = int(qty or 0)
-    if remaining <= 0 or not ticket_id:
+    del surtido del ticket. Lo que no alcance se registra (ya se había
+    entregado a piso)."""
+    qty = int(qty or 0)
+    if qty <= 0 or not ticket_id:
         return 0
     size = _up(size)
-    boxes = await db[COLL].find(
-        {"ticket_id": ticket_id, "size": size, "status": {"$in": list(LIVE)}, "units": {"$gt": 0}}
-    ).sort([("status", -1), ("created_at", -1)]).to_list(100)   # 'transit' > 'stored'
-    touched = []
-    for b in boxes:
-        if remaining <= 0:
-            break
-        take = min(int(b["units"]), remaining)
+    b = await db[COLL].find_one({"ticket_id": ticket_id, "status": {"$in": list(LIVE)}})
+    take = min(qty, int(((b or {}).get("sizes") or {}).get(size, 0) or 0))
+    if take > 0:
         new_units = int(b["units"]) - take
-        upd = {"units": new_units, "updated_at": _now()}
-        if new_units == 0:
+        upd = {"units": new_units, "updated_at": _now(), f"sizes.{size}": int(b["sizes"][size]) - take}
+        if new_units <= 0:
             upd["status"] = "voided"
         await db[COLL].update_one({"_id": b["_id"], "units": b["units"]}, {
             "$set": upd,
-            "$push": {"history": {"at": _now(), "action": "unpicked", "qty": take,
+            "$push": {"history": {"at": _now(), "action": "unpicked", "size": size, "qty": take,
                                   "by": (user or {}).get("name", ""), "reason": reason}}})
-        touched.append({"staged_id": b["staged_id"], "qty": take})
-        remaining -= take
     await _log(user, "staged_unpick", {
-        "ticket_id": ticket_id, "size": size, "qty": int(qty), "boxes": touched,
-        "not_found_units": remaining, "reason": reason,
+        "ticket_id": ticket_id, "size": size, "qty": qty,
+        "staged_id": (b or {}).get("staged_id"), "not_found_units": qty - take, "reason": reason,
     })
-    return int(qty) - remaining
+    return take
 
 
 # ── Operación: guardar en OM / entregar a piso ───────────────────────────────
@@ -309,12 +308,35 @@ class StagingError(Exception):
 
 
 async def find_live(code: str):
-    code = _up(code)
-    return await db[COLL].find_one({"staged_id": code, "status": {"$in": list(LIVE)}}, {"_id": 0})
+    """Surtido vivo por su id interno o por el ticket (lo que trae la etiqueta
+    del pick ticket; el escáner lo manda en mayúsculas)."""
+    code = (code or "").strip()
+    if not code:
+        return None
+    return await db[COLL].find_one(
+        {"status": {"$in": list(LIVE)},
+         "$or": [{"staged_id": code.upper()},
+                 {"ticket_id": {"$regex": f"^{re.escape(code)}$", "$options": "i"}}]},
+        {"_id": 0})
+
+
+async def resolve(code: str) -> list:
+    """Lo que el operador escaneó o tecleó: etiqueta del pick ticket, id del
+    surtido o número de orden. Devuelve los surtidos vivos que coinciden (una
+    orden con varios estilos/colores puede traer varios)."""
+    b = await find_live(code)
+    if b:
+        return [b]
+    code = (code or "").strip()
+    if not code:
+        return []
+    return await db[COLL].find(
+        {"status": {"$in": list(LIVE)}, "order_number": code},
+        {"_id": 0, "origins": 0, "history": 0}).sort("ticket_id", 1).to_list(50)
 
 
 async def store(*, user, staged_ids: list[str], location: str) -> dict:
-    """Escanear caja(s) de surtido → escanear ubicación destino."""
+    """Surtido(s) → ubicación destino (OM…) o de regreso a tránsito."""
     cfg = await get_cfg()
     loc = _up(location)
     if not loc:
@@ -324,23 +346,23 @@ async def store(*, user, staged_ids: list[str], location: str) -> dict:
                                 + ", ".join(cfg["destinations"]))
     if not await db.wms_locations.find_one({"name": {"$regex": f"^{re.escape(loc)}$", "$options": "i"}}):
         raise StagingError(404, f"La ubicación {loc} no existe en el WMS")
-    ids = [_up(s) for s in staged_ids if _up(s)]
+    ids = [str(s).strip() for s in staged_ids if str(s or "").strip()]
     if not ids:
-        raise StagingError(400, "Escanea al menos una caja de surtido")
+        raise StagingError(400, "Escanea al menos un surtido (pick ticket u orden)")
     moved, errors = [], []
-    for sid in ids:
-        b = await find_live(sid)
+    for code in ids:
+        b = await find_live(code)
         if not b:
-            errors.append(f"{sid}: no existe o ya se entregó a piso")
+            errors.append(f"{code}: no existe o ya se entregó a piso")
             continue
         new_status = TRANSIT if is_transit(cfg, loc) else STORED
-        await db[COLL].update_one({"staged_id": sid}, {
+        await db[COLL].update_one({"staged_id": b["staged_id"]}, {
             "$set": {"location": loc, "status": new_status, "updated_at": _now(),
                      "stored_at": _now(), "stored_by_name": (user or {}).get("name", "")},
             "$push": {"history": {"at": _now(), "action": "stored", "from": b["location"],
                                   "location": loc, "by": (user or {}).get("name", "")}}})
-        moved.append({"staged_id": sid, "from": b["location"], "to": loc,
-                      "order_number": b.get("order_number"), "units": b.get("units")})
+        moved.append({"staged_id": b["staged_id"], "ticket_id": b.get("ticket_id"), "from": b["location"],
+                      "to": loc, "order_number": b.get("order_number"), "units": b.get("units")})
     if moved:
         await _log(user, "staged_store", {"location": loc, "boxes": moved,
                                           "qty": sum(int(m["units"] or 0) for m in moved)})
@@ -348,23 +370,23 @@ async def store(*, user, staged_ids: list[str], location: str) -> dict:
 
 
 async def issue(*, user, staged_ids: list[str], reason: str = "scan") -> dict:
-    """Entregar a piso: la caja sale del mapa (status issued) con rastro."""
-    ids = [_up(s) for s in staged_ids if _up(s)]
+    """Entregar a piso: el surtido sale del mapa (status issued) con rastro."""
+    ids = [str(s).strip() for s in staged_ids if str(s or "").strip()]
     if not ids:
-        raise StagingError(400, "Escanea al menos una caja de surtido")
+        raise StagingError(400, "Escanea al menos un surtido (pick ticket u orden)")
     issued, errors = [], []
-    for sid in ids:
-        b = await find_live(sid)
+    for code in ids:
+        b = await find_live(code)
         if not b:
-            errors.append(f"{sid}: no existe o ya se entregó a piso")
+            errors.append(f"{code}: no existe o ya se entregó a piso")
             continue
-        await db[COLL].update_one({"staged_id": sid}, {
+        await db[COLL].update_one({"staged_id": b["staged_id"]}, {
             "$set": {"status": ISSUED, "issued_at": _now(), "issued_from": b["location"],
                      "issued_by_name": (user or {}).get("name", ""), "issue_reason": reason,
                      "updated_at": _now()},
             "$push": {"history": {"at": _now(), "action": "issued", "from": b["location"],
                                   "by": (user or {}).get("name", ""), "reason": reason}}})
-        issued.append({"staged_id": sid, "from": b["location"],
+        issued.append({"staged_id": b["staged_id"], "ticket_id": b.get("ticket_id"), "from": b["location"],
                        "order_number": b.get("order_number"), "units": b.get("units")})
     if issued:
         await _log(user, "staged_issue", {"boxes": issued, "reason": reason,
@@ -374,34 +396,97 @@ async def issue(*, user, staged_ids: list[str], reason: str = "scan") -> dict:
 
 async def auto_issue_closed_orders(user=None) -> int:
     """Respaldo del escaneo: si la orden ya llegó a un tablero de cierre
-    (FINAL BILL, COMPLETOS…) y su caja seguía en el mapa, el material ya no
-    está — se cierra como entregada con motivo 'auto'. Órdenes canceladas NO:
+    (FINAL BILL, COMPLETOS…) y su surtido seguía en el mapa, el material ya no
+    está — se cierra como entregado con motivo 'auto'. Órdenes canceladas NO:
     ese material sigue físicamente aquí y alguien tiene que regresarlo."""
     cfg = await get_cfg()
     boards = cfg.get("auto_issue_boards") or []
     if not boards:
         return 0
-    orders = await db[COLL].distinct("order_number", {"status": {"$in": list(LIVE)}})
-    orders = [o for o in orders if o]
+    orders = [o for o in await db[COLL].distinct("order_number", {"status": {"$in": list(LIVE)}}) if o]
     if not orders:
         return 0
-    closed = await db.orders.distinct("order_number", {
-        "order_number": {"$in": orders},
-        "board": {"$in": boards}})
+    closed = await db.orders.distinct("order_number", {"order_number": {"$in": orders}, "board": {"$in": boards}})
     if not closed:
         return 0
-    ids = await db[COLL].distinct("staged_id", {"order_number": {"$in": closed},
-                                                "status": {"$in": list(LIVE)}})
+    ids = await db[COLL].distinct("staged_id", {"order_number": {"$in": closed}, "status": {"$in": list(LIVE)}})
     if ids:
         await issue(user=user or {"user_id": "system", "name": "system"}, staged_ids=ids, reason="auto")
     return len(ids)
 
 
+# ── Arranque: índices, tránsito y migración de la primera versión ────────────
+async def migrate_per_size_boxes() -> dict:
+    """Migración única de la primera versión (una caja por ticket × talla) al
+    modelo actual (un surtido por ticket con `sizes`). Junta las cajas vivas de
+    cada ticket en un solo surtido: conserva la ubicación si todas estaban en
+    la misma ubicación destino; si no, va al tránsito vigente. Idempotente:
+    solo toca documentos sin `sizes`."""
+    cfg = await get_cfg()
+    viejos = await db[COLL].find({"sizes": {"$exists": False}}).to_list(10000)
+    if not viejos:
+        return {"merged": 0, "old_docs": 0}
+    por_ticket = {}
+    for d in viejos:
+        por_ticket.setdefault(d.get("ticket_id"), []).append(d)
+    merged = 0
+    for tid, docs in por_ticket.items():
+        vivos = [d for d in docs if d.get("status") in LIVE and int(d.get("units") or 0) > 0]
+        if vivos:
+            sizes = {}
+            for d in vivos:
+                sz = _up(d.get("size"))
+                sizes[sz] = sizes.get(sz, 0) + int(d["units"])
+            locs = {d.get("location") for d in vivos}
+            loc = locs.pop() if len(locs) == 1 else ""
+            dest = bool(loc) and is_destination(cfg, loc)
+            base = vivos[0]
+            await db[COLL].insert_one({
+                "staged_id": await _next_staged_id(), "ticket_id": tid,
+                "status": STORED if dest else TRANSIT, "location": loc if dest else cfg["transit"][0],
+                "order_number": base.get("order_number", ""), "order_id": base.get("order_id"),
+                "customer": base.get("customer", ""), "style": base.get("style", ""),
+                "color": base.get("color", ""), "sizes": sizes, "units": sum(sizes.values()),
+                "picked_units": sum(sizes.values()),
+                "origins": [o for d in vivos for o in (d.get("origins") or [])][-500:],
+                "resupply_round": _resupply_round(tid),
+                "created_at": min(d.get("created_at") or _now() for d in vivos), "updated_at": _now(),
+                "history": [{"at": _now(), "action": "migrated",
+                             "from_ids": [d["staged_id"] for d in vivos]}],
+            })
+            merged += 1
+        await db[COLL].update_many(
+            {"_id": {"$in": [d["_id"] for d in docs]}},
+            {"$set": {"status": "merged", "sizes": {}, "merged_at": _now()}})
+    await _log(None, "staged_migrated", {"tickets": len(por_ticket), "merged": merged, "old_docs": len(viejos)})
+    return {"merged": merged, "old_docs": len(viejos)}
+
+
+async def retire_old_transit(name: str = "TRANSITO SURTIDO") -> bool:
+    """La primera versión creó la ubicación TRANSITO SURTIDO. Si ya no es la de
+    tránsito configurada, la creó el sistema y está vacía, se elimina."""
+    cfg = await get_cfg()
+    if name in cfg["transit"]:
+        return False
+    loc = await db.wms_locations.find_one({"name": name, "created_by": "system:staging"})
+    if not loc:
+        return False
+    if (await db.wms_boxes.count_documents({"location": name, "units": {"$gt": 0}})
+            or await db[COLL].count_documents({"location": name, "status": {"$in": list(LIVE)}})):
+        return False
+    await db.wms_locations.delete_one({"_id": loc["_id"]})
+    await _log(None, "staged_old_transit_removed", {"location": name})
+    return True
+
+
 async def ensure_indexes():
     c = db[COLL]
     await c.create_index("staged_id", unique=True)
-    await c.create_index([("ticket_id", 1), ("size", 1), ("status", 1)])
+    await c.create_index([("ticket_id", 1), ("status", 1)])
     await c.create_index([("order_number", 1), ("status", 1)])
     await c.create_index([("location", 1), ("status", 1)])
-    # Al arrancar el servidor la ubicación de tránsito ya queda dada de alta.
+    # Al arrancar: la ubicación de tránsito existe (una sola), lo de la primera
+    # versión se migra y la ubicación vieja (vacía) se retira.
     await ensure_transit_locations()
+    await migrate_per_size_boxes()
+    await retire_old_transit()

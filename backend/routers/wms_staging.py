@@ -1,4 +1,4 @@
-"""Surtido por orden: cajas de surtido en tránsito / OM / entregadas a piso.
+"""Surtido por orden: un surtido por pick ticket, en tránsito / OM / entregado a piso.
 
 La lógica vive en services/staging.py (ahí está el porqué del modelo). Este
 router es la puerta HTTP: listar, buscar, guardar en OM, entregar a piso y la
@@ -42,8 +42,8 @@ async def staging_config_put(request: Request):
 
 @router.get("")
 async def staging_list(request: Request, q: str = "", location: str = ""):
-    """Cajas de surtido vivas (tránsito + guardadas), con resumen por orden y
-    por ubicación. `q` filtra por orden, caja SRT, estilo o color."""
+    """Surtidos vivos (tránsito + guardados), con resumen por orden y
+    por ubicación. `q` filtra por orden, pick ticket, estilo o color."""
     await require_auth(request)
     await staging.auto_issue_closed_orders()
     match = {"status": {"$in": list(staging.LIVE)}}
@@ -53,9 +53,9 @@ async def staging_list(request: Request, q: str = "", location: str = ""):
     qq = (q or "").strip()
     if qq:
         rx = {"$regex": re.escape(qq), "$options": "i"}
-        match["$or"] = [{"order_number": rx}, {"staged_id": rx}, {"style": rx}, {"color": rx}]
+        match["$or"] = [{"order_number": rx}, {"ticket_id": rx}, {"staged_id": rx}, {"style": rx}, {"color": rx}]
     boxes = await db[staging.COLL].find(match, {"_id": 0, "origins": 0, "history": 0}) \
-        .sort([("order_number", 1), ("style", 1), ("color", 1), ("size", 1)]).to_list(5000)
+        .sort([("order_number", 1), ("ticket_id", 1)]).to_list(5000)
 
     by_order, by_loc = {}, {}
     for b in boxes:
@@ -96,21 +96,31 @@ async def staging_list(request: Request, q: str = "", location: str = ""):
 
 @router.get("/lookup")
 async def staging_lookup(request: Request, code: str):
-    """Resuelve un escaneo: caja de surtido (cualquier estado) o ubicación."""
+    """Resuelve lo que se escaneó o tecleó: etiqueta del pick ticket, número de
+    orden (si trae varios surtidos vivos devuelve las opciones) o ubicación."""
     await require_auth(request)
-    c = (code or "").strip().upper()
+    raw = (code or "").strip()
+    c = raw.upper()
     if not c:
         raise HTTPException(400, "code requerido")
-    box = await db[staging.COLL].find_one({"staged_id": c}, {"_id": 0, "origins": 0})
-    if box:
-        return {"kind": "box", "box": box}
+    found = await staging.resolve(raw)
+    if len(found) == 1:
+        found[0].pop("origins", None)
+        return {"kind": "box", "box": found[0]}
+    if len(found) > 1:
+        return {"kind": "choices", "order_number": raw, "boxes": found}
+    done = await db[staging.COLL].find_one(
+        {"$or": [{"ticket_id": {"$regex": f"^{re.escape(raw)}$", "$options": "i"}}, {"order_number": raw}],
+         "status": staging.ISSUED}, {"_id": 0, "origins": 0})
+    if done:
+        return {"kind": "box", "box": done}
     cfg = await staging.get_cfg()
     if staging.is_destination(cfg, c) or staging.is_transit(cfg, c):
         boxes = await db[staging.COLL].find(
             {"location": c, "status": {"$in": list(staging.LIVE)}},
             {"_id": 0, "origins": 0, "history": 0}).to_list(2000)
         return {"kind": "location", "location": c, "is_transit": staging.is_transit(cfg, c), "boxes": boxes}
-    raise HTTPException(404, f"{c} no es una caja de surtido ni una ubicación de surtido")
+    raise HTTPException(404, f"{raw}: no hay surtido para ese pick ticket u orden, ni es una ubicación de surtido")
 
 
 @router.get("/order/{order_number}")
@@ -118,7 +128,7 @@ async def staging_order(order_number: str, request: Request):
     """Todo el surtido de una orden, incluido lo ya entregado a piso."""
     await require_auth(request)
     boxes = await db[staging.COLL].find({"order_number": str(order_number)}, {"_id": 0, "origins": 0}) \
-        .sort([("style", 1), ("color", 1), ("size", 1)]).to_list(2000)
+        .sort([("ticket_id", 1), ("created_at", 1)]).to_list(2000)
     return {"order_number": str(order_number), "boxes": boxes}
 
 

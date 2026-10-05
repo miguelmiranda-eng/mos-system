@@ -1,17 +1,17 @@
 /* Salidas → Surtido por orden. El material surtido ya no desaparece del WMS:
-   cada pick deja una CAJA DE SURTIDO (SRT-…) por ticket × talla en la ubicación
-   de tránsito. Aquí se escanea hacia su ubicación destino (OM, configurable en
-   Configuración → Surtido → OM) o se entrega a piso. Backend:
+   cada pick ticket es UN surtido (con su desglose por talla) que cae en la
+   ubicación de tránsito «SURTIDO POR LOCACIONAR». Aquí se escanea la etiqueta
+   del pick ticket —o se teclea la orden— y luego la ubicación OM, o se manda a
+   piso. Destinos configurables en Configuración → Surtido → OM. Backend:
    routers/wms_staging.py + services/staging.py.
 
    Pestañas:
-   · Escanear  — cajas → ubicación (guardar) o «Entregar a piso»
+   · Escanear  — surtidos → ubicación (guardar) o «Entregar a piso»
    · Por orden — qué hay de cada orden y dónde
    · Mapa OM   — cada ubicación destino con sus órdenes */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Loader2, RefreshCw, ScanLine, X, Truck, Printer, Search } from "lucide-react";
+import { Loader2, RefreshCw, ScanLine, X, Truck, Search, Plus } from "lucide-react";
 import { toast } from "sonner";
-import JsBarcode from "jsbarcode";
 import { useLang } from "../../contexts/LanguageContext";
 import { fetcher, poster, cleanScan, scanFeedback, useWms } from "./lib";
 import { Btn, Card, Chip, EmptyState, StatCard, TableShell, Th, cls, tableCls } from "./ui";
@@ -25,38 +25,20 @@ const statusChip = (t, st) => {
   return <Chip tone="success">{t('wms_stg_st_issued')}</Chip>;
 };
 
-/* Etiqueta 4x6 de una o varias cajas de surtido (una por página). */
-const printLabels = (boxes) => {
-  if (!boxes.length) return;
-  const pw = window.open('', '_blank');
-  if (!pw) return;
-  const pages = boxes.map(b => {
-    const svgEl = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    JsBarcode(svgEl, b.staged_id, { width: 2, height: 60, displayValue: true, fontSize: 16, margin: 0 });
-    return `<div class="pg"><div class="cli">${b.customer || ''}</div>
-      <div class="ord">ORDEN ${b.order_number || ''}</div>
-      <div class="bc">${svgEl.outerHTML}</div>
-      <table><tr><td>Style</td><td><b>${b.style || ''}</b></td></tr>
-      <tr><td>Color</td><td><b>${b.color || ''}</b></td></tr>
-      <tr><td>Talla</td><td class="big">${b.size || ''}</td></tr>
-      <tr><td>Piezas</td><td class="big">${b.units || 0}</td></tr></table>
-      <div class="tk">${b.ticket_id || ''}</div></div>`;
-  }).join('');
-  pw.document.write(`<html><head><meta charset="utf-8"><title>Surtido</title><style>
-    @page{size:4in 6in;margin:6mm}body{font-family:Arial,sans-serif;margin:0}
-    .pg{width:3.6in;page-break-after:always;padding:6px}.cli{text-align:center;font-size:14px;font-weight:bold}
-    .ord{text-align:center;font-size:30px;font-weight:900;margin:8px 0}.bc{text-align:center;margin:6px 0 10px}
-    table{width:100%;border-collapse:collapse}td{border:1px solid #000;padding:5px;font-size:14px}
-    .big{font-size:26px;font-weight:900}.tk{font-size:9px;color:#666;font-family:monospace;margin-top:6px}
-    </style></head><body>${pages}<script>setTimeout(function(){window.print()},300);<\/script></body></html>`);
-  pw.document.close();
-};
+const SIZE_ORDER = ['XXS', 'XS', 'S', 'M', 'L', 'XL', '2X', '3X', '4X', '5X', '6X'];
+const sizeRank = (k) => { const i = SIZE_ORDER.indexOf(k); return i < 0 ? 99 : i; };
+/* "S:240 M:480 L:480" en orden de talla. */
+const sizesText = (sizes) => Object.entries(sizes || {}).filter(([, v]) => v > 0)
+  .sort(([a], [b]) => sizeRank(a) - sizeRank(b) || a.localeCompare(b)).map(([k, v]) => `${k}:${v}`).join('  ');
+/* pick_ab12cd-R1 -> ab12cd-R1 (como lo muestra Picking). */
+const ticketShort = (id) => (id || '').split('_')[1] || id || '';
 
-/* ── Escanear: cajas → ubicación / piso ─────────────────────────────────── */
+/* ── Escanear: surtidos → ubicación / piso ─────────────────────────────────── */
 const ScanTab = ({ canOperate, onChanged }) => {
   const { t } = useLang();
   const [code, setCode] = useState('');
   const [cart, setCart] = useState([]);
+  const [choices, setChoices] = useState(null);   // orden con varios surtidos
   const [busy, setBusy] = useState(false);
   const inputRef = useRef(null);
   useEffect(() => { inputRef.current?.focus(); }, []);
@@ -91,6 +73,13 @@ const ScanTab = ({ canOperate, onChanged }) => {
     } finally { setBusy(false); }
   };
 
+  const addToCart = (b) => {
+    if (!['transit', 'stored'].includes(b.status)) { scanFeedback('error'); toast.error(t('wms_stg_not_live')); return; }
+    if (cart.some(x => x.staged_id === b.staged_id)) { scanFeedback('dup'); toast(t('wms_stg_already_cart')); return; }
+    scanFeedback('ok');
+    setCart(prev => [...prev, b]);
+  };
+
   const onScan = async (e) => {
     e.preventDefault();
     const c = cleanScan(code);
@@ -100,11 +89,10 @@ const ScanTab = ({ canOperate, onChanged }) => {
     try { r = await fetcher(`/staging/lookup?code=${encodeURIComponent(c)}`); }
     catch { scanFeedback('error'); toast.error(t('wms_stg_unknown')); return; }
     if (r.kind === 'box') {
-      const b = r.box;
-      if (!['transit', 'stored'].includes(b.status)) { scanFeedback('error'); toast.error(t('wms_stg_not_live')); return; }
-      if (cart.some(x => x.staged_id === b.staged_id)) { scanFeedback('dup'); toast(t('wms_stg_already_cart')); return; }
-      scanFeedback('ok');
-      setCart(prev => [...prev, b]);
+      addToCart(r.box);
+    } else if (r.kind === 'choices') {
+      scanFeedback('dup');
+      setChoices({ order: r.order_number, boxes: r.boxes });
     } else if (r.kind === 'location') {
       await store(r.location);
     }
@@ -126,11 +114,28 @@ const ScanTab = ({ canOperate, onChanged }) => {
           {busy && <Loader2 className="w-5 h-5 animate-spin self-center text-primary" />}
         </form>
       </Card>
+      {choices && (
+        <Card className="p-4 space-y-2" data-testid="staging-choices">
+          <div className="flex items-center justify-between">
+            <div className="text-sm font-semibold">{t('wms_stg_choose', { order: choices.order })}</div>
+            <button onClick={() => setChoices(null)} className="text-muted-foreground hover:text-foreground"><X className="w-4 h-4" /></button>
+          </div>
+          {choices.boxes.map(b => (
+            <div key={b.staged_id} className="flex items-center gap-3 text-sm border border-border rounded-md px-3 py-2">
+              <span className="font-mono font-semibold">{ticketShort(b.ticket_id)}</span>
+              <span>{b.style} · {b.color}</span>
+              <span className="text-muted-foreground font-mono text-xs">{sizesText(b.sizes)}</span>
+              <span className="ml-auto tabular-nums">{fmt(b.units)} pz · {b.location}</span>
+              <Btn onClick={() => { addToCart(b); setChoices(c => ({ ...c, boxes: c.boxes.filter(x => x.staged_id !== b.staged_id) })); }}
+                disabled={cart.some(x => x.staged_id === b.staged_id)}><Plus className="w-4 h-4" /></Btn>
+            </div>
+          ))}
+        </Card>
+      )}
       <Card className="overflow-hidden">
         <div className="flex items-center justify-between px-4 py-3 border-b border-border">
           <div className="text-sm font-semibold">{t('wms_stg_cart')} · {cart.length} · {fmt(total)} pz</div>
           <div className="flex gap-2">
-            <Btn onClick={() => printLabels(cart)} disabled={!cart.length}><Printer className="w-4 h-4" /> {t('wms_stg_print')}</Btn>
             <Btn variant="primary" onClick={issue} disabled={!canOperate || busy || !cart.length} data-testid="staging-issue">
               <Truck className="w-4 h-4" /> {t('wms_stg_issue')}
             </Btn>
@@ -145,10 +150,10 @@ const ScanTab = ({ canOperate, onChanged }) => {
             </tr></thead>
             <tbody>{cart.map(b => (
               <tr key={b.staged_id} className={tableCls.row}>
-                <td className={`${cls.td} font-mono`}>{b.staged_id}</td>
+                <td className={`${cls.td} font-mono`}>{ticketShort(b.ticket_id)}</td>
                 <td className={cls.td}>{b.order_number}</td>
                 <td className={cls.td}>{b.style}</td><td className={cls.td}>{b.color}</td>
-                <td className={cls.td}>{b.size}</td>
+                <td className={`${cls.td} font-mono text-xs`}>{sizesText(b.sizes)}</td>
                 <td className={`${cls.td} text-right tabular-nums`}>{fmt(b.units)}</td>
                 <td className={`${cls.td} font-mono`}>{b.location}</td>
                 <td className={cls.td}>
@@ -179,7 +184,7 @@ const OrdersTab = ({ data }) => {
       <TableShell maxH="max-h-[70vh]">
         <thead className={tableCls.thead}><tr>
           <Th>{t('wms_stg_order')}</Th><Th>{t('wms_stg_board')}</Th><Th>{t('wms_stg_location')}</Th>
-          <Th right>{t('wms_stg_total_boxes')}</Th><Th right>{t('wms_stg_in_transit')}</Th><Th right>{t('wms_stg_units')}</Th><Th />
+          <Th right>{t('wms_stg_total_boxes')}</Th><Th right>{t('wms_stg_in_transit')}</Th><Th right>{t('wms_stg_units')}</Th>
         </tr></thead>
         <tbody>{data.orders.map(o => {
           const cancelled = (o.board || '').toUpperCase() === 'CANCELLED';
@@ -196,13 +201,9 @@ const OrdersTab = ({ data }) => {
               <td className={`${cls.td} text-right tabular-nums`}>{fmt(o.boxes)}</td>
               <td className={`${cls.td} text-right tabular-nums`}>{o.transit_units ? fmt(o.transit_units) : '—'}</td>
               <td className={`${cls.td} text-right tabular-nums font-semibold`}>{fmt(o.units)}</td>
-              <td className={cls.td}>
-                <button onClick={(e) => { e.stopPropagation(); printLabels(byOrder[o.order_number] || []); }}
-                  title={t('wms_stg_print')} className="text-muted-foreground hover:text-foreground"><Printer className="w-4 h-4" /></button>
-              </td>
             </tr>,
             isOpen && (
-              <tr key={`${o.order_number}-d`}><td colSpan={7} className="bg-muted/30 px-3 py-2">
+              <tr key={`${o.order_number}-d`}><td colSpan={6} className="bg-muted/30 px-3 py-2">
                 <table className="w-full text-xs">
                   <thead><tr className="text-muted-foreground">
                     <th className="text-left py-1">{t('wms_stg_box')}</th><th className="text-left">{t('wms_stg_style')}</th>
@@ -212,7 +213,7 @@ const OrdersTab = ({ data }) => {
                   </tr></thead>
                   <tbody>{(byOrder[o.order_number] || []).map(b => (
                     <tr key={b.staged_id} className="border-t border-border/50">
-                      <td className="py-1 font-mono">{b.staged_id}</td><td>{b.style}</td><td>{b.color}</td><td>{b.size}</td>
+                      <td className="py-1 font-mono">{ticketShort(b.ticket_id)}</td><td>{b.style}</td><td>{b.color}</td><td className="font-mono">{sizesText(b.sizes)}</td>
                       <td className="text-right tabular-nums">{fmt(b.units)}</td>
                       <td className="pl-4 font-mono">{b.location}</td><td>{statusChip(t, b.status)}</td>
                     </tr>))}
@@ -307,7 +308,6 @@ export function StagingModule() {
 
   const totals = data?.totals || { boxes: 0, units: 0 };
   const transitUnits = (data?.boxes || []).filter(b => b.status === 'transit').reduce((s, b) => s + (b.units || 0), 0);
-  const transitBoxes = (data?.boxes || []).filter(b => b.status === 'transit');
   const tabs = [['scan', t('wms_stg_tab_scan')], ['orders', t('wms_stg_tab_orders')], ['map', t('wms_stg_tab_map')]];
 
   return (
@@ -335,9 +335,6 @@ export function StagingModule() {
         )}
         {loc && <Chip tone="info">{loc} <button onClick={() => setLoc('')}><X className="w-3 h-3" /></button></Chip>}
         <div className="ml-auto flex gap-2">
-          {transitBoxes.length > 0 && (
-            <Btn onClick={() => printLabels(transitBoxes)}><Printer className="w-4 h-4" /> {t('wms_stg_print_transit')}</Btn>
-          )}
           <Btn onClick={load} disabled={loading}>{loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}</Btn>
         </div>
       </div>
