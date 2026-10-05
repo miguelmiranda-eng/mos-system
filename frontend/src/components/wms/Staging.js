@@ -184,7 +184,7 @@ const OrdersTab = ({ data }) => {
       <TableShell maxH="max-h-[70vh]">
         <thead className={tableCls.thead}><tr>
           <Th>{t('wms_stg_order')}</Th><Th>{t('wms_stg_board')}</Th><Th>{t('wms_stg_location')}</Th>
-          <Th right>{t('wms_stg_total_boxes')}</Th><Th right>{t('wms_stg_in_transit')}</Th><Th right>{t('wms_stg_units')}</Th>
+          <Th right>{t('wms_stg_total_boxes')}</Th><Th right>{t('wms_stg_in_transit_pz')}</Th><Th right>{t('wms_stg_units')}</Th>
         </tr></thead>
         <tbody>{data.orders.map(o => {
           const cancelled = (o.board || '').toUpperCase() === 'CANCELLED';
@@ -307,15 +307,22 @@ export function StagingModule() {
   useEffect(() => { load(); }, [load]);
 
   const totals = data?.totals || { boxes: 0, units: 0 };
-  const transitUnits = (data?.boxes || []).filter(b => b.status === 'transit').reduce((s, b) => s + (b.units || 0), 0);
+  // Todas las tarjetas cuentan SURTIDOS (pick tickets) y llevan las piezas
+  // abajo: mezclar "1 surtido" con "6 por locacionar" (piezas) no cuadraba.
+  const byStatus = (st) => {
+    const list = (data?.boxes || []).filter(b => b.status === st);
+    return { n: list.length, pz: list.reduce((s, b) => s + (b.units || 0), 0) };
+  };
+  const transit = byStatus('transit');
+  const stored = byStatus('stored');
   const tabs = [['scan', t('wms_stg_tab_scan')], ['orders', t('wms_stg_tab_orders')], ['map', t('wms_stg_tab_map')]];
 
   return (
     <div className="space-y-5" data-testid="wms-staging">
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <StatCard label={t('wms_stg_total_units')} value={fmt(totals.units)} />
-        <StatCard label={t('wms_stg_total_boxes')} value={fmt(totals.boxes)} />
-        <StatCard label={t('wms_stg_in_transit')} value={fmt(transitUnits)} />
+        <StatCard label={t('wms_stg_total_boxes')} value={fmt(totals.boxes)} sub={t('wms_stg_pz', { n: fmt(totals.units) })} />
+        <StatCard label={t('wms_stg_in_transit')} value={fmt(transit.n)} sub={t('wms_stg_pz', { n: fmt(transit.pz) })} />
+        <StatCard label={t('wms_stg_in_om')} value={fmt(stored.n)} sub={t('wms_stg_pz', { n: fmt(stored.pz) })} />
         <StatCard label={t('wms_stg_orders')} value={fmt(data?.orders?.length)} />
       </div>
       <div className="flex flex-wrap items-center gap-2">
