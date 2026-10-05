@@ -19,6 +19,8 @@ export const MV_TYPE_KEYS = {
   // Cajas de surtido (services/staging.py): el surtido ya no desaparece.
   staged_pick: "wms_bs_mv_staged_pick", staged_unpick: "wms_bs_mv_staged_unpick",
   staged_store: "wms_bs_mv_staged_store", staged_issue: "wms_bs_mv_staged_issue",
+  // Resurtido sobre el mismo ticket (services/resupply.py).
+  pick_resupply_created: "wms_bs_mv_pick_resupply_created", pick_resupply_cancelled: "wms_bs_mv_pick_resupply_cancelled",
   cycle_count_shrink: "wms_bs_mv_cycle_count_shrink", cycle_count_manual_discard: "wms_bs_mv_cycle_count_manual_discard",
   cycle_count_manual_create: "wms_bs_mv_cycle_count_manual_create", cycle_count_bind_box: "wms_bs_mv_cycle_count_bind_box",
   box_generated: "wms_bs_mv_box_generated", box_style_restored: "wms_bs_mv_box_style_restored",

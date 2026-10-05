@@ -1,10 +1,11 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { toast } from "sonner";
 import JsBarcode from "jsbarcode";
-import { Plus, Loader2, Search, X, AlertTriangle, Printer, Zap, Edit3, ClipboardCheck, ClipboardList, CheckCircle, BarChart3, History, ExternalLink, Package, Trash2, Users, UserMinus, Calendar } from "lucide-react";
+import { Plus, Loader2, Search, X, AlertTriangle, Printer, Zap, Edit3, ClipboardCheck, ClipboardList, CheckCircle, BarChart3, History, ExternalLink, Package, Trash2, Users, UserMinus, Calendar, RotateCcw } from "lucide-react";
 import SearchableSelect from "../SearchableSelect";
 import { useLang } from "../../contexts/LanguageContext";
-import { API, fetcher, poster, putter, logLoadError, useWmsSizes, isYouthSize, isToddlerSize, isAdultSize } from "./lib";
+import { API, fetcher, poster, putter, logLoadError, useWms, useWmsSizes, isYouthSize, isToddlerSize, isAdultSize } from "./lib";
+import { ResupplyModal } from "./ResupplyModal";
 import { TicketStatus, PickingStatus, PickDestination } from "./constants";
 import { Btn, StatCard, cls, EmptyState } from "./ui";
 
@@ -62,6 +63,8 @@ export const PickingModule = ({ currentUser } = {}) => {
   const [operators, setOperators] = useState([]);
   const [showForm, setShowForm] = useState(false);
   const [incidentTicket, setIncidentTicket] = useState(null);
+  const [resupplyTicket, setResupplyTicket] = useState(null);
+  const { can } = useWms();
   const [incidentDraft, setIncidentDraft] = useState({ sku: '', qty: '1', reason: 'Dañado', replacement_sizes: {}, replacement_description: '', notes: '' });
   const [incidentSaving, setIncidentSaving] = useState(false);
   const [confirmTicket, setConfirmTicket] = useState(null);
@@ -650,6 +653,18 @@ export const PickingModule = ({ currentUser } = {}) => {
                 {t('wms_draft')}
               </span>
             )}
+            {ticket.parent_ticket_id && (
+              <span className="text-xs font-medium px-2 py-0.5 rounded-md border bg-violet-50 text-violet-700 border-violet-200 dark:bg-violet-500/10 dark:text-violet-300 dark:border-violet-500/25 flex items-center gap-1"
+                title={`${t('wms_rs_of', { id: ticket.parent_ticket_id })}${ticket.resupply_notes ? ` · ${ticket.resupply_notes}` : ''}`}>
+                <RotateCcw className="w-2.5 h-2.5" /> {t('wms_rs_badge', { n: ticket.resupply_round })} · {ticket.resupply_reason}
+              </span>
+            )}
+            {(ticket.resupplies || []).filter(r => r.status !== 'cancelled').length > 0 && (
+              <span className="text-xs font-medium px-2 py-0.5 rounded-md border bg-violet-50 text-violet-700 border-violet-200 dark:bg-violet-500/10 dark:text-violet-300 dark:border-violet-500/25"
+                title={(ticket.resupplies || []).filter(r => r.status !== 'cancelled').map(r => `R${r.round}: ${r.total} pz · ${r.reason}`).join(' | ')}>
+                {t('wms_rs_parent_badge', { n: (ticket.resupplies || []).filter(r => r.status !== 'cancelled').length, pz: ticket.resupply_units || 0 })}
+              </span>
+            )}
             {ticket.partial_closed && !ticket.is_virtual && (
               <span className="text-xs font-medium px-2 py-0.5 rounded-md border bg-orange-50 text-orange-700 border-orange-200 dark:bg-orange-500/10 dark:text-orange-300 dark:border-orange-500/25"
                 title={t('wms_pk_partial_wait_title')}>
@@ -757,6 +772,14 @@ export const PickingModule = ({ currentUser } = {}) => {
               >
                 <AlertTriangle className="w-4 h-4" />
               </button>
+              {can('picking.resupply') && !ticket.parent_ticket_id && ticket.status !== TicketStatus.CANCELLED
+                && ([TicketStatus.CONFIRMED, TicketStatus.COMPLETED, 'in_neck_cutting'].includes(ticket.status) || ticket.picking_status === PickingStatus.COMPLETED) && (
+                <button onClick={() => setResupplyTicket(ticket)} data-testid={`resupply-${ticket.ticket_id}`}
+                  className="p-1.5 text-violet-600 dark:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-500/10 rounded-md transition-colors"
+                  title={t('wms_rs_title')}>
+                  <RotateCcw className="w-4 h-4" />
+                </button>
+              )}
               <button onClick={() => handlePrint(ticket)} className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted rounded-md transition-colors" title={t('wms_print')}><Printer className="w-4 h-4" /></button>
               <button
                 onClick={(e) => { e.stopPropagation(); handlePrioritize(ticket.ticket_id); }}
@@ -1362,6 +1385,10 @@ export const PickingModule = ({ currentUser } = {}) => {
         </div>
       )}
 
+      {resupplyTicket && (
+        <ResupplyModal ticket={resupplyTicket} operators={operators}
+          onClose={() => setResupplyTicket(null)} onDone={() => { loadTickets(); loadStats(); }} />
+      )}
       {incidentTicket && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
           <div className="bg-card border border-border rounded-lg w-full max-w-md shadow-xl p-6 space-y-4 animate-in zoom-in-95 duration-200">
@@ -1438,48 +1465,10 @@ export const PickingModule = ({ currentUser } = {}) => {
 
               {/* Reposición */}
               <div className="border-t border-border/60 pt-3 space-y-3">
-                <p className="text-xs font-medium text-red-600 dark:text-red-400">{t('wms_pk_replace_by_size')}</p>
-
-                {/* Size grid */}
-                {(() => {
-                  const ticketSizes = Object.keys(incidentTicket.sizes || {}).filter(sz => incidentTicket.sizes[sz] > 0);
-                  const totalRep = Object.values(incidentDraft.replacement_sizes).reduce((s, v) => s + (parseInt(v) || 0), 0);
-                  return (
-                    <div>
-                      <div className="grid gap-1" style={{ gridTemplateColumns: `repeat(${Math.min(ticketSizes.length, 6)}, minmax(0,1fr))` }}>
-                        {ticketSizes.map(sz => (
-                          <div key={sz} className="flex flex-col items-center gap-1">
-                            <span className="text-xs font-medium text-muted-foreground">{sz}</span>
-                            <span className="text-xs text-muted-foreground/60">({incidentTicket.sizes[sz]})</span>
-                            <input
-                              type="number" min="0"
-                              value={incidentDraft.replacement_sizes[sz] || ''}
-                              onChange={e => setIncidentDraft(p => ({ ...p, replacement_sizes: { ...p.replacement_sizes, [sz]: e.target.value } }))}
-                              placeholder="0"
-                              className="w-full text-center bg-background border border-border rounded-md p-1.5 text-sm tabular-nums transition-colors"
-                            />
-                          </div>
-                        ))}
-                      </div>
-                      {totalRep > 0 && (
-                        <div className="mt-2 text-right text-xs font-medium text-red-600 dark:text-red-400">
-                          {t('wms_pk_total_replace')} <span className="text-foreground">{t('wms_pk_n_garments', { n: totalRep })}</span>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })()}
-
-                <div>
-                  <label className="text-xs font-medium text-muted-foreground block mb-1">{t('wms_pk_replace_desc')}</label>
-                  <input
-                    type="text"
-                    value={incidentDraft.replacement_description}
-                    onChange={e => setIncidentDraft(p => ({ ...p, replacement_description: e.target.value }))}
-                    placeholder={t('wms_pk_replace_desc_ph')}
-                    className={cls.input}
-                  />
-                </div>
+                {/* La reposición por talla se movió a «Resurtir» (ronda R1, R2… del
+                    mismo ticket, surtida por el picker escaneando caja). La
+                    incidencia queda solo como reporte. */}
+                <p className="text-xs text-muted-foreground">{t('wms_rs_incident_hint')}</p>
                 <div>
                   <label className="text-xs font-medium text-muted-foreground block mb-1">{t('wms_notes')}</label>
                   <input

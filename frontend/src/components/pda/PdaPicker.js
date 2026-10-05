@@ -383,6 +383,11 @@ function TicketList({ tickets, onSelect, onComments }) {
               {tk.color && <span className="px-2 py-0.5 rounded-md bg-white/5 text-slate-300 text-xs font-bold">{tk.color}</span>}
               {tk.customer && <span className="text-[11px] text-slate-500 truncate">{tk.customer}</span>}
             </div>
+            {tk.parent_ticket_id && (
+              <div className="mt-1.5 px-2 py-1 rounded-md bg-violet-500/15 text-violet-300 text-xs font-black">
+                {t('wms_rs_badge', { n: tk.resupply_round })} · {tk.resupply_reason}{tk.resupply_notes ? ` · ${tk.resupply_notes}` : ''}
+              </div>
+            )}
             <div className="mt-2.5 h-2 bg-white/10 rounded-full overflow-hidden">
               <div className={`h-full ${pct >= 100 ? "bg-emerald-500" : pct > 0 ? "bg-amber-500" : "bg-slate-600"}`} style={{ width: `${pct}%` }} />
             </div>

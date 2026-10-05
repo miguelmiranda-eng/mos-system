@@ -326,7 +326,9 @@ async def wms_breakdown(order_number: str) -> dict:
     """{rows:[{fabric,country,sizes}], fabric, description, source} desde el
     conteo de cuellos (si existe) o los pick_deduction del surtido."""
     movs = await db.wms_movements.find(
-        {"type": "pick_deduction", "details.order_number": order_number},
+        # Sin resurtidos: reponen piezas perdidas/dañadas, no son más empaque.
+        {"type": "pick_deduction", "details.order_number": order_number,
+         "details.resupply": {"$ne": True}},
         {"_id": 0, "details.size": 1, "details.boxes": 1}).to_list(5000)
     box_ids = [b.get("box_id") for m in movs for b in (m.get("details", {}).get("boxes") or []) if b.get("box_id")]
     boxes = {}

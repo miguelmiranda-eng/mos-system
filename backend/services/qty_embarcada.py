@@ -95,8 +95,11 @@ async def qty_embarcada_por_orden(db, ordenes):
     embarcado = {n: 0 for n in numeros}
 
     picks = await db.wms_movements.aggregate([
+        # Los resurtidos reponen piezas que producción perdió o dañó: salen del
+        # inventario, pero NO aumentan lo embarcado (ver services/resupply.py).
         {"$match": {"type": "pick_deduction",
-                    "details.order_number": {"$in": _variantes(numeros)}}},
+                    "details.order_number": {"$in": _variantes(numeros)},
+                    "details.resupply": {"$ne": True}}},
         {"$group": {"_id": "$details.order_number",
                     "qty": _suma_entera("$details.qty")}},
     ]).to_list(None)

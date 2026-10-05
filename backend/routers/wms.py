@@ -14,6 +14,7 @@ from wms_constants import (
 from services import inventory_ledger as ledger
 from services import part_number as pn
 from services import staging
+from services import resupply
 from datetime import datetime, timezone, timedelta
 from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError
@@ -4329,6 +4330,9 @@ async def _deduct_pick_boxes(style, color, size, location, qty, inv_operation,
             "boxes": touched,
             "no_box_units": remaining if remaining > 0 else 0,
             "scanned": bool(only_box_id),         # <— True cuando el picker escaneó específica
+            # Ronda de resurtido (ticket "<padre>-R<n>"): qty_embarcada y el
+            # packing de exportación la excluyen.
+            "resupply": resupply.is_resupply_id(ticket_id),
         })
         # Log estructurado adicional para trazabilidad rápida en producción:
         # una línea por descuento con solo lo esencial (grep-eable).
@@ -6018,12 +6022,15 @@ async def _compute_size_locations(style: str, color: str, sizes: dict, strategy:
     return result
 
 
-async def internal_create_picking_ticket(data: dict, user: dict) -> dict:
+async def internal_create_picking_ticket(data: dict, user: dict, *, ticket_id: str | None = None,
+                                        extra: dict | None = None) -> dict:
     """
     Internal function to create a pick ticket.
     Expected data: order_number, customer, client, manufacturer, style, color, quantity, sizes, board_category, assigned_to...
+    `ticket_id`/`extra` solo los usa código interno (rondas de resurtido): nunca
+    salen del body de una petición.
     """
-    ticket_id = gen_id("pick")
+    ticket_id = ticket_id or gen_id("pick")
     order_number = data.get("order_number", "").strip()
     style = data.get("style", "").strip()
     force_duplicate = bool(data.get("force_duplicate", False))
@@ -6155,6 +6162,8 @@ async def internal_create_picking_ticket(data: dict, user: dict) -> dict:
         "sla_deadline": (datetime.now(timezone.utc) + timedelta(hours=24)).isoformat(),
         "sla_status": "on_time"
     }
+    if extra:
+        ticket_doc.update(extra)
 
     await db.wms_pick_tickets.insert_one(ticket_doc)
     ticket_doc.pop("_id", None)
@@ -6490,7 +6499,12 @@ async def report_incident(ticket_id: str, request: Request):
         raise HTTPException(404, "Pick ticket no encontrado")
 
     replacement_sizes = {k: int(v) for k, v in (body.get("replacement_sizes") or {}).items() if int(v or 0) > 0}
-    replacement_qty = sum(replacement_sizes.values())
+    # La reposición desde la incidencia descontaba por FIFO ciego desde el
+    # escritorio, sin escaneo ni picker. Se reemplazó por el RESURTIDO sobre el
+    # mismo ticket (services/resupply.py): la incidencia queda solo como reporte.
+    if replacement_sizes:
+        raise HTTPException(400, "La reposición ya no se hace desde la incidencia: usa «Resurtir» en el ticket")
+    replacement_qty = 0
 
     incident = {
         "incident_id": gen_id("inc"),
@@ -6616,6 +6630,8 @@ _PDA_TICKET_FIELDS = {
     "_id": 0, "ticket_id": 1, "order_number": 1, "order_id": 1, "style": 1, "color": 1,
     "customer": 1, "sizes": 1, "picked_sizes": 1, "picking_status": 1, "status": 1,
     "destination": 1, "assigned_to": 1, "assigned_at": 1, "last_picked_at": 1, "strategy": 1,
+    # Ronda de resurtido: la PDA la marca para que el picker sepa por qué vuelve.
+    "parent_ticket_id": 1, "resupply_round": 1, "resupply_reason": 1, "resupply_notes": 1,
 }
 
 
