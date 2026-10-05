@@ -37,6 +37,10 @@ export const LanguageProvider = ({ children }) => {
     return () => { alive = false; };
   }, [lang]);
 
+  // El <html lang> sigue al idioma de MOS: con lang="en" fijo y la UI en
+  // español, Edge ofrecía/aplicaba su traductor y tumbaba React (index.html).
+  useEffect(() => { document.documentElement.lang = lang; }, [lang]);
+
   const toggleLang = useCallback(() => {
     setLang(prev => {
       const next = prev === "es" ? "en" : "es";
