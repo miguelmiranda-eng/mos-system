@@ -45,23 +45,46 @@ function ocurrenciaDe(palabras, w) {
  *  el mapeo aguante que el cliente mueva el bloque de lugar. */
 function deducirAncla(palabras, idx) {
   const w = palabras[idx];
-  const izq = palabras
+  // Las palabras a la izquierda, de la más cercana a la más lejana.
+  const izqs = palabras
     .filter((o, i) => i !== idx && Math.abs(o.y - w.y) <= TOL_RENGLON && o.x1 <= w.x)
-    .sort((a, b) => b.x1 - a.x1)[0];
+    .sort((a, b) => b.x1 - a.x1);
   const arriba = palabras
     .filter((o, i) => i !== idx && w.y - o.y1 >= 0 && w.y - o.y1 <= TOL_ABAJO
       && o.x < w.x1 && o.x1 > w.x)
     .sort((a, b) => b.y1 - a.y1)[0];
+  // El renglón entero, para valores de varias palabras ("CULTURE KINGS").
+  const renglon = palabras
+    .filter((o) => Math.abs(o.y - w.y) <= TOL_RENGLON)
+    .sort((a, b) => a.x - b.x)
+    .map((o) => o.t)
+    .join(" ")
+    .trim();
+
   const opciones = [];
-  if (izq) opciones.push({
-    modo: "derecha_de", rotulo: izq.t,
-    spec: { tipo: "derecha_de", rotulo: izq.t, ocurrencia: ocurrenciaDe(palabras, izq) },
+  if (izqs[0]) opciones.push({
+    modo: "derecha_de", rotulo: izqs[0].t,
+    spec: { tipo: "derecha_de", rotulo: izqs[0].t, ocurrencia: ocurrenciaDe(palabras, izqs[0]) },
   });
+  // Rótulo de dos palabras: "Due Date", "RANGE NAME:". Con una sola el ancla
+  // queda corta y puede casar en otro lado de la hoja.
+  if (izqs[1]) {
+    const dos = `${izqs[1].t} ${izqs[0].t}`;
+    opciones.push({
+      modo: "derecha_de", rotulo: dos,
+      spec: { tipo: "derecha_de", rotulo: dos, ocurrencia: ocurrenciaDe(palabras, izqs[1]) },
+    });
+  }
   if (arriba) opciones.push({
     modo: "debajo_de", rotulo: arriba.t,
     spec: { tipo: "debajo_de", rotulo: arriba.t, ocurrencia: ocurrenciaDe(palabras, arriba) },
   });
   opciones.push({ modo: "fijo", rotulo: w.t, spec: { tipo: "fijo", valor: w.t } });
+  // Un valor de varias palabras sin etiqueta de la cual colgarse — el caso de la
+  // tienda cuando viene como título suelto — sólo se puede tomar entero.
+  if (renglon && renglon !== w.t) {
+    opciones.push({ modo: "fijo", rotulo: renglon, spec: { tipo: "fijo", valor: renglon } });
+  }
   return opciones;
 }
 
@@ -315,10 +338,18 @@ export default function PlantillasPO() {
                         <span className="text-[11px] font-black uppercase tracking-wide flex-1">{t(`ppo_campo_${k}`)}{req && <span className="text-destructive">*</span>}</span>
                         {spec && <button onClick={(e) => { e.stopPropagation(); quitarCampo(k); }} className="p-0.5 rounded hover:bg-secondary"><X className="w-3 h-3" /></button>}
                       </div>
-                      {val !== null
-                        ? <p className="text-sm font-mono text-emerald-600 truncate">{val}</p>
-                        : spec ? <p className="text-xs text-amber-600">{t('ppo_sin_valor')}</p>
-                          : <p className="text-xs text-muted-foreground/60">{activo ? t('ppo_ahora_senala') : t('ppo_sin_mapear')}</p>}
+                      {/* Un valor fijo se escribe a mano: el PDF puede traerlo
+                          partido en palabras, o no traerlo del todo. */}
+                      {spec?.tipo === "fijo"
+                        ? <input value={spec.valor ?? ""} onClick={(e) => e.stopPropagation()}
+                            onChange={(e) => setSel((s) => ({
+                              ...s, campos: { ...(s.campos || {}), [k]: { tipo: "fijo", valor: e.target.value } },
+                            }))}
+                            className="w-full bg-background/60 border border-border/50 rounded px-2 py-1 text-sm font-mono focus:ring-1 focus:ring-primary" />
+                        : val !== null
+                          ? <p className="text-sm font-mono text-emerald-600 truncate">{val}</p>
+                          : spec ? <p className="text-xs text-amber-600">{t('ppo_sin_valor')}</p>
+                            : <p className="text-xs text-muted-foreground/60">{activo ? t('ppo_ahora_senala') : t('ppo_sin_mapear')}</p>}
                     </div>
                   );
                 })}
