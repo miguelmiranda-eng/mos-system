@@ -43,6 +43,8 @@ MOVEMENT_FAMILIES = {
     "pick": ["pick_deduction"],
     "putaway": ["transit_relocation", "putaway", "putaway_bulk"],
     "receiving": ["receiving", "asn_receipt"],
+    # IRA/ILA Records = ajustes disparados por auditoría (Fase 4).
+    "ira_ila": ["auditoria_adjustment"],
 }
 
 
@@ -430,3 +432,39 @@ async def close_session(session_id: str) -> dict:
 async def delete_session(session_id: str) -> dict:
     res = await db.wms_audit_sessions.delete_one({"session_id": session_id})
     return {"deleted": res.deleted_count}
+
+
+# ── Ajuste de inventario disparado por auditoría (Fase 4) ─────────────────────
+async def apply_adjustment(user: dict, box_id: str, counted_units, reason: str,
+                           located_ok: bool = True, session_id: str = None) -> dict:
+    """Ajuste a nivel CAJA disparado por una auditoría. Valida el motivo contra el
+    catálogo curado y rutea por el ESCRITOR ÚNICO del WMS (_adjust_box_to_count:
+    muta la caja y reproyecta el renglón). Etiqueta el movimiento como
+    'auditoria_adjustment' para el historial IRA/ILA. NO escribe inventario por su
+    cuenta — ese camino es el sancionado y ya probado del Mover."""
+    cfg = await get_cfg()
+    reason = (reason or "").strip()
+    if not validate_reason(reason, cfg):
+        raise AuditError(400, "El motivo no está en el catálogo de Auditorías. Elige uno de la lista.")
+    try:
+        cu = int(counted_units)
+    except (TypeError, ValueError):
+        raise AuditError(400, "Cantidad física inválida.")
+    if cu < 0:
+        raise AuditError(400, "La cantidad física no puede ser negativa.")
+    bid = (box_id or "").strip().upper()
+    box = await db.wms_boxes.find_one({"box_id": bid}, {"_id": 0})
+    if not box:
+        box = await db.wms_boxes.find_one({"$or": [{"barcode": bid}, {"lpn_id": bid}]}, {"_id": 0})
+    if not box:
+        raise AuditError(404, f"La caja {bid} no existe en el sistema.")
+    from routers.wms import _adjust_box_to_count  # lazy: evita ciclo de import
+    res = await _adjust_box_to_count(
+        user, box, cu, reason, mv_type="auditoria_adjustment",
+        mv_extra={"via": "auditoria", "source": "auditorias",
+                  "session_id": session_id, "located_ok": bool(located_ok)})
+    if session_id:
+        await db.wms_audit_sessions.update_one(
+            {"session_id": session_id, "boxes.box_id": box["box_id"]},
+            {"$set": {"boxes.$.adjusted": True, "boxes.$.adjusted_at": _now()}})
+    return res

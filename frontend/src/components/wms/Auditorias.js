@@ -16,6 +16,7 @@ import { Card, StatCard, Btn, Chip, cls, TableShell, tableCls, EmptyState } from
 const TABS = [
   { id: "kpis", key: "wms_aud_tab_kpis" },
   { id: "sampling", key: "wms_aud_tab_sampling" },
+  { id: "ira_ila", key: "wms_aud_tab_ira_ila" },
   { id: "pick", key: "wms_aud_tab_pick" },
   { id: "putaway", key: "wms_aud_tab_putaway" },
   { id: "receiving", key: "wms_aud_tab_receiving" },
@@ -27,6 +28,7 @@ const FEED_COLS = {
   pick: ["created_at", "user_name", "order_number", "style", "color", "size", "units", "location", "box_id", "detail"],
   putaway: ["created_at", "user_name", "from", "to", "box_id", "units", "detail"],
   receiving: ["created_at", "user_name", "receiving_id", "units", "box_id", "detail"],
+  ira_ila: ["created_at", "user_name", "box_id", "location", "style", "color", "size", "before", "after", "delta", "reason"],
 };
 
 const isoDaysAgo = (n) => {
@@ -80,7 +82,7 @@ export function AuditoriasModule() {
 
       {tab === "kpis" && <KpisTab t={t} since={since} until={until} />}
       {tab === "sampling" && <SamplingTab t={t} canManage={canManage} />}
-      {(tab === "pick" || tab === "putaway" || tab === "receiving") && (
+      {(tab === "pick" || tab === "putaway" || tab === "receiving" || tab === "ira_ila") && (
         <FeedTab t={t} kind={tab} since={since} until={until} />
       )}
       {tab === "reasons" && <ReasonsTab t={t} canManage={canManage} />}
@@ -363,6 +365,9 @@ function SamplingTab({ t, canManage }) {
   const [loading, setLoading] = useState(true);
   const [boxDraft, setBoxDraft] = useState("");
   const [busy, setBusy] = useState(false);
+  const [reasons, setReasons] = useState([]);
+  const [adjusting, setAdjusting] = useState(null);   // box_id en ajuste
+  const [adjReason, setAdjReason] = useState("");
 
   const loadList = useCallback(async () => {
     setLoading(true);
@@ -372,6 +377,7 @@ function SamplingTab({ t, canManage }) {
   }, [t]);
 
   useEffect(() => { loadList(); }, [loadList]);
+  useEffect(() => { fetcher("/auditorias/config").then((d) => setReasons(d.reason_codes || [])).catch(() => {}); }, []);
 
   const openSession = async (id) => {
     try { setSel(await fetcher(`/auditorias/sessions/${id}`)); }
@@ -423,6 +429,16 @@ function SamplingTab({ t, canManage }) {
     const res = await poster(`/auditorias/sessions/${sel.session_id}/close`, {});
     if (res.ok) { toast.success(t("wms_aud_session_closed_ok")); setSel(await res.json()); loadList(); }
     else toast.error(t("wms_aud_save_err"));
+  };
+
+  const applyAdjust = async (box) => {
+    if (!adjReason) return;
+    const res = await poster("/auditorias/adjust", {
+      box_id: box.box_id, counted_units: box.counted_units, reason: adjReason,
+      located_ok: box.located_ok !== false, session_id: sel.session_id,
+    });
+    if (res.ok) { toast.success(t("wms_aud_adjusted_ok")); setAdjusting(null); setAdjReason(""); openSession(sel.session_id); loadList(); }
+    else { const e = await res.json().catch(() => ({})); toast.error(e.detail || t("wms_aud_save_err")); }
   };
 
   const editable = canManage && sel && sel.status === "open";
@@ -550,8 +566,28 @@ function SamplingTab({ t, canManage }) {
                             onChange={(e) => setCount(b, { located_ok: e.target.checked })} />
                         </td>
                         {editable && (
-                          <td className="px-3 py-1.5 text-right">
-                            <button onClick={() => removeBox(b)} className="text-muted-foreground hover:text-red-500"><X className="w-3.5 h-3.5" /></button>
+                          <td className="px-3 py-1.5 text-right whitespace-nowrap">
+                            {b.adjusted ? (
+                              <Chip tone="success">{t("wms_aud_adjusted")}</Chip>
+                            ) : adjusting === b.box_id ? (
+                              <span className="inline-flex items-center gap-1">
+                                <select value={adjReason} onChange={(e) => setAdjReason(e.target.value)}
+                                  className="text-xs border border-input rounded px-1 py-1 bg-card max-w-[160px]">
+                                  <option value="">{t("wms_aud_pick_reason")}</option>
+                                  {reasons.map((r) => <option key={r} value={r}>{r}</option>)}
+                                </select>
+                                <button onClick={() => applyAdjust(b)} disabled={!adjReason}
+                                  className="text-emerald-500 disabled:opacity-40 px-1" title={t("wms_aud_apply")}>✓</button>
+                                <button onClick={() => { setAdjusting(null); setAdjReason(""); }} className="text-muted-foreground"><X className="w-3.5 h-3.5" /></button>
+                              </span>
+                            ) : (b.counted && b.counted_units !== b.system_units) ? (
+                              <button onClick={() => { setAdjusting(b.box_id); setAdjReason(""); }}
+                                className="text-xs text-primary hover:underline" data-testid={`aud-adjust-${b.box_id}`}>
+                                {t("wms_aud_adjust")}
+                              </button>
+                            ) : (
+                              <button onClick={() => removeBox(b)} className="text-muted-foreground hover:text-red-500"><X className="w-3.5 h-3.5" /></button>
+                            )}
                           </td>
                         )}
                       </tr>

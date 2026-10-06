@@ -198,6 +198,30 @@ async def run():
     check("KPI de hoy incluye la sesión (IRA 97.5 / ILA 50.0)",
           tday.get("ira_pct") == 97.5 and tday.get("ila_pct") == 50.0, detalle=str(tday))
 
+    # ── Ajuste de auditoría (Fase 4): valida motivo + rutea por escritor único ──
+    cfg = await auditorias.get_cfg()
+    good_reason = cfg["reason_codes"][0]
+    try:
+        await auditorias.apply_adjustment(U, "BOX-B", 25, "motivo inventado")
+        check("motivo fuera de catálogo -> error", False)
+    except auditorias.AuditError as e:
+        check("motivo fuera de catálogo -> 400", e.status == 400)
+    r = await auditorias.apply_adjustment(U, "BOX-B", 25, good_reason, located_ok=True)
+    check("ajuste aplicado: delta -5, nuevo 25",
+          r.get("delta_units") == -5 and r.get("new_units") == 25, detalle=str(r))
+    boxb = sdb.wms_boxes.find_one({"box_id": "BOX-B"})
+    check("caja BOX-B ahora 25 (la caja manda)", (boxb or {}).get("units") == 25,
+          detalle=str((boxb or {}).get("units")))
+    mvadj = sdb.wms_movements.find_one({"type": "auditoria_adjustment", "details.box_id": "BOX-B"})
+    check("movimiento auditoria_adjustment con motivo + tag + delta",
+          mvadj is not None and mvadj["details"].get("reason") == good_reason
+          and mvadj["details"].get("via") == "auditoria" and mvadj["details"].get("delta_units") == -5,
+          detalle=str(mvadj))
+    fir = await auditorias.movement_feed("ira_ila", "2000-01-01", "2100-01-01")
+    check("feed ira_ila encuentra el ajuste",
+          fir["total"] >= 1 and any(row.get("box_id") == "BOX-B" for row in fir["rows"]),
+          detalle=str(fir["total"]))
+
     # ── Registro de acciones y módulo ──
     cat_ids = {a["id"] for a in wa.catalog()}
     check("acción auditorias.view registrada", "auditorias.view" in cat_ids)

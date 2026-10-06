@@ -143,3 +143,25 @@ async def sessions_close(session_id: str, request: Request):
     await log_activity(user, "wms_auditoria_session_close",
                        {"session_id": session_id, "metrics": s.get("metrics")})
     return s
+
+
+@router.post("/adjust")
+async def adjust(request: Request):
+    """Ajuste de inventario disparado por auditoría. Body: {box_id, counted_units,
+    reason (del catálogo), located_ok?, session_id?}. Valida el motivo y rutea por
+    el escritor único; registra un movimiento 'auditoria_adjustment'."""
+    user = await require_action(request, "auditorias.manage")
+    body = await request.json()
+    try:
+        res = await auditorias.apply_adjustment(
+            user,
+            box_id=(body or {}).get("box_id") or "",
+            counted_units=(body or {}).get("counted_units"),
+            reason=(body or {}).get("reason") or "",
+            located_ok=bool((body or {}).get("located_ok", True)),
+            session_id=(body or {}).get("session_id"))
+    except auditorias.AuditError as e:
+        raise _http(e)
+    await log_activity(user, "wms_auditoria_adjust",
+                       {"box_id": res.get("box_id"), "delta_units": res.get("delta_units")})
+    return res

@@ -3797,6 +3797,81 @@ async def delete_box(box_id: str, request: Request):
     return {"status": "deleted", "box_id": box_id}
 
 
+async def _adjust_box_to_count(user, box, counted, reason, *, mv_type="inventory_adjust_box", mv_extra=None):
+    """Núcleo del ajuste a nivel CAJA — lo comparten el Mover (inventory_adjust_box)
+    y Auditorías (auditoria_adjustment). Fija la caja a `counted` y reproyecta el
+    renglón DESDE las cajas (LA CAJA MANDA, único escritor). `counted` ya validado
+    (int ≥ 0) y `reason` no vacío por el caller. `mv_type`/`mv_extra` etiquetan el
+    movimiento sin cambiar la mecánica."""
+    real_box_id = box["box_id"]
+    await _assert_not_on_hold(user, box.get("location"))
+
+    old_units = int(box.get("units") or box.get("qty") or 0)
+    delta = counted - old_units
+    if delta == 0:
+        raise HTTPException(400, f"La caja ya tiene {old_units} unidades; nada por ajustar")
+
+    sku = box.get("sku") or box.get("style") or ""
+    color = box.get("color", "")
+    size = box.get("size", "")
+    location = box.get("location", "")
+
+    # Rebalance la fila de la ubicación por el mismo delta.
+    inv = None
+    if location:
+        inv = (
+            (box.get("inventory_id") and await db.wms_inventory.find_one({"inventory_id": box["inventory_id"]}))
+            or await db.wms_inventory.find_one({"sku": sku, "color": color, "size": size, "location": location})
+        )
+    # GUARDA de compromisos: no dejar la existencia debajo de lo apartado.
+    if inv and delta < 0:
+        on_hand = int(inv.get("units_on_hand", 0) or 0)
+        allocated = int(inv.get("units_allocated", 0) or 0)
+        if on_hand + delta < allocated:
+            raise HTTPException(
+                400,
+                f"No puedes dejar {on_hand + delta} en existencia: {allocated} unidades están "
+                f"comprometidas (allocated) en esta ubicación. Libera la asignación primero.",
+            )
+
+    # LA CAJA MANDA: primero la caja, luego el marcador se reescribe desde ella.
+    if counted == 0:
+        await db.wms_boxes.update_one(
+            {"box_id": real_box_id},
+            {"$set": {"units": 0, "qty": 0, "status": "depleted",
+                      "updated_at": now_iso(), "updated_by": user.get("user_id")}},
+        )
+    else:
+        box_upd = {"units": counted, "qty": counted,
+                   "updated_at": now_iso(), "updated_by": user.get("user_id")}
+        if box.get("status") == "depleted":
+            box_upd["status"] = "located"
+        await db.wms_boxes.update_one({"box_id": real_box_id}, {"$set": box_upd})
+    if location:
+        await _reproject_material_rows(
+            box.get("style") or "", sku, color, size, location, user=user,
+            moved_sigs={ledger.row_signature(box)},
+            contexto={"via": mv_type, "box_id": real_box_id})
+
+    details = {
+        "box_id": real_box_id,
+        "sku": sku, "color": color, "size": size, "location": location,
+        "old_units": old_units, "new_units": counted, "delta_units": delta,
+        "reason": reason,
+        "box_deleted": counted == 0,
+    }
+    if mv_extra:
+        details.update(mv_extra)
+    await log_movement(user, mv_type, details)
+    await notify_badge_change("all")
+
+    return {
+        "status": "adjusted", "box_id": real_box_id,
+        "old_units": old_units, "new_units": counted, "delta_units": delta,
+        "box_deleted": counted == 0, "location": location,
+    }
+
+
 @router.post("/boxes/{box_id}/adjust")
 async def adjust_box_count(box_id: str, request: Request):
     """Case# 002 — adjust inventory at the physical box level.
@@ -3828,9 +3903,6 @@ async def adjust_box_count(box_id: str, request: Request):
         )
     if not box:
         raise HTTPException(404, f"Caja {box_id} no encontrada")
-    real_box_id = box["box_id"]
-
-    await _assert_not_on_hold(user, box.get("location"))
 
     reason = str(body.get("reason", "") or "").strip()
     if not reason:
@@ -3843,83 +3915,7 @@ async def adjust_box_count(box_id: str, request: Request):
     if counted < 0:
         raise HTTPException(400, "Las unidades contadas no pueden ser negativas")
 
-    old_units = int(box.get("units") or box.get("qty") or 0)
-    delta = counted - old_units
-    if delta == 0:
-        raise HTTPException(400, f"La caja ya tiene {old_units} unidades; nada por ajustar")
-
-    sku = box.get("sku") or box.get("style") or ""
-    color = box.get("color", "")
-    size = box.get("size", "")
-    location = box.get("location", "")
-
-    # Rebalance the location's inventory row by the same delta.
-    inv = None
-    if location:
-        inv = (
-            (box.get("inventory_id") and await db.wms_inventory.find_one({"inventory_id": box["inventory_id"]}))
-            or await db.wms_inventory.find_one({"sku": sku, "color": color, "size": size, "location": location})
-        )
-    # GUARDA de compromisos: no dejar la existencia debajo de lo apartado.
-    # (allocated vive en el renglón — es de las pocas lecturas legítimas que
-    # el modelo caja-manda necesita del marcador antes de mutar cajas.)
-    if inv and delta < 0:
-        on_hand = int(inv.get("units_on_hand", 0) or 0)
-        allocated = int(inv.get("units_allocated", 0) or 0)
-        if on_hand + delta < allocated:
-            raise HTTPException(
-                400,
-                f"No puedes dejar {on_hand + delta} en existencia: {allocated} unidades están "
-                f"comprometidas (allocated) en esta ubicación. Libera la asignación primero.",
-            )
-
-    # LA CAJA MANDA: primero la caja (borrar si quedó en 0, si no fijar el
-    # conteo real), después el marcador se reescribe desde las cajas — crea,
-    # corrige o elimina el renglón según lo que quede, y re-liga inventory_id
-    # (antes: aritmética + recreación manual de la fila).
-    if counted == 0:
-        # La caja a 0 MUERE pero NO desaparece: se conserva como registro muerto
-        # (depleted), no se borra. Borrarla dejaba al pick histórico sin de dónde
-        # leer su país (box_id inexistente) -> "SIN PAÍS" en la tabla de surtido.
-        # El picker ya excluye las depleted, así que sale de las vistas activas.
-        await db.wms_boxes.update_one(
-            {"box_id": real_box_id},
-            {"$set": {"units": 0, "qty": 0, "status": "depleted",
-                      "updated_at": now_iso(), "updated_by": user.get("user_id")}},
-        )
-    else:
-        box_upd = {"units": counted, "qty": counted,
-                   "updated_at": now_iso(), "updated_by": user.get("user_id")}
-        # Una caja que vuelve a tener unidades NO puede seguir 'depleted': el
-        # picker excluye las depleted (nunca las ve). Reactivar a 'located' para
-        # que sea surtible de nuevo.
-        if box.get("status") == "depleted":
-            box_upd["status"] = "located"
-        await db.wms_boxes.update_one({"box_id": real_box_id}, {"$set": box_upd})
-    if location:
-        await _reproject_material_rows(
-            box.get("style") or "", sku, color, size, location, user=user,
-            moved_sigs={ledger.row_signature(box)},
-            contexto={"via": "inventory_adjust_box", "box_id": real_box_id})
-
-    await log_movement(user, "inventory_adjust_box", {
-        "box_id": real_box_id,
-        "sku": sku, "color": color, "size": size, "location": location,
-        "old_units": old_units, "new_units": counted, "delta_units": delta,
-        "reason": reason,
-        "box_deleted": counted == 0,
-    })
-    await notify_badge_change("all")
-
-    return {
-        "status": "adjusted",
-        "box_id": real_box_id,
-        "old_units": old_units,
-        "new_units": counted,
-        "delta_units": delta,
-        "box_deleted": counted == 0,
-        "location": location,
-    }
+    return await _adjust_box_to_count(user, box, counted, reason)
 
 
 @router.get("/boxes/{box_id}/history")
