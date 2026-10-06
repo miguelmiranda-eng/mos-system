@@ -54,7 +54,7 @@ from google.auth.transport.requests import Request as GoogleRequest
 os.environ['OAUTHLIB_RELAX_TOKEN_SCOPE'] = '1'
 from deps import db, require_auth, require_admin, log_activity, logger
 import printavo_client
-from routers.printavo_export import parse_po_bytes, create_quotes_for
+from routers.printavo_export import parse_po_bytes, create_quotes_for, plantillas_activas
 
 router = APIRouter(prefix="/api/gmail-intake")
 
@@ -508,7 +508,7 @@ async def _process_message(svc, cfg: dict, labels: dict, msg_id: str, forced: bo
                 duplicates += 1
                 continue
             try:
-                records, engine = await run_in_threadpool(parse_po_bytes, data)
+                records, engine = await run_in_threadpool(parse_po_bytes, data, cfg.get("_plantillas") or [])
             except Exception as e:
                 logger.warning(f"[gmail-intake] parse failed {fn}: {e}")
                 records, engine = [], "error"
@@ -635,6 +635,11 @@ async def run_once(cfg: dict) -> dict:
     svc, err = await _get_gmail_service(cfg["user_id"])
     if not svc:
         raise PermissionError(err)
+
+    # Las plantillas de cliente se leen UNA vez por pasada y viajan en la config:
+    # `parse_po_bytes` corre en un hilo aparte y no puede consultar la base, y
+    # pedirlas por cada correo seria una consulta de mas por mensaje.
+    cfg["_plantillas"] = await plantillas_activas()
 
     labels = await run_in_threadpool(_label_map, svc)
     src_id = _find_label_id(labels, cfg.get("label_name") or "")

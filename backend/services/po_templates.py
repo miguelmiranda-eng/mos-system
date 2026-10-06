@@ -373,6 +373,36 @@ def leer_pagina(page, plantilla, mapa_tallas):
         ("po_missing", not rec.get("po_number")),
     ) if falta]
     rec["plantilla"] = plantilla.get("id")
+    return _completar(rec, plantilla)
+
+
+# Lo que `build_quote_input` da por sentado. Una plantilla mapea los datos que el
+# PDF del cliente trae; el armador de la quote ademas lee campos de plantilla
+# (notas de produccion, metodo de aprobacion, division...) que ese PDF puede no
+# tener. Sin estos valores por omision el registro de una plantilla reventaria
+# ahi con KeyError. Lo que el cliente SI traiga en su PDF se mapea y pisa esto.
+POR_OMISION = {
+    "retailer": None, "brand_prefix": None, "store_po_notes": None,
+    "description": "", "color": None, "blank": None, "division": "",
+    "front_print": "", "approval_method": "", "blanks_trim": "", "blanks_to_use": "",
+    "resize": "", "status": "ORIGINAL", "photo_approval": False,
+    "sample_required": False, "tops_needed": "", "pack_raw": None,
+    "ship_date": None, "cancel_date": None, "store_po": None,
+    "po_discrepancy": False, "packing_instructions": [],
+}
+
+
+def _completar(rec, plantilla):
+    for k, v in POR_OMISION.items():
+        rec.setdefault(k, v)
+        if rec.get(k) is None and v not in (None,):
+            rec[k] = v
+    # El prefijo de la linea de empaque sigue a la tienda cuando el PDF no trae
+    # uno propio, igual que en el parser escrito a mano.
+    if not rec.get("brand_prefix") and rec.get("brand"):
+        rec["brand_prefix"] = str(rec["brand"]).split()[0]
+    if not rec.get("retailer"):
+        rec["retailer"] = rec.get("brand")
     return rec
 
 

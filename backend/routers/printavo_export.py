@@ -17,12 +17,24 @@ from printavo_export import parse_pdf, build_quote_input
 router = APIRouter(prefix="/api/printavo-export")
 
 
-def parse_po_bytes(data: bytes) -> tuple:
+def parse_po_bytes(data: bytes, plantillas: list = None) -> tuple:
     """Run the deterministic parsers over a PDF. Returns (records, engine).
 
     Shared by the upload endpoint and the Gmail intake so both channels
-    classify a PDF with exactly the same rules: Goodie text-based first,
-    then Culture Kings/Spektrum. Empty list = not a recognized PO.
+    classify a PDF with exactly the same rules. El orden es deliberado:
+
+      1. Goodie (lector escrito a mano, el 95% de lo que entra)
+      2. Culture Kings/Spektrum (lector escrito a mano)
+      3. plantillas de cliente (services/po_templates), SOLO las activas
+
+    Los dos primeros no se tocan: llevan meses corriendo y estan cubiertos por
+    tests/smoke_po_golden.py. Las plantillas van al final para que no puedan
+    cambiar como se lee un PDF que hoy ya se lee bien — a lo mas atrapan uno que
+    antes nadie reconocia.
+
+    `plantillas` se recibe como argumento en vez de consultarse aqui porque esta
+    funcion corre en un hilo aparte (run_in_threadpool) y no puede usar la base.
+    Quien llama la pasa; sin ella el comportamiento es el de siempre.
     """
     records = parse_pdf(data)                         # Goodie text-based (Spencers/Tractor)
     if records:
@@ -30,7 +42,38 @@ def parse_po_bytes(data: bytes) -> tuple:
     # Culture Kings/Spektrum con capa de texto -> parser DETERMINISTA (sin IA).
     from printavo_export import parse_culturekings_pdf
     records = parse_culturekings_pdf(data)
-    return records, ("text-ck" if records else "none")
+    if records:
+        return records, "text-ck"
+
+    for plantilla in (plantillas or []):
+        if not plantilla.get("activa"):
+            continue
+        try:
+            import io as _io
+            import pdfplumber as _pdfplumber
+            from routers.import_router import SIZES_MAP as _SIZES
+            from services.po_templates import leer_pdf as _leer
+            with _pdfplumber.open(_io.BytesIO(data)) as pdf:
+                records = _leer(pdf, plantilla, _SIZES)
+        except Exception as e:                        # noqa: BLE001
+            # Una plantilla rota no puede tumbar la lectura de los demas PDFs ni
+            # del resto de las plantillas: se anota y se sigue con la siguiente.
+            logger.error(f"[printavo-export] plantilla {plantilla.get('id')} falló: {e}")
+            continue
+        if records:
+            return records, f"plantilla:{plantilla.get('id')}"
+
+    return [], "none"
+
+
+async def plantillas_activas() -> list:
+    """Las plantillas de cliente encendidas, para pasarselas a parse_po_bytes."""
+    from deps import db
+    try:
+        return await db.po_templates.find({"activa": True}, {"_id": 0}).to_list(length=100)
+    except Exception as e:                            # noqa: BLE001
+        logger.error(f"[printavo-export] no se pudieron leer las plantillas: {e}")
+        return []
 
 
 @router.post("/parse")
@@ -40,7 +83,7 @@ async def parse_po(request: Request, file: UploadFile = File(...)):
         raise HTTPException(400, "El archivo debe ser un PDF")
     data = await file.read()
     try:
-        records, engine = parse_po_bytes(data)
+        records, engine = parse_po_bytes(data, await plantillas_activas())
     except Exception as e:
         logger.error(f"[printavo-export] parse error: {e}")
         raise HTTPException(500, f"No se pudo leer el PDF: {e}")

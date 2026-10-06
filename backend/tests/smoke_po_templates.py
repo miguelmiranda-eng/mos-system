@@ -92,6 +92,67 @@ CAMPOS = ["po_number", "design_num", "color", "blank", "qty",
           "sizes", "qty_from_sizes", "sizes_match"]
 
 
+
+def _ruteo():
+    """El orden de `parse_po_bytes`: Goodie -> Spektrum -> plantillas.
+
+    Lo que se protege aqui es que las plantillas NO puedan cambiar como se lee un
+    PDF que hoy ya se lee bien. Son el ultimo recurso: a lo mas atrapan uno que
+    antes nadie reconocia."""
+    import routers.printavo_export as px
+
+    ruta = os.path.join(CORPUS, "23258_-_Spencers_-_327049.pdf")
+    if not os.path.exists(ruta):
+        return []
+    with open(ruta, "rb") as fh:
+        data = fh.read()
+    # Este PDF rotula al cliente como "CUST", no "CUSTOMER" — el mismo cliente usa
+    # las dos variantes segun la tienda. Es justo lo que atrapa el paso de probar
+    # la plantilla contra un SEGUNDO PDF antes de activarla.
+    activa = {**PLANTILLA, "activa": True,
+              "campos": {**PLANTILLA["campos"],
+                         "brand": {"tipo": "derecha_de", "rotulo": "CUST", "hasta": "ISSUE DATE"},
+                         "store_po": {"tipo": "debajo_de", "rotulo": "CUST PO", "limite": "BLANK PO"}}}
+    malas = []
+
+    def ok(cond, msg):
+        if not cond:
+            malas.append(f"ruteo: {msg}")
+
+    _, eng = px.parse_po_bytes(data, [activa])
+    ok(eng == "text", f"con plantilla activa el lector de Goodie debe seguir ganando (dio {eng!r})")
+
+    _, eng = px.parse_po_bytes(data)
+    ok(eng == "text", f"sin plantillas el comportamiento debe ser el de siempre (dio {eng!r})")
+
+    _, eng = px.parse_po_bytes(data, [{**activa, "activa": False}])
+    ok(eng == "text", "una plantilla apagada no debe participar")
+
+    rota = {"id": "rota", "activa": True, "huella": {},
+            "campos": {"x": {"tipo": "patron", "patron": "(("}}, "tallas": {}}
+    _, eng = px.parse_po_bytes(data, [rota, activa])
+    ok(eng == "text", "una plantilla rota no debe tumbar la lectura")
+
+    # Caso positivo: se simula un cliente que los lectores a mano NO conocen.
+    orig = px.parse_pdf
+    px.parse_pdf = lambda d: []
+    try:
+        recs, eng = px.parse_po_bytes(data, [activa])
+    finally:
+        px.parse_pdf = orig
+    ok(eng == "plantilla:banco_pruebas_mct", f"la plantilla debia atraparlo (dio {eng!r})")
+    ok(len(recs) == 5, f"debia sacar 5 estilos, saco {len(recs)}")
+    if recs:
+        from printavo_export import build_quote_input
+        try:
+            q = build_quote_input(recs[0], "contacto-smoke")
+            ok(bool(q.get("nickname")), "la quote salio sin nickname")
+            ok(bool(q.get("lineItemGroups")), "la quote salio sin grupos")
+        except Exception as e:                        # noqa: BLE001
+            malas.append(f"ruteo: el registro de plantilla no arma quote: {str(e)[:90]}")
+    return malas
+
+
 def main():
     if not os.path.isdir(CORPUS) or not os.path.exists(GOLDEN):
         print("=" * 60)
@@ -123,6 +184,8 @@ def main():
                                 f"a_mano={a.get(k)!r} plantilla={b.get(k)!r}")
             else:
                 ok += 1
+
+    difs += _ruteo()
 
     print("=" * 60)
     if difs:
