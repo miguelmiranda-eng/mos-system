@@ -41,6 +41,7 @@ const AuditModule         = named(() => import("./wms/Audit"), "AuditModule");
 const TrazabilidadModule  = named(() => import("./wms/Trazabilidad"), "TrazabilidadModule");
 const StagingModule       = named(() => import("./wms/Staging"), "StagingModule");
 const ReconciliationModule = named(() => import("./wms/Reconciliation"), "ReconciliationModule");
+const AuditoriasModule    = named(() => import("./wms/Auditorias"), "AuditoriasModule");
 const IncidentsModule     = lazy(() => import("./wms/Incidents"));
 const ReportsModule       = lazy(() => import("./wms/Reports"));
 import { TopNav, LangToggle } from "./wms/TopNav";
@@ -74,6 +75,7 @@ const renderActiveModule = (moduleId, ctx) => {
     case 'reconciliation': return ctx.currentUser?.role === 'supersu'
       ? <ReconciliationModule /> : <ReceivingModule />;
     case 'audit':        return <AuditModule />;
+    case 'auditorias':   return <AuditoriasModule />;
     case 'reports':      return <ReportsModule />;
     // Incidencias: solo super usuario. El mosaico ya viene filtrado; esta guarda
     // es por si el módulo se alcanza por otra vía. El backend igual devuelve 403.

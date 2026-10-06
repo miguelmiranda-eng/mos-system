@@ -90,6 +90,10 @@ ACTIONS: dict = {
                                 desc="Resolver como supervisor, reportes, KPIs y eficiencia."),
     "location_check.resolve": _a("Resolver tareas Location Check", "cycle_count", 1, 1, floor_admin=0, floor_inventory=0,
                                  desc="Cerrar la tarea (encontrada / no estaba aquí → mueve la caja)."),
+    "auditorias.view": _a("Ver Auditorías (KPIs IRA/ILA)", "cycle_count", 1, 2, floor_admin=0, floor_inventory=0,
+                          desc="Abrir el módulo de Auditorías: dashboard IRA/ILA y vistas de picks/putaway/recepción."),
+    "auditorias.manage": _a("Gestionar Auditorías", "cycle_count", 1, 2, floor_admin=1, floor_inventory=1,
+                            desc="Editar el catálogo de motivos y (Fase 2) crear auditorías y aplicar ajustes IRA/ILA."),
     # ── Cuarentena ──────────────────────────────────────────────────────────
     "quarantine.resolve": _a("Resolver cuarentena", "quarantine", 1, 2, floor_admin=1, floor_inventory=1,
                              desc="Liberar o dar de baja material en cuarentena."),

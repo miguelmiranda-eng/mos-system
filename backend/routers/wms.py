@@ -8551,7 +8551,7 @@ WMS_MODULE_ACCESS_DEFAULTS = {
     # Salidas
     "directed": 0, "picking": 0, "neck_cutting": 0, "finished": 0, "staging": 0,
     # Analisis
-    "dashboard": 0, "reports": 1, "movements": 0,
+    "dashboard": 0, "reports": 1, "movements": 0, "auditorias": 1,
     # Sistema
     "audit": 5, "incidents": SUPERSU_ONLY_LEVEL, "home": 0,
 }
@@ -8563,6 +8563,7 @@ WMS_MODULE_ACCESS_LABELS = {
     "directed": "Trabajo Dirigido", "picking": "Picking",
     "neck_cutting": "Corte de Neck", "finished": "Terminados", "staging": "Surtido por orden",
     "dashboard": "Dashboard", "reports": "Reportes", "movements": "Movimientos",
+    "auditorias": "Auditorías",
     "audit": "Auditoría", "incidents": "Incidencias", "home": "Configuración WMS",
 }
 # Modulos cuyo nivel ADEMAS lo valida el backend (no solo el menu).
@@ -8577,7 +8578,7 @@ WMS_MODULE_INVENTORY_DEFAULTS = {
     "inventory": 1, "locations": 1, "mover": 1, "aging": 1, "cycle_count": 1,
     "reconciliation": None,
     "directed": None, "picking": None, "neck_cutting": None, "finished": None, "staging": 1,
-    "dashboard": None, "reports": None, "movements": 1,
+    "dashboard": None, "reports": None, "movements": 1, "auditorias": 2,
     "audit": None, "incidents": None, "home": None,
 }
 MAX_MODULE_INVENTORY_LEVEL = 3

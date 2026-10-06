@@ -254,6 +254,7 @@ from routers.wms_reports import router as wms_reports_router
 from routers.wms_returns import router as wms_returns_router
 from routers.wms_staging import router as wms_staging_router
 from routers.wms_resupply import router as wms_resupply_router
+from routers.wms_auditorias import router as wms_auditorias_router
 from routers.import_router import router as import_router
 from routers.qc import router as qc_router
 from routers.insights import router as insights_router
@@ -293,6 +294,7 @@ app.include_router(wms_reports_router)
 app.include_router(wms_returns_router)
 app.include_router(wms_staging_router)
 app.include_router(wms_resupply_router)
+app.include_router(wms_auditorias_router)
 app.include_router(import_router)
 app.include_router(qc_router)
 app.include_router(insights_router)

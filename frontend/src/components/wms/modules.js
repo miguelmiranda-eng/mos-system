@@ -16,7 +16,7 @@
 import {
   Package, MapPin, ClipboardList, BarChart3, ClipboardCheck,
   CheckCircle, History, FileDown, ScanLine, Settings,
-  LayoutDashboard, Scissors, Clock, Truck, Move, ShieldCheck, ShieldAlert, Boxes, PackageCheck,
+  LayoutDashboard, Scissors, Clock, Truck, Move, ShieldCheck, ShieldAlert, Boxes, PackageCheck, Target,
 } from "lucide-react";
 
 /* Grupos del menú. `label`/`hint` son el respaldo en español para quien llame
@@ -104,6 +104,10 @@ export const buildModules = (t) => [
     desc: t('wms_mod_reports_desc'), adminOnly: true },
   { id: 'movements', group: 'an', label: t('wms_mod_movements'), icon: History, color: 'text-slate-400',
     desc: t('wms_mod_movements_desc') },
+  // Auditorías: KPIs IRA/ILA y vistas de picks/putaway/recepción. El backend
+  // gatea el módulo (admin 1 / inventarios 2) y cada endpoint por acción.
+  { id: 'auditorias', group: 'an', label: t('wms_mod_auditorias'), icon: Target, color: 'text-rose-400',
+    desc: t('wms_mod_auditorias_desc'), minAdminLevel: 1 },
 
   // ── Sistema ─────────────────────────────────────────────────────────────
   // Auditoría: admin nivel 5 y supersu (el backend valida con require_admin_level(5)).
