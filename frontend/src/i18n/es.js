@@ -2952,6 +2952,13 @@ const es = {
   sch_status_auto_none: "sin equivalencia en MOS",
   sch_find_ph: "Buscar en envíos: orden, cliente, PO, design…",
   pk_pick_client: "Este envío lleva varios clientes: ¿de cuál hago el packing?",
+  // Modal "Órdenes por status" (chips de la semana)
+  sch_status_open: "Ver las órdenes con este status",
+  sch_status_title: "Órdenes por status · {week}",
+  sch_status_hint: "Órdenes de la semana abierta. Clic en una orden para ir a ella en el programador.",
+  sch_status_none: "Sin status",
+  sch_status_total: "{n} órdenes · {p} pzs",
+  sch_status_when: "Día · Export",
   pk_n_orders: "{n} orden(es)",
   pk_all_clients: "Todos los clientes del envío (.zip)",
   pk_export_btn: "Packing",

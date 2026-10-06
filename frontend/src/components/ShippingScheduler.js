@@ -377,6 +377,7 @@ const ShippingScheduler = () => {
   const [findRes, setFindRes] = useState(null);   // null = cerrado | [] | [items]
   const [findLoading, setFindLoading] = useState(false);
   const [flashId, setFlashId] = useState(null);
+  const [statusModal, setStatusModal] = useState(null); // status abierto en "Órdenes por status" ('—' = sin status)
   const [findOpen, setFindOpen] = useState(false);
   const [addText, setAddText] = useState({});      // export_id → texto de captura
   const [showCrm, setShowCrm] = useState(() => {
@@ -1345,7 +1346,9 @@ const ShippingScheduler = () => {
           {Object.keys(statusCounts).length > 0 && (
             <div className="flex items-center gap-1 flex-wrap ml-auto">
               {Object.entries(statusCounts).map(([s, n]) => (
-                <span key={s} className="px-2 py-0.5 rounded-full text-[10px] font-black" style={{ background: (STATUS_COLORS[s] || {}).pill || '#e2e8f0', color: STATUS_COLORS[s] ? '#fff' : '#64748b' }}>{s} · {n}</span>
+                <button key={s} onClick={() => setStatusModal(s)} title={t('sch_status_open')}
+                  className="px-2 py-0.5 rounded-full text-[10px] font-black hover:ring-2 hover:ring-offset-1 hover:ring-slate-300 transition-all"
+                  style={{ background: (STATUS_COLORS[s] || {}).pill || '#e2e8f0', color: STATUS_COLORS[s] ? '#fff' : '#64748b' }}>{s} · {n}</button>
               ))}
             </div>
           )}
@@ -1442,6 +1445,83 @@ const ShippingScheduler = () => {
       )}
       </div>
       </div>
+
+      {/* Órdenes por status: los chips de la semana abren esta lista; una
+          pestaña por status, en el orden visual del programador. Clic en una
+          orden → se cierra y salta a su renglón (resaltado). */}
+      {statusModal && statusCounts[statusModal] !== undefined && (() => {
+        const byId = Object.fromEntries(lines.map((l) => [l.shipment_id, l]));
+        const expById = Object.fromEntries(exportsList.map((e) => [e.export_id, e]));
+        const rows = visualIds.map((id) => byId[id]).filter((l) => (l.status_effective || '—') === statusModal);
+        const goTo = (l) => { setStatusModal(null); setFlashId(l.shipment_id); };
+        return (
+          <div className="fixed inset-0 z-[90] flex items-center justify-center p-4">
+            <div className="absolute inset-0 bg-slate-900/50" onClick={() => setStatusModal(null)} />
+            <div className="sch-sheet relative w-full max-w-5xl max-h-[85vh] flex flex-col rounded-2xl shadow-2xl p-5 gap-3">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h3 className="text-base font-black text-slate-800">{t('sch_status_title', { week: weekLabel(weekStart) })}</h3>
+                  <p className="text-[11px] text-slate-500">{t('sch_status_hint')}</p>
+                </div>
+                <button onClick={() => setStatusModal(null)} className="p-1 rounded-lg text-slate-400 hover:bg-slate-100"><X className="w-5 h-5" /></button>
+              </div>
+              <div className="flex items-center gap-1 flex-wrap">
+                {Object.entries(statusCounts).map(([s, n]) => {
+                  const on = s === statusModal;
+                  return (
+                    <button key={s} onClick={() => setStatusModal(s)}
+                      className={`px-2.5 py-1 rounded-full text-[10px] font-black transition-all ${on ? 'ring-2 ring-offset-1 ring-slate-800' : 'opacity-60 hover:opacity-100'}`}
+                      style={{ background: (STATUS_COLORS[s] || {}).pill || '#e2e8f0', color: STATUS_COLORS[s] ? '#fff' : '#64748b' }}>
+                      {s === '—' ? t('sch_status_none') : s} · {n}
+                    </button>
+                  );
+                })}
+                <span className="ml-auto text-[11px] font-black text-slate-600">{t('sch_status_total', { n: rows.length, p: fmtNum(sumPcs(rows)) })}</span>
+              </div>
+              <div className="flex-1 overflow-auto rounded-xl border border-slate-200">
+                <table className="w-full border-collapse text-[12px]">
+                  <thead className="sticky top-0 bg-slate-100">
+                    <tr className="text-[10px] font-black uppercase tracking-wider text-slate-700">
+                      <th className="px-2 py-1.5 text-left">ORDER</th>
+                      <th className="px-2 py-1.5 text-left">CUSTOMER</th>
+                      <th className="px-2 py-1.5 text-left">BRANDING</th>
+                      <th className="px-2 py-1.5 text-left">CUSTOMER PO.</th>
+                      <th className="px-2 py-1.5 text-left">DESIGN #</th>
+                      <th className="px-2 py-1.5 text-right">PCS</th>
+                      <th className="px-2 py-1.5 text-left">{t('sch_status_when')}</th>
+                      <th className="px-2 py-1.5 text-left">CANCEL DATE</th>
+                      <th className="px-2 py-1.5 text-left">{t('sch_priority')}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.map((l) => {
+                      const exp = expById[l.export_id];
+                      return (
+                        <tr key={l.shipment_id} data-st="none" onClick={() => goTo(l)}
+                          className="border-t border-slate-100 cursor-pointer hover:bg-blue-50">
+                          <td className="px-2 py-1.5 font-black text-slate-800 whitespace-nowrap">
+                            {l.order_number}
+                            {l.late && <span className="ml-1 px-1 rounded bg-red-600 text-white text-[9px]">LATE</span>}
+                            {l.status && <span className="ml-1 text-[10px] text-slate-500" title={t('sch_status_manual_hint', { auto: l.status_auto || '—' })}>✎</span>}
+                          </td>
+                          <td className="px-2 py-1.5 font-bold text-slate-700">{l.client || '—'}</td>
+                          <td className="px-2 py-1.5 text-slate-600">{l.branding || '—'}</td>
+                          <td className="px-2 py-1.5 text-slate-600">{l.customer_po || '—'}</td>
+                          <td className="px-2 py-1.5 text-slate-600">{l.design_num || '—'}</td>
+                          <td className="px-2 py-1.5 text-right font-bold tabular-nums">{fmtNum(l.pcs)}</td>
+                          <td className="px-2 py-1.5 text-slate-600 whitespace-nowrap">{exp ? exportLabel(exp) : l.ship_date}</td>
+                          <td className="px-2 py-1.5 text-slate-600 whitespace-nowrap">{l.cancel_date || '—'}</td>
+                          <td className="px-2 py-1.5 text-slate-600">{l.priority ? PRIORITY_LABEL[l.priority] : '—'}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Reporte del packing generado: avisos para revisar antes de enviarlo. */}
       {pkReport && (

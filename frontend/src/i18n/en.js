@@ -3138,6 +3138,13 @@ const en = {
   sch_status_auto_none: "no MOS match",
   sch_find_ph: "Search shipments: order, client, PO, design…",
   pk_pick_client: "This shipment has several clients: which packing?",
+  // "Orders by status" modal (week chips)
+  sch_status_open: "See the orders with this status",
+  sch_status_title: "Orders by status · {week}",
+  sch_status_hint: "Orders in the open week. Click an order to jump to it in the scheduler.",
+  sch_status_none: "No status",
+  sch_status_total: "{n} orders · {p} pcs",
+  sch_status_when: "Day · Export",
   pk_n_orders: "{n} order(s)",
   pk_all_clients: "All clients in this shipment (.zip)",
   pk_export_btn: "Packing",
