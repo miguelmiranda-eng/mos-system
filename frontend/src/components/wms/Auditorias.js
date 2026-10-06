@@ -3,7 +3,8 @@
    motivos (gated por auditorias.manage). Los KPIs y las vistas se calculan/leen
    en el backend (services/auditorias.py); aquí solo se pintan. */
 import { useState, useEffect, useCallback } from "react";
-import { RefreshCw, Plus, X, Loader2, Save } from "lucide-react";
+import { RefreshCw, Plus, X, Loader2, Save, Download } from "lucide-react";
+import * as XLSX from "xlsx";
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip,
   CartesianGrid, ReferenceLine, Legend,
@@ -40,6 +41,16 @@ const isoDaysAgo = (n) => {
 const pct = (v) => (v == null ? "—" : `${v}%`);
 const num = (v) => (v == null || v === "" ? "" : Number(v).toLocaleString());
 const shortWhen = (iso) => (iso || "").replace("T", " ").slice(0, 16);
+
+// Descarga un .xlsx con una o varias hojas. sheets = [{name, rows}], rows = [{col: val}].
+const downloadSheets = (filename, sheets) => {
+  const wb = XLSX.utils.book_new();
+  sheets.forEach(({ name, rows }) => {
+    const ws = XLSX.utils.json_to_sheet(rows.length ? rows : [{}]);
+    XLSX.utils.book_append_sheet(wb, ws, String(name).slice(0, 31));
+  });
+  XLSX.writeFile(wb, filename);
+};
 
 export function AuditoriasModule() {
   const { t } = useLang();
@@ -117,6 +128,19 @@ function KpisTab({ t, since, until }) {
     key: r.key, IRA: r.ira_pct, ILA: r.ila_pct,
   }));
 
+  const exportXlsx = () => {
+    const rows = (data?.series || []).map((r) => ({
+      [t("wms_aud_col_period")]: r.key,
+      [t("wms_aud_units_processed")]: r.units_processed,
+      [t("wms_aud_units_ok")]: r.units_without_issues,
+      "IRA %": r.ira_pct, "IRA MTD %": r.ira_mtd,
+      [t("wms_aud_col_locs")]: r.locations_processed,
+      [t("wms_aud_col_locs_ok")]: r.locations_without_issues,
+      "ILA %": r.ila_pct, fuente: r.source,
+    }));
+    downloadSheets(`Auditorias_KPIs_${since}_${until}.xlsx`, [{ name: "KPIs", rows }]);
+  };
+
   return (
     <div className="space-y-5">
       <div className="flex items-center gap-2">
@@ -130,10 +154,15 @@ function KpisTab({ t, since, until }) {
             </button>
           ))}
         </div>
-        <Btn onClick={load} className="ml-auto" disabled={loading} data-testid="aud-refresh">
-          {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
-          {t("wms_aud_refresh")}
-        </Btn>
+        <div className="ml-auto flex items-center gap-2">
+          <Btn onClick={exportXlsx} disabled={loading || !(data?.series?.length)} data-testid="aud-export-kpis">
+            <Download className="w-4 h-4" />{t("wms_aud_export")}
+          </Btn>
+          <Btn onClick={load} disabled={loading} data-testid="aud-refresh">
+            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+            {t("wms_aud_refresh")}
+          </Btn>
+        </div>
       </div>
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
@@ -235,6 +264,12 @@ function FeedTab({ t, kind, since, until }) {
   const cols = FEED_COLS[kind] || [];
   const colLabel = (c) => t(`wms_aud_col_${c === "created_at" ? "date" : c === "user_name" ? "user" : c === "order_number" ? "order" : c === "box_id" ? "box" : c === "receiving_id" ? "receiving" : c}`);
 
+  const exportXlsx = () => {
+    const out = rows.map((r) => Object.fromEntries(
+      cols.map((c) => [colLabel(c), c === "created_at" ? shortWhen(r[c]) : (r[c] ?? "")])));
+    downloadSheets(`Auditorias_${kind}_${since}_${until}.xlsx`, [{ name: kind, rows: out }]);
+  };
+
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-2">
@@ -243,6 +278,9 @@ function FeedTab({ t, kind, since, until }) {
         <Btn onClick={load} disabled={loading}>
           {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
           {t("wms_aud_refresh")}
+        </Btn>
+        <Btn onClick={exportXlsx} disabled={loading || rows.length === 0} data-testid="aud-export-feed">
+          <Download className="w-4 h-4" />{t("wms_aud_export")}
         </Btn>
         <span className="text-xs text-muted-foreground ml-auto">{t("wms_aud_total")}: {total.toLocaleString()}</span>
       </div>
@@ -441,6 +479,27 @@ function SamplingTab({ t, canManage }) {
     else { const e = await res.json().catch(() => ({})); toast.error(e.detail || t("wms_aud_save_err")); }
   };
 
+  const exportXlsx = () => {
+    if (!sel) return;
+    const boxes = (sel.boxes || []).map((b) => ({
+      Caja: b.box_id, Ubicacion: b.location, Estilo: b.style, Color: b.color, Talla: b.size,
+      Sistema: b.system_units, Fisico: b.counted_units,
+      Delta: b.counted ? (b.counted_units - b.system_units) : "",
+      ContenidoOK: b.content_ok === false ? "NO" : "SI",
+      EnUbicacion: b.located_ok === false ? "NO" : "SI",
+      Ajustada: b.adjusted ? "SI" : "",
+    }));
+    const m = sel.metrics || {};
+    const met = [
+      ["Cajas muestreadas", m.boxes_sampled], ["Cajas correctas", m.boxes_correct],
+      ["Con discrepancia", m.boxes_discrepancy], ["Contenido incorrecto %", m.content_bad_pct],
+      ["Piezas sistema", m.system_pieces], ["Piezas fisicas", m.physical_pieces],
+      ["Variacion neta", m.net_discrepancy], ["IRA %", m.ira_pct], ["ILA %", m.ila_pct],
+    ].map(([Metrica, Valor]) => ({ Metrica, Valor }));
+    downloadSheets(`Auditorias_Muestreo_${sel.session_id}.xlsx`,
+      [{ name: "Cajas", rows: boxes }, { name: "Metricas", rows: met }]);
+  };
+
   const editable = canManage && sel && sel.status === "open";
   const m = sel?.metrics || {};
 
@@ -513,6 +572,9 @@ function SamplingTab({ t, canManage }) {
             <span className="text-xs text-muted-foreground ml-auto">
               {sel.status === "closed" ? <Chip tone="success">{t("wms_aud_session_closed")}</Chip> : null}
             </span>
+            <Btn onClick={exportXlsx} disabled={!(sel.boxes || []).length} data-testid="aud-export-sampling">
+              <Download className="w-4 h-4" />{t("wms_aud_export")}
+            </Btn>
             {editable && (
               <Btn variant="primary" onClick={closeSession} data-testid="aud-close-session">
                 {t("wms_aud_close_session")}

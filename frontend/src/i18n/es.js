@@ -4684,6 +4684,7 @@ const es = {
   wms_aud_adjusted_ok: "Ajuste aplicado",
   wms_aud_pick_reason: "Motivo…",
   wms_aud_apply: "Aplicar ajuste",
+  wms_aud_export: "Exportar",
   wms_mod_audit: "Auditoría",
   wms_mod_audit_desc: "Salud del sistema, trazabilidad por caja/SKU y movimientos",
   wms_mod_incidents: "Incidencias",

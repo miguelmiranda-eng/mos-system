@@ -4870,6 +4870,7 @@ const en = {
   wms_aud_adjusted_ok: "Adjustment applied",
   wms_aud_pick_reason: "Reason…",
   wms_aud_apply: "Apply adjustment",
+  wms_aud_export: "Export",
   wms_mod_audit: "Audit",
   wms_mod_audit_desc: "System health, per box/SKU traceability and movements",
   wms_mod_incidents: "Incidents",
