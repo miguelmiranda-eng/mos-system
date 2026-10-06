@@ -205,6 +205,22 @@ export default function PrintavoExport() {
     if (!contact) { toast.error(t('admin_pexport_choose_contact')); return; }
     if (!chosen.length) { toast.error(t('admin_pexport_select_style')); return; }
     if (chosen.some((r) => !(r.brand || "").trim())) { toast.error(t('pexport_flag_retailer_missing')); return; }
+    // Confirmación explícita cuando el PO trae datos que NO cuadran. El aviso en la
+    // tarjeta era un chip fácil de pasar por alto: el PO 23258 se creó en Printavo
+    // con 203 piezas en S (el parser sumaba de más) porque nadie lo vio. Sólo se
+    // listan inconsistencias reales y raras — si saltara en cada PO, se volvería
+    // un clic automático y dejaría de servir.
+    const avisos = chosen.flatMap((r) => {
+      const out = [];
+      if (r.sizes_match === false) out.push(t('pexport_confirm_sizes', { d: r.design_num, a: r.qty_from_sizes, b: r.qty }));
+      if (!r.po_number) out.push(t('pexport_confirm_po', { d: r.design_num }));
+      if (r.po_discrepancy) out.push(t('pexport_confirm_discrepancy', { d: r.design_num, a: r.store_po, b: r.store_po_notes }));
+      return out;
+    });
+    if (avisos.length) {
+      const msg = [t('pexport_confirm_head', { n: avisos.length }), "", ...avisos, "", t('pexport_confirm_tail')].join("\n");
+      if (!window.confirm(msg)) return;
+    }
     setCreating(true); setResults(null);
     try {
       const url = intakeItem ? `${API}/gmail-intake/items/${intakeItem.item_id}/create` : `${API}/printavo-export/create`;

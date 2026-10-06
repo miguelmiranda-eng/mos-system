@@ -141,6 +141,9 @@ def _store_po_from_position(page):
 _SAMPLE_HDR_RE = re.compile(r"\bSAMPLE\s+([YN])\b")
 # Detalle del bloque TOPS NEEDED, hasta el pie 'Note :' (o fin de página).
 _TOPS_NEEDED_RE = re.compile(r"\bTOPS NEEDED\b\s*\n(.+?)(?=\n\s*Note\s*:|\Z)", re.S)
+# Renglon valido del bloque: "1 SM", "2 XL"... Sin este filtro, un bloque vacio
+# arrastraba el pie de pagina del ticket al line item de muestras del quote.
+_TOPS_LINE_RE = re.compile(r"^\d+\s*[A-Z0-9]{1,4}$", re.I)
 
 
 def _sizes_from_pack_text(text: str):
@@ -250,19 +253,86 @@ def _pack_raw_from_text(text: str) -> str:
     return "\n".join(out)
 
 
+# Tolerancia vertical para decidir que una palabra pertenece al renglon marcado
+# por "SIZE >" / "QTY >". Medido en los tickets de Goodie: la etiqueta del marcador
+# y el contenido del renglon difieren ~4.5pt, y el renglon vecino esta a >=13pt.
+_GRID_ROW_TOL = 8
+
+
+def _size_grid_rows(page):
+    """Renglones de la rejilla de tallas: [(top del SIZE, top del QTY, x minima)].
+
+    La rejilla viene rotulada en el PDF con "RATIO >", "SIZE >" y "QTY >", y puede
+    repetirse (XXS..XL en un bloque, 2XL..5XL en otro). Cada SIZE se empareja con
+    el primer QTY que queda DEBAJO, lo que ademas descarta el "QTY" del encabezado
+    de la tabla de estilos, que vive mas arriba en la pagina."""
+    sizes_m, qty_m = [], []
+    for w in page.extract_words():
+        t = w["text"].strip().upper().rstrip(">")
+        if t == "SIZE":
+            sizes_m.append((w["top"], w["x1"]))
+        elif t == "QTY":
+            qty_m.append((w["top"], w["x1"]))
+    rows = []
+    for stop, sx1 in sorted(sizes_m):
+        below = [(qt, qx1) for qt, qx1 in qty_m if qt > stop]
+        if not below:
+            continue
+        qtop, qx1 = min(below)
+        rows.append((stop, qtop, max(sx1, qx1)))
+    return rows
+
+
 def _extract_sizes_by_position(page):
     """Align the SIZE/QTY table columns by x-position. Used for POs (e.g. Tractor
     Supply) that lack a PACK text block — the table's text extraction is misaligned,
-    but each QTY value sits directly under its SIZE label. Returns (sizes, total, pack_lines)."""
+    but each QTY value sits directly under its SIZE label. Returns (sizes, total, pack_lines).
+
+    La busqueda se ACOTA a los renglones de la rejilla (ver _size_grid_rows). Barrer
+    la pagina entera sumaba piezas inventadas (reportado 2026-10-06 en el PO 23258):
+      · la descripcion del estilo puede terminar en una palabra que es una talla
+        ("RACER TANK - IM S") y esa "S" se llevaba el 1 del renglon RATIO;
+      · el bloque TOPS NEEDED ("1 SM" / "1 MD") hacia que la talla de un renglon
+        se llevara el 1 del renglon siguiente.
+    Si el PDF no trae los rotulos SIZE/QTY se conserva el barrido anterior."""
+    words = page.extract_words()
+    rows = _size_grid_rows(page)
+    sizes, total, pack_lines = {}, 0, []
+
+    if rows:
+        for stop, qtop, xmin in rows:
+            labels, nums = [], []
+            for w in words:
+                t = w["text"].strip().upper()
+                cx = (w["x0"] + w["x1"]) / 2
+                if w["x0"] < xmin:
+                    continue
+                if t in _SIZE_TOKENS and abs(w["top"] - stop) <= _GRID_ROW_TOL:
+                    labels.append((cx, t))
+                elif t.isdigit() and len(t) <= 5 and abs(w["top"] - qtop) <= _GRID_ROW_TOL:
+                    nums.append((cx, int(t)))
+            for cx, token in labels:
+                best, best_d = None, 1e9
+                for ncx, val in nums:          # la cantidad de ESA columna
+                    d = abs(ncx - cx)
+                    if d < 18 and d < best_d:
+                        best_d, best = d, val
+                ms = SIZES_MAP.get(token)
+                if best is not None and ms:
+                    sizes[ms] = sizes.get(ms, 0) + best
+                    total += best
+                    pack_lines.append(f"{token} - {best}")
+        return sizes, total, pack_lines
+
+    # Respaldo: PDF sin rotulos de rejilla, barrido como antes.
     labels, nums = [], []
-    for w in page.extract_words():
+    for w in words:
         t = w["text"].strip().upper()
         cx = (w["x0"] + w["x1"]) / 2
         if t in _SIZE_TOKENS:
             labels.append((cx, w["top"], t))
         elif t.isdigit() and len(t) <= 5:      # excludes 12-digit UPCs
             nums.append((cx, w["top"], int(t)))
-    sizes, total, pack_lines = {}, 0, []
     for cx, top, token in labels:
         best, best_d = None, 1e9
         for ncx, ntop, val in nums:            # the qty word directly below this label
@@ -343,7 +413,10 @@ def _parse_goodie_page(page):
     _sm = _SAMPLE_HDR_RE.search(text)
     sample_required = bool(_sm and _sm.group(1).upper() == "Y")
     _tn = _TOPS_NEEDED_RE.search(text)
-    tops_needed = "\n".join(l.strip() for l in _tn.group(1).splitlines() if l.strip()) if _tn else ""
+    tops_needed = "\n".join(
+        l.strip() for l in (_tn.group(1).splitlines() if _tn else [])
+        if _TOPS_LINE_RE.match(l.strip())
+    )
 
     qty_declared = int(m.group("qty").replace(",", ""))
 
