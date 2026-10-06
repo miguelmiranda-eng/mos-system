@@ -28,9 +28,15 @@ sys.path.insert(0, BE)
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
+import printavo_export as _px  # noqa: E402
 from printavo_export import (  # noqa: E402
     _iso, _parse_culturekings_text, _spektrum_record, build_quote_input, _STYLE_RE,
 )
+
+# "Hoy" fijo: las fechas del PO de prueba (2026-09-30) ya pasaron, y desde el
+# 2026-10-06 una fecha vencida se sustituye por la de hoy. Sin fijarlo, el
+# smoke cambiaría de resultado según el día en que se corra.
+_px._hoy = lambda: "2026-09-01"
 
 ok = fail = 0
 
@@ -201,6 +207,23 @@ check("color sin el código entre llaves", d25 and d25["color"] == "White", f"{d
 check("units 1200", d25 and d25["units"] == 1200, f"{d25 and d25['units']}")
 r25 = _spektrum_record(d25)
 check("cuadra 1200 = 1200", r25["sizes_match"] is True, f"{r25['qty']} vs {r25['qty_from_sizes']}")
+
+print("\n3f) fecha vencida -> hoy (Printavo rechaza fechas pasadas)")
+# Caso real: WK11 Y25 trae Due Date 3/17/2025; Printavo respondió "Formatted
+# payment due date must be on or after 10/6/2026" y no se creó ninguna.
+_px._hoy = lambda: "2026-10-06"
+q_venc = build_quote_input(r25, "CID", category_id="CAT")
+check("fecha 2025-03-17 vencida -> customerDueAt = hoy", q_venc["customerDueAt"] == "2026-10-06",
+      f"{q_venc['customerDueAt']!r}")
+check("dueAt también hoy", q_venc["dueAt"] == "2026-10-06T00:00:00Z", f"{q_venc['dueAt']!r}")
+check("el record conserva la fecha original (queda en la bandeja)", r25["cancel_date"] == "2025-03-17",
+      f"{r25['cancel_date']!r}")
+check("productionNote intacta (\"NO ADDITIONAL NOTES\")", q_venc["productionNote"] == _px.PRODUCTION_NOTE)
+fut = build_quote_input({**r25, "cancel_date": "2026-12-01"}, "CID", category_id="CAT")
+check("fecha futura NO se toca", fut["customerDueAt"] == "2026-12-01", f"{fut['customerDueAt']!r}")
+hoy_q = build_quote_input({**r25, "cancel_date": "2026-10-06"}, "CID", category_id="CAT")
+check("la de hoy tampoco", hoy_q["customerDueAt"] == "2026-10-06", f"{hoy_q['customerDueAt']!r}")
+_px._hoy = lambda: "2026-09-01"
 
 print("\n4) _iso: ISO passthrough sin romper los formatos de Goodie")
 check("2026-09-30 -> 2026-09-30", _iso("2026-09-30") == "2026-09-30", f"{_iso('2026-09-30')!r}")

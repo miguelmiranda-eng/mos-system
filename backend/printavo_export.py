@@ -12,6 +12,7 @@ Currently supports the Goodie Two Sleeves format; add more retailers by writing
 another _parse_<retailer> and registering it in detect_and_parse().
 """
 import io
+import logging
 import re
 from datetime import date
 import pdfplumber
@@ -497,6 +498,12 @@ def parse_pdf(pdf_bytes: bytes) -> list:
             if rec:
                 out.append(rec)
     return out
+
+
+def _hoy() -> str:
+    """Hoy en ISO. Funcion aparte para que los smokes la fijen y no dependan del
+    dia en que corren (una fecha 'futura' de hoy es pasada en un mes)."""
+    return date.today().isoformat()
 
 
 def _iso(d):
@@ -1107,6 +1114,17 @@ def build_quote_input(r: dict, contact_id: str, contact: dict = None, owner_id: 
         nickname += f" - {status}"
 
     due_date = _iso(r["cancel_date"]) or _iso(r["ship_date"])
+    # Printavo rechaza la quote si la fecha ya paso ("Formatted payment due date
+    # must be on or after <hoy>"). Decision del usuario (2026-10-06): un PO con la
+    # fecha vencida se crea con la de HOY, tambien en auto-crear. La original no
+    # se pierde: sigue en el record (cancel_date) del item de la bandeja. No va en
+    # las notas de la quote: productionNote dice "NO ADDITIONAL NOTES" y del
+    # customerNote el sync copia el link de packing.
+    hoy = _hoy()
+    if due_date and due_date < hoy:
+        logging.getLogger(__name__).info(
+            f"[printavo-export] PO {r.get('po_number')}: fecha {due_date} ya paso, se usa {hoy}")
+        due_date = hoy
     quote = {
         "contact": {"id": contact_id},
         "customerDueAt": due_date,
