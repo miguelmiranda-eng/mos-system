@@ -537,7 +537,50 @@ async def _existing_order_for(po_number: str, store_po: str = None):
     return (doc or {}).get("order_number")
 
 
-PARSER_FLAGS = ("retailer_missing", "store_po_missing", "po_missing")
+# `totales_no_cuadran`: el PDF trae totales de pagina que no cuadran con sus
+# renglones (CK formato tabla). Sube al item y bloquea el auto-crear.
+PARSER_FLAGS = ("retailer_missing", "store_po_missing", "po_missing", "totales_no_cuadran")
+
+
+def _marcar_creados(styles: list, results: list) -> list:
+    """Anota `ya_creado` en los estilos cuya quote SI se creo (los resultados
+    vienen en el mismo orden que los estilos). Si de 27 truena la 16, el item se
+    queda pendiente; sin esta marca quien lo termine a mano volveria a crear las
+    15 que ya estaban en Printavo."""
+    out = []
+    for r, res in zip(styles, list(results) + [None] * (len(styles) - len(results))):
+        r = dict(r)
+        if res and res.get("ok"):
+            r["ya_creado"] = True
+            r["quote_visual_id"] = res.get("visual_id")
+        out.append(r)
+    return out
+
+
+async def _marcar_existentes(records: list, store_po=None):
+    """Revisa CADA PO del PDF contra MOS y contra lo ya creado por el intake.
+
+    Devuelve (pos, existentes {po: orden}, creados {po}) y anota en cada estilo
+    `ya_en_mos` / `ya_creado`: al revisarlo a mano esos vienen desmarcados, y
+    crear el resto no duplica nada. Goodie trae un PO por PDF (ahi nada cambia);
+    Spektrum manda hojas con 27, y revisar solo el primero dejaba pasar
+    duplicados del resto."""
+    pos = list(dict.fromkeys(r.get("po_number") for r in records if r.get("po_number")))
+    existentes = {}
+    for p in pos:
+        o = await _existing_order_for(p, store_po)
+        if o:
+            existentes[p] = o
+    creados = set()
+    if pos:
+        async for it in db.printavo_intake.find(
+                {"status": "creado", "$or": [{"po_numbers": {"$in": pos}}, {"po_number": {"$in": pos}}]},
+                {"_id": 0, "po_numbers": 1, "po_number": 1}):
+            creados |= set(it.get("po_numbers") or [it.get("po_number")]) & set(pos)
+    for r in records:
+        r["ya_en_mos"] = existentes.get(r.get("po_number"))
+        r["ya_creado"] = r.get("po_number") in creados
+    return pos, existentes, creados
 
 
 def _auto_block_reason(item: dict):
@@ -556,6 +599,8 @@ def _auto_block_reason(item: dict):
         return f"ya existe la orden {item.get('existing_order')} en MOS"
     if "already_created" in flags:
         return "ya se creó una quote para este PO#"
+    if "totales_no_cuadran" in flags or any("totales_no_cuadran" in (r.get("flags") or []) for r in records):
+        return "los totales del PDF no cuadran con sus renglones"
     brands = {(r.get("brand") or "").upper() for r in records}
     if "store_po_missing" in flags and not all("TRACTOR" in b for b in brands):
         return "PO de tienda no detectado"
@@ -596,7 +641,8 @@ async def _maybe_auto_create(cfg: dict, fuente: dict, item: dict) -> bool:
         return False
     ok = [x for x in result.get("results", []) if x.get("ok")]
     failed = [x for x in result.get("results", []) if not x.get("ok")]
-    upd = {"created_quotes": ok, "contact_id": fuente["auto_contact_id"], "auto": True}
+    upd = {"created_quotes": ok, "contact_id": fuente["auto_contact_id"], "auto": True,
+           "styles": _marcar_creados(item["styles"], result.get("results", []))}
     if ok and not failed:
         upd.update({"status": "creado", "resolved_at": datetime.now(timezone.utc).isoformat(),
                     "resolved_by": "auto"})
@@ -658,12 +704,14 @@ async def _process_message(svc, cfg: dict, fuente: dict, labels: dict, msg_id: s
             if prior:
                 # MOS/Revisar on a pending item = "read it again with the current
                 # parser" (e.g. after a parser fix): refresh styles + flags in place.
-                parser_flags = ("retailer_missing", "store_po_missing", "po_missing")
-                pflags = [f for f in (prior.get("flags") or []) if f not in parser_flags]
-                pflags += [f for f in parser_flags if any(f in (r.get("flags") or []) for r in records)]
+                pflags = [f for f in (prior.get("flags") or []) if f not in PARSER_FLAGS]
+                pflags += [f for f in PARSER_FLAGS if any(f in (r.get("flags") or []) for r in records)]
+                pos_r, _, _ = await _marcar_existentes(
+                    records, next((r.get("store_po") for r in records if r.get("store_po")), None))
                 await db.printavo_intake.update_one({"item_id": prior["item_id"]}, {"$set": {
                     "styles": records, "engine": engine, "style_count": len(records),
                     "qty_total": sum(int(r.get("qty") or 0) for r in records),
+                    "po_numbers": pos_r,
                     "po_number": next((r.get("po_number") for r in records if r.get("po_number")), None),
                     "store_po": next((r.get("store_po") for r in records if r.get("store_po")), None),
                     "flags": pflags, "reparsed_at": now,
@@ -678,19 +726,24 @@ async def _process_message(svc, cfg: dict, fuente: dict, labels: dict, msg_id: s
             except Exception:
                 text_head = None
             store_po = next((r.get("store_po") for r in records if r.get("store_po")), None)
+            # TODOS los PO del PDF, no solo el primero. Goodie trae uno por PDF
+            # (y ahi nada cambia), pero Spektrum manda hojas con 27: revisar solo
+            # el primero dejaba pasar duplicados del resto, o cerraba el PDF
+            # entero porque el primero ya existia.
+            pos, existentes, creados = await _marcar_existentes(records, store_po)
+            existing = ", ".join(dict.fromkeys(existentes.values())) or None
             flags = []
-            if po_number and await db.printavo_intake.find_one(
-                    {"po_number": po_number, "pdf_sha256": {"$ne": sha}}, {"_id": 1}):
+            if pos and await db.printavo_intake.find_one(
+                    {"$or": [{"po_numbers": {"$in": pos}}, {"po_number": {"$in": pos}}],
+                     "pdf_sha256": {"$ne": sha}}, {"_id": 1}):
                 flags.append("new_version")
-            existing = await _existing_order_for(po_number, store_po)
-            if existing:
+            if existentes:
                 flags.append("existing_order")
-            if po_number and await db.printavo_intake.find_one(
-                    {"po_number": po_number, "status": "creado"}, {"_id": 1}):
+            if creados:
                 flags.append("already_created")
             # Parser-level flags (store not recognized, store PO missing) bubble up
             # so the inbox row warns before anyone opens the item.
-            for f in ("retailer_missing", "store_po_missing", "po_missing"):
+            for f in PARSER_FLAGS:
                 if any(f in (r.get("flags") or []) for r in records):
                     flags.append(f)
             item = {
@@ -699,6 +752,7 @@ async def _process_message(svc, cfg: dict, fuente: dict, labels: dict, msg_id: s
                 "flags": flags,
                 "existing_order": existing,
                 "po_number": po_number,
+                "po_numbers": pos,
                 "store_po": store_po,
                 "engine": engine,
                 "styles": records,
@@ -724,25 +778,31 @@ async def _process_message(svc, cfg: dict, fuente: dict, labels: dict, msg_id: s
                 "resolved_by": None,
             }
             # Already in MOS -> resolved on the spot; nothing to do for anyone.
-            if existing:
+            # Solo si TODOS sus PO existen: con uno nuevo, alguien tiene que verlo.
+            if pos and len(existentes) == len(pos):
                 item.update({"status": "ya_existe", "resolved_at": now, "resolved_by": "auto"})
             # Same PO already waiting: the OLDER PDF is superseded by this one
             # (original vs Rev1 in the same pass); only the newest waits. If the
             # older one was already created, this stays a 'new_version' for a human.
-            elif po_number:
+            # Con varios PO por PDF solo se reemplaza al que queda CUBIERTO: si el
+            # nuevo no trae todos los PO del viejo, tirar el viejo de la bandeja
+            # perderia los que faltan. En ese caso se quedan los dos.
+            elif pos:
                 async for old in db.printavo_intake.find(
-                        {"po_number": po_number, "status": "pendiente", "pdf_sha256": {"$ne": sha}},
-                        {"_id": 0, "item_id": 1, "received_at": 1}):
+                        {"$or": [{"po_numbers": {"$in": pos}}, {"po_number": {"$in": pos}}],
+                         "status": "pendiente", "pdf_sha256": {"$ne": sha}},
+                        {"_id": 0, "item_id": 1, "received_at": 1, "po_numbers": 1, "po_number": 1}):
+                    viejos = set(old.get("po_numbers") or [old.get("po_number")])
                     if (old.get("received_at") or "") <= (item["received_at"] or ""):
-                        await db.printavo_intake.update_one({"item_id": old["item_id"]}, {"$set": {
-                            "status": "reemplazado", "resolved_at": now, "resolved_by": "auto",
-                            "replaced_by": item["item_id"]}})
-                    else:
+                        if viejos <= set(pos):
+                            await db.printavo_intake.update_one({"item_id": old["item_id"]}, {"$set": {
+                                "status": "reemplazado", "resolved_at": now, "resolved_by": "auto",
+                                "replaced_by": item["item_id"]}})
+                    elif set(pos) <= viejos:
                         # This PDF is older than one already waiting: it is the superseded one.
                         item.update({"status": "reemplazado", "resolved_at": now, "resolved_by": "auto",
                                      "replaced_by": old["item_id"]})
-                if item["status"] == "pendiente" and "new_version" in flags and not await db.printavo_intake.find_one(
-                        {"po_number": po_number, "status": "creado"}, {"_id": 1}):
+                if item["status"] == "pendiente" and "new_version" in flags and not creados:
                     flags.remove("new_version")
             await db.printavo_intake.insert_one(item)
             created += 1

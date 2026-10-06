@@ -1121,6 +1121,8 @@ const en = {
   pexport_field_store_po: "Store PO",
   pexport_field_retailer: "Store in the PDF",
   pexport_flag_retailer_missing: "Store not detected — fill it in before creating",
+  pexport_flag_ya_creado: "Quote already created {n}",
+  pexport_flag_totales: "PDF totals do not add up",
   pexport_flag_store_po_missing: "Store PO not detected",
   pexport_flag_po_missing: "PO# not detected",
   pexport_confirm_head: "This PO has {n} value(s) that do not add up:",

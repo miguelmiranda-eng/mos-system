@@ -935,6 +935,8 @@ const es = {
   pexport_field_store_po: "PO tienda",
   pexport_field_retailer: "Tienda en el PDF",
   pexport_flag_retailer_missing: "Tienda no detectada — captúrala antes de crear",
+  pexport_flag_ya_creado: "Quote ya creada {n}",
+  pexport_flag_totales: "Totales del PDF no cuadran",
   pexport_flag_store_po_missing: "PO de tienda no detectado",
   pexport_flag_po_missing: "PO# no detectado",
   pexport_confirm_head: "Este PO trae {n} dato(s) que no cuadran:",

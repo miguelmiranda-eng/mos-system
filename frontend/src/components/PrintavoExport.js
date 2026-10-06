@@ -164,7 +164,9 @@ export default function PrintavoExport() {
   const reviewItem = (it) => {
     setIntakeItem(it); setFile(null); setResults(null);
     setStyles(it.styles || []);
-    setSelected(Object.fromEntries((it.styles || []).map((_, i) => [i, true])));
+    // Un estilo cuyo PO ya está en MOS o ya se creó viene desmarcado: en un PDF
+    // con 27 POs de Spektrum, crear "todo" duplicaba los que ya existían.
+    setSelected(Object.fromEntries((it.styles || []).map((r, i) => [i, !(r.ya_en_mos || r.ya_creado)])));
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
@@ -485,6 +487,8 @@ export default function PrintavoExport() {
                         {it.flags?.includes("existing_order") && <Flag text={t('pexport_intake_flag_existing', { n: it.existing_order })} />}
                         {it.flags?.includes("retailer_missing") && <Flag text={t('pexport_flag_retailer_missing')} />}
                         {it.flags?.includes("store_po_missing") && <Flag text={t('pexport_flag_store_po_missing')} />}
+                        {it.flags?.includes("already_created") && <Flag text={t('pexport_flag_ya_creado', { n: "" })} />}
+                        {it.flags?.includes("totales_no_cuadran") && <Flag text={t('pexport_flag_totales')} />}
                       </p>
                       <p className="text-xs text-muted-foreground truncate">{it.subject}</p>
                       <p className="text-[10px] text-muted-foreground/70 font-mono">{it.from_email} · {it.received_at ? new Date(it.received_at).toLocaleString() : ""} · {it.pdf_filename}</p>
@@ -575,6 +579,9 @@ export default function PrintavoExport() {
                         {!r.po_number && <Flag text={t('pexport_flag_po_missing')} />}
                         {!r.sizes_match && <Flag text={t('admin_pexport_sizes_mismatch')} />}
                         {r.po_discrepancy && <Flag text={t('admin_pexport_po_discrepancy', { table: r.store_po, notes: r.store_po_notes })} />}
+                        {r.ya_en_mos && <Flag text={t('pexport_intake_flag_existing', { n: r.ya_en_mos })} />}
+                        {r.ya_creado && <Flag text={t('pexport_flag_ya_creado', { n: r.quote_visual_id ? `#${r.quote_visual_id}` : "" })} />}
+                        {(r.flags || []).includes("totales_no_cuadran") && <Flag text={t('pexport_flag_totales')} />}
                       </div>
                     </div>
                   </div>

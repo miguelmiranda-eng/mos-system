@@ -665,14 +665,115 @@ def _ck_packing_instructions(text: str) -> list:
 
 def parse_culturekings_pdf(pdf_bytes: bytes) -> list:
     """Parse a Culture Kings/Spektrum PO PDF (text layer) into one record per
-    page/style, mirroring parse_pdf for the Goodie formats. Deterministic — no AI."""
+    page/style, mirroring parse_pdf for the Goodie formats. Deterministic — no AI.
+
+    Dos formatos: el de siempre (una página = un PO, tallas 'XS: 5, S: 35') y el
+    de TABLA (una página = un estilo con varios POs, un renglón por PO). El de
+    tabla sólo se intenta cuando el de siempre no reconoce la página, así que lo
+    que ya se leía bien se sigue leyendo igual."""
     out = []
     with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
         for page in pdf.pages:
             data = _parse_culturekings_text(page.extract_text() or "")
             if data and data.get("po_number"):
                 out.append(_spektrum_record(data))
+                continue
+            for data in _ck_tabla_page(page):
+                rec = _spektrum_record(data)
+                rec["flags"] = data.get("flags") or []
+                out.append(rec)
     return out
+
+
+# ── Culture Kings, formato de TABLA (p.ej. "CK NITEHARTS POS.pdf") ────────────
+#   NAME: NITEHARTS HEART MUSCLE TEE          NECK PRINT   <- otro campo, lejos
+#   COLOR: White {YW100}
+#   BLANK: COTTON LINKS - CL PREMIUM BOXY TEE
+#   UNITS: 301
+#   TOTAL: 344
+#   XS S M L XL 2XL TOTAL:
+#   PO: 4005620 5 15 27 43 39 22 151
+#   PO: 4005621 4 15 27 42 39 23 150
+# Un renglón PO = un PO = un record (igual que el formato de siempre, donde
+# design_num es el PO). Los campos se leen por POSICIÓN: en el texto plano el
+# BLANK sale pegado a "NECK PRINT", que es otro campo a la derecha.
+_CK_TABLA_HDR_RE = re.compile(r"^\s*((?:[A-Za-z0-9]{1,4}\s+)+)TOTAL:?\s*$", re.M)
+_CK_TABLA_ROW_RE = re.compile(r"^\s*PO\s*#?\s*:?\s*(\d{5,})\s+((?:\d[\d,]*\s*)+)$", re.M)
+_CK_TABLA_PAGE_TOTAL_RE = re.compile(r"^\s*(UNITS|TOTAL)\s*:\s*(\d[\d,]*)\s*$", re.I | re.M)
+# Hueco (pt) que separa el valor de un rótulo de OTRO campo en el mismo renglón.
+_CK_TABLA_HUECO = 30
+
+
+def _ck_valor_rotulo(words, rotulo):
+    """Texto a la derecha de `rotulo` en su renglón, hasta el primer hueco grande."""
+    ancla = next((w for w in words if w["text"].upper() == rotulo), None)
+    if not ancla:
+        return ""
+    fila = sorted((w for w in words if abs(w["top"] - ancla["top"]) <= 4 and w["x0"] > ancla["x1"]),
+                  key=lambda w: w["x0"])
+    out, fin = [], ancla["x1"]
+    for w in fila:
+        if out and w["x0"] - fin > _CK_TABLA_HUECO:
+            break
+        out.append(w["text"])
+        fin = w["x1"]
+    return " ".join(out).strip()
+
+
+def _ck_tabla_page(page) -> list:
+    """Records (forma de _parse_culturekings_text) de una página en formato tabla;
+    [] si la página no es de este formato."""
+    text = page.extract_text() or ""
+    up = text.upper()
+    if "CULTURE KINGS" not in up and "SPEKTRUM" not in up:
+        return []
+    tallas = None
+    for m in _CK_TABLA_HDR_RE.finditer(text):
+        toks = m.group(1).split()
+        if len(toks) >= 2 and all(t.upper() in SIZES_MAP for t in toks):
+            tallas = [t.upper() for t in toks]
+            break
+    if not tallas:
+        return []
+    words = page.extract_words()
+    name = _ck_valor_rotulo(words, "NAME:")
+    if not name:
+        return []
+    # El código entre llaves ({YW100}) no es parte del color: el formato de
+    # siempre trae "White" a secas y así queda en Printavo.
+    color = re.sub(r"\s*\{[^}]*\}\s*", " ", _ck_valor_rotulo(words, "COLOR:")).strip()
+    blank = _ck_valor_rotulo(words, "BLANK:")
+    retailer = "CULTURE KINGS" if "CULTURE KINGS" in up else "SPEKTRUM"
+
+    filas = []
+    for m in _CK_TABLA_ROW_RE.finditer(text):
+        nums = [int(x.replace(",", "")) for x in m.group(2).split()]
+        if len(nums) == len(tallas) + 1:
+            vals, total = nums[:-1], nums[-1]
+        elif len(nums) == len(tallas):
+            vals, total = nums, None
+        else:
+            continue  # renglón que no cuadra con el encabezado: mejor no inventar
+        sizes = {t: n for t, n in zip(tallas, vals)}
+        filas.append((m.group(1), sizes, total if total is not None else sum(vals)))
+    if not filas:
+        return []
+
+    # Los totales de la PÁGINA (UNITS / TOTAL) tienen que cuadrar con la suma de
+    # los renglones. En el PDF real de NITEHARTS no cuadran (UNITS 301, TOTAL
+    # 344, renglones 151+150): esa página no se puede crear sola.
+    suma = sum(t for _, _, t in filas)
+    descuadre = [f"{k.upper()} {v}" for k, v in
+                 ((m.group(1), int(m.group(2).replace(",", ""))) for m in _CK_TABLA_PAGE_TOTAL_RE.finditer(text))
+                 if v != suma]
+    flags = ["totales_no_cuadran"] if descuadre else []
+
+    return [{
+        "retailer": retailer, "range_name": None, "po_number": po, "name": name,
+        "color": color or None, "blank": blank or None, "units": total, "due_date": None,
+        "sizes": sizes, "packing_instructions": [], "flags": list(flags),
+        "totales_pagina": descuadre or None,
+    } for po, sizes, total in filas]
 
 
 def _garment_description(r):
