@@ -172,3 +172,7 @@ cloud_*.json
 # sin tocar desde abril, sin que nadie los importe, y nueve de ellos con la
 # credencial de Mongo escrita.
 tmp/
+
+# Corpus de POs reales para smoke_po_golden.py (~31 MB de work orders del cliente).
+# Se rebaja con backend/tests/fetch_po_corpus.py; la foto congelada SI va en el repo.
+backend/tests/fixtures/po/
