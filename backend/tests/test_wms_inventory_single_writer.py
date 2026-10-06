@@ -36,14 +36,27 @@ WMS = os.path.join(os.path.dirname(__file__), "..", "routers", "wms.py")
 #           (55/20 -> 43/16).
 ALLOWLIST = {
     # ── El escritor legítimo y las piezas del modelo nuevo ──
-    "_reproject_material_rows": 7,        # EL reescritor (la caja manda). 2026-07-30:
+    "_reproject_material_rows": 8,        # EL reescritor (la caja manda). 2026-07-30:
                                           # +1 delete_one -> consolida un renglón
                                           # fantasma DUPLICADO cuando el físico ya
                                           # está 100% cubierto por otro lote (papel
                                           # viejo tras re-etiquetar cajas). Blindado
                                           # en smoke_wms_move_location_lote.
+                                          # 2026-10-06: +1 delete_one -> elimina el
+                                          # residuo NEGATIVO/en-cero sin cajas ni
+                                          # allocation (los 11 renglones negativos del
+                                          # 2026-08-11). Sigue siendo el reescritor
+                                          # escribiendo SU renglón; el conteo estaba
+                                          # desfasado (8 sitios reales, decía 7).
     "_reconcile_missing_inventory_row": 1,  # crea fila desde cajas (modelo nuevo)
     "_selftest_cleanup": 1,               # limpieza del autotest de Auditoría
+    "_resolve_inventory_rename_collisions": 1,  # 2026-10-06: delete_many de filas
+                                          # VACÍAS (0 on-hand / 0 apartadas) que
+                                          # chocarían con el índice único al renombrar.
+                                          # Stock-neutral (borrar 0u no altera existencias)
+                                          # y CON respaldo previo (wms_inventory_bak_rename_*);
+                                          # las filas CON stock abortan con 409, nunca se
+                                          # tocan. Excepción legítima no derivada de cajas.
     # ── DEUDA (olas pendientes): migrar a cajas-primero + reescritor ──
     # Ola 3 — el clúster de _update_inventory_enhanced (recepción, picking
     # legado, neck cutting via pick_to_neck, embarques): cada flujo necesita
