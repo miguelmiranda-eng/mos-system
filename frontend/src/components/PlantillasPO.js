@@ -239,8 +239,14 @@ export default function PlantillasPO() {
     const c = { ...(s.campos || {}) }; delete c[k]; return { ...s, campos: c };
   });
 
+  // El estilo de LA página que se está viendo, no el primero del PDF: mapear en
+  // la página 3 y que el valor se busque en la 1 hacía parecer que la regla
+  // fallaba cuando en realidad estaba bien.
+  const recordDePagina = () =>
+    (previa?.records || []).find((r) => r._pagina === pagina + 1) || previa?.records?.[0] || null;
+
   const valorDe = (k) => {
-    const r = previa?.records?.[0];
+    const r = recordDePagina();
     if (!r) return null;
     const v = r[k];
     return v === null || v === undefined || v === "" ? null : String(v);
@@ -352,14 +358,14 @@ export default function PlantillasPO() {
                   onChange={(v) => editarTallas({ excluir: v.split(",").map((x) => x.trim()).filter(Boolean) })} />
               )}
 
-              {previa?.records?.[0] && (
+              {recordDePagina() && (
                 <div className="border-t border-border pt-2">
                   <p className="text-[10px] font-black uppercase tracking-widest text-muted-foreground/60 mb-1">{t('ppo_t_leidas')}</p>
                   <p className="text-sm font-mono">
-                    {Object.entries(previa.records[0].sizes || {}).map(([k, v]) => `${k}:${v}`).join("  ") || "—"}
+                    {Object.entries(recordDePagina().sizes || {}).map(([k, v]) => `${k}:${v}`).join("  ") || "—"}
                   </p>
-                  <p className={`text-xs mt-1 ${previa.records[0].sizes_match ? "text-emerald-600" : "text-amber-600"}`}>
-                    {t('ppo_t_suma', { a: previa.records[0].qty_from_sizes, b: previa.records[0].qty ?? "—" })}
+                  <p className={`text-xs mt-1 ${recordDePagina().sizes_match ? "text-emerald-600" : "text-amber-600"}`}>
+                    {t('ppo_t_suma', { a: recordDePagina().qty_from_sizes, b: recordDePagina().qty ?? "—" })}
                   </p>
                 </div>
               )}
@@ -462,6 +468,14 @@ export default function PlantillasPO() {
                     <p className="text-xs text-muted-foreground font-mono">
                       {t('ppo_previa_resumen', { p: previa.paginas, e: previa.estilos })}
                     </p>
+                    {previa.estilos > 0 && !previa.records.some((r) => r._pagina === pagina + 1) && (
+                      <p className="text-xs text-amber-600">
+                        {t('ppo_pagina_sin_estilo', {
+                          p: pagina + 1,
+                          otras: previa.records.map((r) => r._pagina).filter(Boolean).join(", "),
+                        })}
+                      </p>
+                    )}
                     {previa.records.slice(0, 4).map((r, i) => (
                       <div key={i} className="border border-border rounded-lg p-3 text-sm">
                         <p className="font-bold font-mono">{r.design_num} · {r.color} · {r.qty} pcs</p>

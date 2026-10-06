@@ -410,6 +410,10 @@ def leer_pagina(page, plantilla, mapa_tallas):
         ("po_missing", not rec.get("po_number")),
     ) if falta]
     rec["plantilla"] = plantilla.get("id")
+    # De que pagina salio. La pantalla lo usa para enseñar el estilo de LA pagina
+    # que se esta viendo: antes mostraba siempre el primero, asi que al mapear en
+    # la pagina 3 el valor se buscaba en la 1 y parecia que la regla fallaba.
+    rec["_pagina"] = getattr(page, "page_number", None)
     # La plantilla de SALIDA viaja con el registro: asi `build_quote_input` la usa
     # sin tener que consultar la base (corre en hilo aparte) ni recibir un
     # argumento extra por toda la cadena.
