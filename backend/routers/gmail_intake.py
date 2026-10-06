@@ -175,16 +175,27 @@ def _get_flow():
 async def auth_url(request: Request):
     """Consent URL. Only an admin can bind their mailbox to the intake."""
     user = await require_admin(request)
+    # `?fuente=<id>` = boton "Conectar con Gmail" de UN cliente: el buzon de
+    # quien de clic queda como el de ese cliente. Sin el parametro, es la
+    # conexion general de siempre (la que usan los clientes sin buzon propio).
+    fuente_id = (request.query_params.get("fuente") or "").strip() or None
+    if fuente_id and fuente_id not in {f.get("id") for f in _todas_las_fuentes(await _get_config())}:
+        raise HTTPException(400, "Guarda el cliente antes de conectar su Gmail")
     flow = _get_flow()
     url, state = flow.authorization_url(
         access_type='offline',
-        include_granted_scopes='true',   # keeps Calendar/Sheets grants
-        prompt='consent',
+        # El buzon de un cliente pide SOLO Gmail; la conexion general conserva
+        # los permisos de Calendar/Sheets del usuario porque comparte su token.
+        include_granted_scopes='false' if fuente_id else 'true',
+        prompt='consent select_account' if fuente_id else 'consent',
     )
     await db.google_auth_states.insert_one({
         "user_id": user["user_id"],
+        "user_email": user.get("email"),
+        "user_name": user.get("name"),
         "state": state,
         "purpose": "gmail_intake",
+        "fuente_id": fuente_id,
         "created_at": datetime.now(timezone.utc).isoformat(),
     })
     return {"url": url}
@@ -209,6 +220,32 @@ async def callback(request: Request, code: str, state: str):
         'scopes': creds.scopes,
         'expiry': creds.expiry.isoformat() if creds.expiry else None,
     }
+    fuente_id = state_doc.get("fuente_id")
+    if fuente_id:
+        # Buzon de UN cliente: se guarda aparte y no toca el token personal
+        # (Calendar/Sheets) de quien conecto.
+        email = None
+        try:
+            svc = build('gmail', 'v1', credentials=creds)
+            prof = await run_in_threadpool(lambda: svc.users().getProfile(userId='me').execute())
+            email = prof.get("emailAddress")
+        except Exception as e:
+            logger.warning(f"[gmail-intake] getProfile failed after connect ({fuente_id}): {e}")
+        await db.gmail_intake_buzones.update_one(
+            {"fuente_id": fuente_id},
+            {"$set": {"fuente_id": fuente_id, "email": email, "credentials": creds_data,
+                      "auth_error": None,
+                      "connected_by": {"user_id": user_id, "email": state_doc.get("user_email"),
+                                       "name": state_doc.get("user_name")},
+                      "connected_at": datetime.now(timezone.utc).isoformat()}},
+            upsert=True,
+        )
+        await db.google_auth_states.delete_one({"state": state})
+        await log_activity({"user_id": user_id, "email": state_doc.get("user_email"),
+                            "name": state_doc.get("user_name")},
+                           "gmail_intake_buzon_conectado", {"fuente_id": fuente_id, "buzon": email})
+        return RedirectResponse(url=f"{FRONTEND_URL}/printavo-export?gmail_connected={fuente_id}")
+
     await db.user_google_tokens.update_one(
         {"user_id": user_id},
         {"$set": {"user_id": user_id, "credentials": creds_data,
@@ -239,12 +276,85 @@ async def disconnect(request: Request):
     return {"status": "disconnected"}
 
 
+@router.post("/fuentes/{fuente_id}/disconnect")
+async def disconnect_buzon(request: Request, fuente_id: str):
+    """Quita el buzon propio de un cliente. El cliente vuelve a leerse del buzon
+    general (si hay uno conectado)."""
+    user = await require_admin(request)
+    res = await db.gmail_intake_buzones.delete_one({"fuente_id": fuente_id})
+    if not res.deleted_count:
+        raise HTTPException(404, "Ese cliente no tiene buzón propio")
+    await log_activity(user, "gmail_intake_buzon_desconectado", {"fuente_id": fuente_id})
+    return {"status": "disconnected"}
+
+
 async def _get_gmail_service(user_id: str):
     """Authenticated Gmail client for the bound user, or None (+ reason)."""
     token_doc = await db.user_google_tokens.find_one({"user_id": user_id})
     if not token_doc:
         return None, "sin token de Google para el usuario"
-    creds_data = token_doc["credentials"]
+
+    async def guardar(creds_data):
+        await db.user_google_tokens.update_one(
+            {"user_id": user_id},
+            {"$set": {"credentials": creds_data,
+                      "updated_at": datetime.now(timezone.utc).isoformat()}},
+        )
+    return await _svc_desde_creds(token_doc["credentials"], guardar)
+
+
+async def _get_buzon_service(fuente_id: str):
+    """Gmail del buzon conectado PARA ESE CLIENTE (boton "Conectar con Gmail"
+    del cliente), o (None, None) si el cliente no tiene buzon propio.
+
+    El token vive en `gmail_intake_buzones`, NO en user_google_tokens: ahi esta
+    el Calendar/Sheets de quien conecta, y conectar el buzon de un cliente con
+    otra cuenta de Google le cambiaba esas integraciones sin avisar."""
+    doc = await db.gmail_intake_buzones.find_one({"fuente_id": fuente_id})
+    if not doc:
+        return None, None
+
+    async def guardar(creds_data):
+        await db.gmail_intake_buzones.update_one(
+            {"fuente_id": fuente_id}, {"$set": {"credentials": creds_data}})
+    svc, err = await _svc_desde_creds(doc["credentials"], guardar)
+    await db.gmail_intake_buzones.update_one(
+        {"fuente_id": fuente_id}, {"$set": {"auth_error": err}})
+    return svc, err
+
+
+async def _servicio_para(cfg: dict, fuente: dict):
+    """El buzon que le toca a un cliente: el suyo si lo conectaron con su boton,
+    si no el general. Devuelve (svc, usuario, error, clave, es_general).
+
+    `clave` identifica el buzon (para abrirlo una vez por pasada) y `usuario` es
+    a nombre de quien se crean sus quotes: quien conecto ese buzon, o None para
+    usar el del buzon general como siempre. Misma regla para la pasada y para
+    "releer" un item: si no, un item de Spektrum se releeria en el buzon de
+    Goodie, donde ese correo no existe."""
+    fid = fuente.get("id")
+    propio = await db.gmail_intake_buzones.find_one(
+        {"fuente_id": fid}, {"_id": 0, "connected_by": 1, "email": 1})
+    if propio:
+        svc, err = await _get_buzon_service(fid)
+        if err:
+            err = f"buzón {propio.get('email') or ''}: {err}"
+        return svc, propio.get("connected_by"), err, f"f:{fid}", False
+    if not cfg.get("user_id"):
+        return None, None, "sin buzón: conecta el Gmail de este cliente", "general", True
+    svc, err = await _get_gmail_service(cfg["user_id"])
+    return svc, None, err, "general", True
+
+
+def _todas_las_fuentes(cfg: dict) -> list:
+    """Como fuentes_de pero CON las inactivas (para la pantalla y para conectar)."""
+    lista = cfg.get("fuentes")
+    return lista if isinstance(lista, list) and lista else fuentes_de(cfg)
+
+
+async def _svc_desde_creds(creds_data: dict, guardar):
+    """Arma el cliente de Gmail y refresca el token si vencio (`guardar` persiste
+    el refrescado donde corresponda). Devuelve (svc, None) o (None, motivo)."""
     if GMAIL_SCOPE not in (creds_data.get("scopes") or []):
         return None, "el token no incluye el permiso de Gmail"
 
@@ -268,11 +378,7 @@ async def _get_gmail_service(user_id: str):
             await run_in_threadpool(creds.refresh, GoogleRequest())
             creds_data['token'] = creds.token
             creds_data['expiry'] = creds.expiry.isoformat() if creds.expiry else None
-            await db.user_google_tokens.update_one(
-                {"user_id": user_id},
-                {"$set": {"credentials": creds_data,
-                          "updated_at": datetime.now(timezone.utc).isoformat()}},
-            )
+            await guardar(creds_data)
         return build('gmail', 'v1', credentials=creds), None
     except Exception as e:
         # A revoked/expired refresh token lands here (password change, admin
@@ -479,7 +585,7 @@ async def _maybe_auto_create(cfg: dict, fuente: dict, item: dict) -> bool:
     if why:
         await db.printavo_intake.update_one({"item_id": item["item_id"]}, {"$set": {"auto_skipped": why}})
         return False
-    user = await _bound_user(cfg)
+    user = fuente.get("_usuario") or await _bound_user(cfg)
     try:
         result = await create_quotes_for(user, fuente["auto_contact_id"], item["styles"])
     except Exception as e:
@@ -666,24 +772,43 @@ async def _process_message(svc, cfg: dict, fuente: dict, labels: dict, msg_id: s
 
 
 async def run_once(cfg: dict) -> dict:
-    """One intake pass. Raises on auth/config problems (caller records them)."""
-    if not cfg.get("user_id"):
-        raise RuntimeError("no hay buzón conectado")
-    svc, err = await _get_gmail_service(cfg["user_id"])
-    if not svc:
-        raise PermissionError(err)
+    """One intake pass. Raises on auth/config problems (caller records them).
+
+    Cada cliente se lee de SU buzon (el que se conecto con su boton) o, si no
+    tiene, del buzon general. Un buzon caido se anota y no detiene a los demas
+    clientes; solo si NINGUNO se pudo leer la pasada falla."""
+    fuentes = fuentes_de(cfg)
+    if not fuentes:
+        raise RuntimeError("no hay ningún cliente dado de alta en el intake")
 
     # Las plantillas de cliente se leen UNA vez por pasada y viajan en la config:
     # `parse_po_bytes` corre en un hilo aparte y no puede consultar la base, y
     # pedirlas por cada correo seria una consulta de mas por mensaje.
     cfg["_plantillas"] = await plantillas_activas()
 
-    labels = await run_in_threadpool(_label_map, svc)
-    labels = await run_in_threadpool(_ensure_mos_labels, svc, labels)
+    # Un buzon se abre (y se leen sus etiquetas) una sola vez por pasada aunque
+    # lo usen varios clientes: el general lo comparten todos los que no tienen
+    # buzon propio.
+    abiertos = {}
+    error_general = None
 
-    fuentes = fuentes_de(cfg)
-    if not fuentes:
-        raise RuntimeError("no hay ningún cliente dado de alta en el intake")
+    async def buzon_de(fuente):
+        """(svc, labels, usuario, error) del buzon que le toca a este cliente."""
+        nonlocal error_general
+        svc, usuario, err, clave, es_general = await _servicio_para(cfg, fuente)
+        if clave not in abiertos:
+            labels = None
+            if svc:
+                try:
+                    labels = await run_in_threadpool(_label_map, svc)
+                    labels = await run_in_threadpool(_ensure_mos_labels, svc, labels)
+                except Exception as e:                # noqa: BLE001
+                    svc, err = None, f"no se pudieron leer las etiquetas: {str(e)[:200]}"
+            abiertos[clave] = (svc, labels, err)
+        svc, labels, err = abiertos[clave]
+        if err and es_general and cfg.get("user_id"):
+            error_general = err
+        return svc, labels, usuario, err
 
     days = max(1, int(cfg.get("days_back") or 7))
     limit = max(1, min(200, int(cfg.get("max_messages") or 50)))
@@ -693,7 +818,17 @@ async def run_once(cfg: dict) -> dict:
                "forced": 0, "auto_created": 0, "por_cliente": {}}
     faltantes = []
 
+    leidos = 0
     for fuente in fuentes:
+        svc, labels, usuario, err = await buzon_de(fuente)
+        if not svc:
+            faltantes.append(f"{fuente.get('nombre')}: {err}")
+            continue
+        leidos += 1
+        # Copia: no ensuciar la config con datos de la pasada. `_usuario` es a
+        # nombre de quien se crean las quotes de ESTE cliente (quien conecto su
+        # buzon); sin buzon propio, el del buzon general como siempre.
+        fuente = {**fuente, "_usuario": usuario}
         src_id = _find_label_id(labels, fuente.get("label_name") or "")
         if not src_id:
             # Una etiqueta mal escrita no debe dejar sin leer a los demas
@@ -730,8 +865,13 @@ async def run_once(cfg: dict) -> dict:
         summary["por_cliente"][fuente.get("nombre") or fuente.get("id")] = parcial
 
     if faltantes and len(faltantes) == len(fuentes):
+        # Nada se pudo leer. Si fue el buzon general, se reporta como problema
+        # de autenticacion para que la pantalla ofrezca "reconectar".
+        if not leidos and error_general:
+            raise PermissionError(error_general)
         raise RuntimeError("; ".join(faltantes))
     summary["avisos"] = faltantes
+    summary["auth_error_general"] = error_general
     return summary
 
 
@@ -741,8 +881,12 @@ async def _run_guarded() -> dict:
         now = datetime.now(timezone.utc).isoformat()
         try:
             res = await run_once(cfg)
+            avisos = res.get("avisos") or []
             await _set_config({
-                "last_run_at": now, "last_error": None, "auth_error": None,
+                # Un cliente con problema (etiqueta inexistente, su buzon caido)
+                # se ve en la pantalla aunque los demas se hayan leido bien.
+                "last_run_at": now, "last_error": "; ".join(avisos)[:500] or None,
+                "auth_error": res.get("auth_error_general"),
                 "seen_count": int(cfg.get("seen_count") or 0) + res["evaluated"],
                 "order_count": int(cfg.get("order_count") or 0) + res["orders"],
             })
@@ -759,7 +903,10 @@ async def _run_guarded() -> dict:
 async def _tick():
     try:
         cfg = await db.gmail_intake.find_one({"config_id": CONFIG_ID}, {"_id": 0})
-        if not cfg or not cfg.get("enabled") or not cfg.get("user_id"):
+        if not cfg or not cfg.get("enabled"):
+            return
+        # Sin buzon general Y sin ningun buzon de cliente no hay nada que leer.
+        if not cfg.get("user_id") and not await db.gmail_intake_buzones.count_documents({}):
             return
         if _run_lock.locked():
             logger.info("[gmail-intake] tick skipped — a pass is already running")
@@ -798,11 +945,21 @@ async def status(request: Request):
     cfg = await _get_config()
     cfg["google_configured"] = bool(CLIENT_ID and CLIENT_SECRET)
     cfg["printavo_configured"] = printavo_client.is_configured()
-    cfg["connected"] = bool(cfg.get("user_id"))
     cfg["pending"] = await db.printavo_intake.count_documents({"status": "pendiente"})
     # Siempre normalizadas: la pantalla no tiene que saber si el documento ya
     # tiene la lista o todavia son los campos sueltos de un solo cliente.
-    cfg["fuentes"] = fuentes_de({**cfg, "fuentes": cfg.get("fuentes")})
+    # Con las inactivas tambien: la pantalla las muestra para poder prenderlas.
+    cfg["fuentes"] = _todas_las_fuentes(cfg)
+    # El buzon propio de cada cliente (sin credenciales: solo que cuenta es y
+    # quien la conecto). Un cliente sin buzon propio se lee del general.
+    cfg["buzones"] = {
+        b["fuente_id"]: {"email": b.get("email"), "auth_error": b.get("auth_error"),
+                         "connected_by": (b.get("connected_by") or {}).get("name")
+                         or (b.get("connected_by") or {}).get("email"),
+                         "connected_at": b.get("connected_at")}
+        async for b in db.gmail_intake_buzones.find({}, {"_id": 0, "credentials": 0})
+    }
+    cfg["connected"] = bool(cfg.get("user_id")) or bool(cfg["buzones"])
     cfg["multi"] = isinstance(cfg.get("fuentes"), list) and len(cfg["fuentes"]) > 1
     return cfg
 
@@ -888,6 +1045,13 @@ async def update_config(request: Request):
     if not allowed:
         raise HTTPException(400, "Nada que actualizar")
     await _set_config(allowed)
+    # Cliente borrado de la lista = su buzon ya no se usa: se tira el token en
+    # vez de dejar credenciales de Gmail guardadas sin dueño.
+    if "fuentes" in allowed:
+        res = await db.gmail_intake_buzones.delete_many(
+            {"fuente_id": {"$nin": [f["id"] for f in allowed["fuentes"]]}})
+        if res.deleted_count:
+            logger.info(f"[gmail-intake] {res.deleted_count} buzón(es) de clientes borrados se desconectaron")
     # Widening the allow-list must reach the mail already rejected by it:
     # forget those evaluations so the next pass looks at them again (their
     # MOS/* labels get rewritten with the new verdict).
@@ -970,21 +1134,21 @@ async def reparse_item(request: Request, item_id: str):
     if item.get("status") != "pendiente":
         raise HTTPException(409, f"El elemento ya está '{item.get('status')}'")
     cfg = await _get_config()
-    if not cfg.get("user_id"):
-        raise HTTPException(400, "No hay buzón conectado")
     if _run_lock.locked():
         raise HTTPException(409, "Ya hay una pasada en curso; intenta en un momento")
     # De qué cliente es este ítem: los nuevos lo traen anotado; los de antes del
     # multi-cliente no, y para ésos la primera fuente es la correcta porque era
     # la única que existía.
-    fuentes = fuentes_de(cfg)
+    fuentes = _todas_las_fuentes(cfg)
     fuente = next((f for f in fuentes if f.get("id") == item.get("fuente")), None) or fuentes[0]
     cfg["_plantillas"] = await plantillas_activas()
 
     async with _run_lock:
-        svc, err = await _get_gmail_service(cfg["user_id"])
+        # El correo vive en el buzon de SU cliente, no necesariamente en el general.
+        svc, usuario, err, _, _ = await _servicio_para(cfg, fuente)
         if not svc:
-            raise HTTPException(400, err)
+            raise HTTPException(400, err or "No hay buzón conectado")
+        fuente = {**fuente, "_usuario": usuario}
         labels = await run_in_threadpool(_label_map, svc)
         labels = await run_in_threadpool(_ensure_mos_labels, svc, labels)
         try:

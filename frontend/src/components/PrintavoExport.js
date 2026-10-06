@@ -107,12 +107,24 @@ export default function PrintavoExport() {
     }
   }, [searchParams, setSearchParams, t]);
 
-  const connectGmail = async () => {
+  // Sin `fuenteId` = buzón general (el de siempre). Con él = el buzón de ESE
+  // cliente: quien dé clic conecta su propia cuenta para ese cliente.
+  const connectGmail = async (fuenteId) => {
     try {
-      const res = await fetch(`${API}/gmail-intake/auth-url`, { credentials: "include" });
+      const qs = typeof fuenteId === "string" ? `?fuente=${encodeURIComponent(fuenteId)}` : "";
+      const res = await fetch(`${API}/gmail-intake/auth-url${qs}`, { credentials: "include" });
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || "Error");
       window.location.href = data.url;
+    } catch (e) { toast.error(e.message); }
+  };
+
+  const disconnectBuzon = async (c) => {
+    if (!window.confirm(t('pexport_cli_buzon_quitar_confirm', { n: c.nombre || "" }))) return;
+    try {
+      const res = await fetch(`${API}/gmail-intake/fuentes/${encodeURIComponent(c.id)}/disconnect`, { method: "POST", credentials: "include" });
+      if (!res.ok) throw new Error((await res.json()).detail || "Error");
+      loadIntake();
     } catch (e) { toast.error(e.message); }
   };
 
@@ -373,6 +385,38 @@ export default function PrintavoExport() {
                       </label>
                       <button onClick={() => quitarCliente(i)} className="p-1.5 rounded-lg hover:bg-destructive/10 text-destructive"><Trash2 className="w-4 h-4" /></button>
                     </div>
+                    {/* Buzón de ESTE cliente: quien dé clic conecta su Gmail para
+                        él. Sin buzón propio se lee del general. Sólo se puede
+                        conectar un cliente ya guardado (el servidor necesita su id). */}
+                    {(() => {
+                      const bz = (intake.buzones || {})[c.id];
+                      const guardado = (intake.fuentes || []).some((f) => f.id === c.id);
+                      if (bz) return (
+                        <div className={`flex flex-wrap items-center gap-2 rounded-lg px-3 py-2 border ${bz.auth_error ? "bg-destructive/10 border-destructive/30" : "bg-emerald-500/10 border-emerald-500/30"}`}>
+                          <Mail className={`w-4 h-4 ${bz.auth_error ? "text-destructive" : "text-emerald-600"}`} />
+                          <span className="text-sm font-bold">{bz.email || t('pexport_intake_connected_short')}</span>
+                          {bz.connected_by && <span className="text-[11px] text-muted-foreground">{t('pexport_cli_buzon_por', { n: bz.connected_by })}</span>}
+                          {bz.auth_error && <span className="text-[11px] text-destructive">{bz.auth_error}</span>}
+                          <div className="flex-1" />
+                          <button onClick={() => connectGmail(c.id)} className="text-[11px] font-bold underline">{t('pexport_intake_reconnect')}</button>
+                          <button onClick={() => disconnectBuzon(c)} className="text-[11px] font-bold underline text-destructive">{t('pexport_cli_buzon_quitar')}</button>
+                        </div>
+                      );
+                      return (
+                        <div className="flex flex-wrap items-center gap-3">
+                          <button onClick={() => connectGmail(c.id)} disabled={!guardado || !intake.google_configured}
+                            title={guardado ? "" : t('pexport_cli_buzon_guarda_antes')}
+                            className="px-3 py-2 bg-primary text-black rounded-lg font-black text-[11px] uppercase tracking-widest hover:bg-primary/90 disabled:opacity-50 flex items-center gap-2">
+                            <Mail className="w-4 h-4" /> {t('pexport_cli_buzon_conectar')}
+                          </button>
+                          <span className="text-[11px] text-muted-foreground">
+                            {!guardado ? t('pexport_cli_buzon_guarda_antes')
+                              : intake.user_id ? t('pexport_cli_buzon_general', { e: intake.email || "—" })
+                                : t('pexport_cli_buzon_ninguno')}
+                          </span>
+                        </div>
+                      );
+                    })()}
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                       <Field label={t('pexport_intake_cfg_label')} value={c.label_name}
                         onChange={(v) => editarCliente(i, { label_name: v })} warn={!c.label_name} />
