@@ -1,7 +1,8 @@
-import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import React, { useState, useEffect, useCallback, useMemo, useRef, createContext, useContext } from "react";
 import {
   ChevronLeft, ChevronRight, Plus, Trash2, Copy, Download, RefreshCw, Loader2,
   ExternalLink, FileSpreadsheet, Wand2, Search, GripVertical, X, RotateCcw, History, CalendarDays, FileDown,
+  Eye, Users,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { toast } from "sonner";
@@ -84,8 +85,15 @@ const to12h = (hhmm) => {
 };
 const fmtNum = (n) => (n === null || n === undefined || n === '' ? '' : Number(n).toLocaleString('en-US'));
 
+// Sólo lectura (GET /access → can_edit = false): lo VEN todos, lo editan sólo
+// los de la lista de editores. Las celdas lo leen solas; el backend lo exige
+// igual (require_editor), esto sólo evita ofrecer lo que daría 403.
+const ReadOnlyCtx = createContext(false);
+
 // Celda editable estilo hoja: guarda al salir (blur) o con Enter si cambió.
-const Cell = ({ value, onSave, type = 'text', list, placeholder, className = '', numeric = false, disabled = false, title, boxed = false }) => {
+const Cell = ({ value, onSave, type = 'text', list, placeholder, className = '', numeric = false, disabled: disabledProp = false, title, boxed = false }) => {
+  const readOnly = useContext(ReadOnlyCtx);
+  const disabled = disabledProp || readOnly;
   const [v, setV] = useState(value ?? '');
   const [focused, setFocused] = useState(false);
   useEffect(() => { if (!focused) setV(value ?? ''); }, [value, focused]);
@@ -140,7 +148,7 @@ const MOVE_COLORS = {
   export_create: '#0d9488', export_update: '#0284c7', export_delete: '#b91c1c', revert: '#475569',
 };
 
-const MovementsPanel = ({ onReverted }) => {
+const MovementsPanel = ({ onReverted, canRevert = true }) => {
   const { t, lang } = useLang();
   const [items, setItems] = useState([]);
   const [total, setTotal] = useState(0);
@@ -238,7 +246,7 @@ const MovementsPanel = ({ onReverted }) => {
                     <span className="text-[11px] font-bold text-slate-500">{t('mov_is_revert')}</span>
                   ) : m.reverted_at ? (
                     <span className="text-[11px] font-bold text-slate-500">{t('mov_reverted_by', { user: m.reverted_by_name || '—', when: fmtWhen(m.reverted_at) })}</span>
-                  ) : m.can_revert ? (
+                  ) : m.can_revert && canRevert ? (
                     <button onClick={() => revert(m)} disabled={busy === m.movement_id}
                       className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-amber-500 text-white text-[10px] font-black uppercase tracking-wider hover:bg-amber-600 disabled:opacity-50">
                       {busy === m.movement_id ? <Loader2 className="w-3 h-3 animate-spin" /> : <RotateCcw className="w-3 h-3" />} {t('mov_revert')}
@@ -263,6 +271,81 @@ const MovementsPanel = ({ onReverted }) => {
           </button>
         </div>
       )}
+    </div>
+  );
+};
+
+// ── ⚙ Editores (sólo supersu): quién puede modificar el programador ─────────
+// PUT /access {editors}. Para cubrir ausencias: agregar a quien cubre y
+// quitarlo al regresar, sin tocar código. supersu edita siempre (no se lista).
+const EditorsModal = ({ access, onClose, onSaved }) => {
+  const { t } = useLang();
+  const [sel, setSel] = useState(() => new Set((access.editors || []).map((e) => e.user_id)));
+  const [q, setQ] = useState('');
+  const [saving, setSaving] = useState(false);
+  const users = (access.users || []).filter((u) => u.role !== 'supersu');
+  const shown = users.filter((u) => {
+    const s = q.trim().toLowerCase();
+    return !s || `${u.name || ''} ${u.email || ''}`.toLowerCase().includes(s);
+  }).sort((a, b) => Number(sel.has(b.user_id)) - Number(sel.has(a.user_id)));
+  const toggle = (id) => setSel((prev) => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+  const save = async () => {
+    setSaving(true);
+    try {
+      const res = await fetch(`${API}/access`, {
+        method: 'PUT', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ editors: [...sel] }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) { toast.error(d.detail || t('sch_err')); return; }
+      toast.success(t('sch_editors_saved'));
+      onSaved(d);
+    } catch { toast.error(t('ceo_err_connection')); }
+    finally { setSaving(false); }
+  };
+  return (
+    <div className="fixed inset-0 z-[90] flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-slate-900/50" onClick={onClose} />
+      <div className="sch-sheet relative w-full max-w-lg max-h-[85vh] flex flex-col rounded-2xl shadow-2xl p-5 gap-3">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h3 className="text-base font-black text-slate-800">{t('sch_editors_title')}</h3>
+            <p className="text-[11px] text-slate-500">{t('sch_editors_help')}</p>
+          </div>
+          <button onClick={onClose} className="p-1 rounded-lg text-slate-400 hover:bg-slate-100"><X className="w-5 h-5" /></button>
+        </div>
+        <div className="flex items-center gap-1.5 sch-field rounded-lg px-2 py-1">
+          <Search className="w-3.5 h-3.5 text-slate-400" />
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={t('sch_editors_search')}
+            className="sch-cell flex-1 text-[12px] font-bold outline-none !p-0" />
+        </div>
+        <div className="flex-1 overflow-y-auto -mx-1 px-1 space-y-1">
+          {shown.map((u) => (
+            <label key={u.user_id} className={`flex items-center gap-2 p-2 rounded-lg border cursor-pointer ${sel.has(u.user_id) ? 'border-blue-300 bg-blue-50' : 'border-slate-100 hover:bg-slate-50'}`}>
+              <input type="checkbox" checked={sel.has(u.user_id)} onChange={() => toggle(u.user_id)} />
+              <span className="min-w-0 flex-1">
+                <span className="block text-[12px] font-black text-slate-800 truncate">{u.name || u.email}</span>
+                <span className="block text-[10px] text-slate-500 truncate">{u.email} · {u.role}</span>
+              </span>
+            </label>
+          ))}
+        </div>
+        <p className="text-[10px] text-slate-500">{t('sch_editors_supersu')}</p>
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-[11px] font-black text-slate-600">{t('sch_editors_count', { n: sel.size })}</span>
+          <div className="flex gap-2">
+            <button onClick={onClose} className="px-3 py-1.5 rounded-lg bg-slate-100 text-slate-600 text-[11px] font-black uppercase hover:bg-slate-200">{t('cancel')}</button>
+            <button onClick={save} disabled={saving}
+              className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-blue-600 text-white text-[11px] font-black uppercase hover:bg-blue-700 disabled:opacity-50">
+              {saving && <Loader2 className="w-3.5 h-3.5 animate-spin" />} {t('save')}
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 };
@@ -308,6 +391,18 @@ const ShippingScheduler = () => {
   const [availSearch, setAvailSearch] = useState('');
   const [availLoading, setAvailLoading] = useState(false);
   const [targetExport, setTargetExport] = useState(null);
+  // Permiso: arranca en sólo lectura hasta que /access confirme (no se ofrece
+  // editar a quien recibiría 403; a los editores les cambia en ~100 ms).
+  const [access, setAccess] = useState(null);
+  const [showEditors, setShowEditors] = useState(false);
+  const loadAccess = useCallback(async () => {
+    try {
+      const res = await fetch(`${API}/access`, { credentials: 'include' });
+      if (res.ok) setAccess(await res.json());
+    } catch { /* sin conexión: se queda en sólo lectura */ }
+  }, []);
+  useEffect(() => { loadAccess(); }, [loadAccess]);
+  const readOnly = !access?.can_edit;
 
   const dayLabel = useCallback((iso) => {
     const d = parseIso(iso);
@@ -431,10 +526,10 @@ const ShippingScheduler = () => {
   // Varias personas programan a la vez (como en la hoja): al volver a la
   // pestaña se refresca en silencio.
   useEffect(() => {
-    const onFocus = () => { loadWeek(true); loadSummary(); };
+    const onFocus = () => { loadWeek(true); loadSummary(); loadAccess(); };
     window.addEventListener('focus', onFocus);
     return () => window.removeEventListener('focus', onFocus);
-  }, [loadWeek, loadSummary]);
+  }, [loadWeek, loadSummary, loadAccess]);
 
   const call = async (url, method, body) => {
     const res = await fetch(url, {
@@ -847,7 +942,7 @@ const ShippingScheduler = () => {
             <div className="w-20"><Cell boxed value={exp.export_no} numeric placeholder={`${data?.next_export_no ?? ''}`}
               className="font-black text-slate-800 !text-left"
               onSave={(v) => updateExport(exp, { export_no: v })} /></div>
-            {!exp.export_no && (
+            {!exp.export_no && !readOnly && (
               <button onClick={() => assignNumber(exp)} title={t('sch_assign_hint')}
                 className="px-2 py-1 rounded-md bg-blue-600 text-white text-[10px] font-black uppercase tracking-wider hover:bg-blue-700">
                 {t('sch_assign_no', { n: data?.next_export_no ?? '' })}
@@ -858,13 +953,13 @@ const ShippingScheduler = () => {
             <span className="text-[11px] font-black text-slate-500 uppercase">PL</span>
             <Cell boxed value={exp.pl_numbers} placeholder={t('sch_pl_ph')} className="font-bold text-slate-700"
               onSave={(v) => updateExport(exp, { pl_numbers: v })} />
-            <button onClick={() => suggestPl(exp)} title={t('sch_pl_auto')}
-              className="p-1.5 rounded-md text-slate-400 hover:bg-white hover:text-blue-600"><Wand2 className="w-3.5 h-3.5" /></button>
+            {!readOnly && <button onClick={() => suggestPl(exp)} title={t('sch_pl_auto')}
+              className="p-1.5 rounded-md text-slate-400 hover:bg-white hover:text-blue-600"><Wand2 className="w-3.5 h-3.5" /></button>}
           </div>
           <div className="w-52"><Cell boxed value={exp.truck} placeholder={t('sch_truck_ph')} className="font-bold text-slate-700"
             onSave={(v) => updateExport(exp, { truck: v })} /></div>
           <select value={light || ''} onChange={(e) => updateExport(exp, { customs_light: e.target.value || null })}
-            title={t('sch_light')} data-light={light || ''}
+            disabled={readOnly} title={t('sch_light')} data-light={light || ''}
             className="sch-field sch-light rounded-md px-2 py-1 text-[11px] font-black uppercase outline-none">
             <option value="">{t('sch_light')}</option>
             {(data?.customs_lights || ['VERDE', 'ROJO']).map((c) => <option key={c} value={c}>{c}</option>)}
@@ -903,8 +998,8 @@ const ShippingScheduler = () => {
             </div>
             <button onClick={() => exportOne(exp)} disabled={!ls.length} title={t('sch_excel_export')}
               className="p-1.5 rounded-md text-emerald-700 hover:bg-emerald-50 disabled:opacity-30"><FileSpreadsheet className="w-4 h-4" /></button>
-            <button onClick={() => deleteExport(exp)} title={t('sch_delete_export')}
-              className="p-1.5 rounded-md text-slate-400 hover:bg-red-50 hover:text-red-600"><Trash2 className="w-4 h-4" /></button>
+            {!readOnly && <button onClick={() => deleteExport(exp)} title={t('sch_delete_export')}
+              className="p-1.5 rounded-md text-slate-400 hover:bg-red-50 hover:text-red-600"><Trash2 className="w-4 h-4" /></button>}
           </div>
         </div>
         {/* Renglón día / CORTE / EXPORT HR (verde claro como la hoja) */}
@@ -942,9 +1037,9 @@ const ShippingScheduler = () => {
             <thead>
               <tr className="bg-emerald-50/60 text-[10px] font-black uppercase tracking-wider text-slate-700 border-b border-slate-300">
                 <th className="px-1 py-1.5 border-r border-slate-200 text-center">
-                  <input type="checkbox" checked={allSel} disabled={!ls.length} title={t('sch_select_all')}
+                  {!readOnly && <input type="checkbox" checked={allSel} disabled={!ls.length} title={t('sch_select_all')}
                     ref={(el) => { if (el) el.indeterminate = someSel && !allSel; }}
-                    onChange={(e) => toggleAllIn(exp, e.target.checked)} className="cursor-pointer align-middle" />
+                    onChange={(e) => toggleAllIn(exp, e.target.checked)} className="cursor-pointer align-middle" />}
                 </th>
                 {COLS.map((c, i) => (
                   <th key={c} className={`px-2 py-1.5 border-r border-slate-200 ${i === 7 ? 'text-right' : 'text-center'}`}>{c === 'PRIORITY' ? t('sch_priority') : c}</th>
@@ -973,14 +1068,14 @@ const ShippingScheduler = () => {
                     }}
                     className="border-b border-slate-200">
                     <td className="border-r border-slate-200 px-1">
-                      <div className="flex items-center justify-center gap-0.5">
+                      {!readOnly && <div className="flex items-center justify-center gap-0.5">
                         <span draggable onDragStart={(e) => startDrag(e, l)} onDragEnd={endDrag}
                           title={t('sch_drag_hint')} className="cursor-grab active:cursor-grabbing text-slate-400 hover:text-blue-600">
                           <GripVertical className="w-3.5 h-3.5" />
                         </span>
                         <input type="checkbox" checked={isSel} readOnly
                           onClick={(e) => toggleSel(exp, idx, e.shiftKey)} className="cursor-pointer" />
-                      </div>
+                      </div>}
                     </td>
                     <td className="border-r border-slate-200 text-center">
                       <span className="inline-flex items-center gap-1 px-1 font-black text-slate-800 whitespace-nowrap">
@@ -1004,7 +1099,7 @@ const ShippingScheduler = () => {
                           opción lo fija a mano, "Automático" lo regresa. */}
                       <div className="flex items-center gap-1">
                         <select value={l.status || ''} onChange={(e) => updateLine(l, { status: e.target.value || null })}
-                          data-st={l.status_effective || ''}
+                          disabled={readOnly} data-st={l.status_effective || ''}
                           title={l.status ? t('sch_status_manual_hint', { auto: l.status_auto || '—' }) : t('sch_status_auto_hint')}
                           className="sch-pill flex-1 min-w-0 px-2 py-0.5 text-[10px] font-black uppercase outline-none">
                           {/* AUTO siempre disponible: deja la fila en automático
@@ -1024,6 +1119,7 @@ const ShippingScheduler = () => {
                     </td>
                     <td className="border-r border-slate-200 px-1">
                       <select value={l.priority || ''} onChange={(e) => updateLine(l, { priority: e.target.value ? Number(e.target.value) : null })}
+                        disabled={readOnly}
                         className="sch-cell w-full rounded px-1 py-0.5 text-[11px] font-bold outline-none focus:ring-2 focus:ring-blue-400">
                         <option value="">—</option>
                         {[1, 2, 3, 4].map((p) => <option key={p} value={p}>{PRIORITY_LABEL[p]}</option>)}
@@ -1046,7 +1142,7 @@ const ShippingScheduler = () => {
                       </>);
                     })()}
                     <td className="px-1">
-                      <div className="flex items-center gap-0.5 no-underline">
+                      {!readOnly && <div className="flex items-center gap-0.5 no-underline">
                         <select value="" onChange={(e) => moveLine(l, e.target.value)} title={t('sch_move')}
                           className="sch-cell w-7 text-[11px] font-black outline-none cursor-pointer">
                           <option value="">⇄</option>
@@ -1055,7 +1151,7 @@ const ShippingScheduler = () => {
                         </select>
                         <button onClick={() => duplicateLine(l)} title={t('sch_duplicate')} className="p-1 rounded text-slate-400 hover:text-blue-600"><Copy className="w-3.5 h-3.5" /></button>
                         <button onClick={() => deleteLine(l)} title={t('sch_delete_line')} className="p-1 rounded text-slate-400 hover:text-red-600"><Trash2 className="w-3.5 h-3.5" /></button>
-                      </div>
+                      </div>}
                     </td>
                   </tr>
                 );
@@ -1064,7 +1160,7 @@ const ShippingScheduler = () => {
               <tr className="bg-slate-50/60"
                 style={{ boxShadow: isDropBlock && dropHint.index === ls.length ? 'inset 0 3px 0 #2563eb' : undefined }}>
                 <td colSpan={8} className="px-2 py-1.5">
-                  <div className="flex items-center gap-2">
+                  {!readOnly && <div className="flex items-center gap-2">
                     <Plus className="w-4 h-4 text-blue-600 flex-shrink-0" />
                     <input value={addText[exp.export_id] || ''}
                       onChange={(e) => setAddText((p) => ({ ...p, [exp.export_id]: e.target.value }))}
@@ -1075,7 +1171,7 @@ const ShippingScheduler = () => {
                       className="px-3 py-1 rounded-md bg-blue-600 text-white text-[10px] font-black uppercase tracking-wider hover:bg-blue-700 disabled:opacity-40">
                       {t('sch_add')}
                     </button>
-                  </div>
+                  </div>}
                 </td>
                 <td className="px-2 py-1.5 text-right">
                   <span className="inline-block px-2 py-0.5 rounded bg-yellow-300 font-black text-slate-900 tabular-nums">{fmtNum(sumPcs(ls))}</span>
@@ -1092,12 +1188,14 @@ const ShippingScheduler = () => {
   const weekPcs = sumPcs(lines);
 
   return (
+    <ReadOnlyCtx.Provider value={readOnly}>
     <main id={ROOT_ID} className="w-full max-w-[1900px] mx-auto space-y-4">
       <datalist id="sch-deliver">{(suggest.delivery_to || []).map((v) => <option key={v} value={v} />)}</datalist>
       <datalist id="sch-from">{(suggest.ship_from || []).map((v) => <option key={v} value={v} />)}</datalist>
       <datalist id="sch-carrier">{(suggest.carrier || []).map((v) => <option key={v} value={v} />)}</datalist>
 
-      {/* PROGRAMA | MOVIMIENTOS */}
+      {/* PROGRAMA | MOVIMIENTOS + permiso */}
+      <div className="flex flex-wrap items-center gap-2">
       <div className="flex items-center gap-1 bg-white rounded-xl p-1 border border-slate-200 shadow-sm w-fit">
         {[['program', CalendarDays, t('mov_tab_program')], ['moves', History, t('mov_tab_moves')]].map(([k, Icon, label]) => (
           <button key={k} onClick={() => setView(k)}
@@ -1106,9 +1204,23 @@ const ShippingScheduler = () => {
           </button>
         ))}
       </div>
+        {access && readOnly && (
+          <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-[11px] font-bold"
+            title={(access.editors || []).map((e) => e.name || e.email).join(', ')}>
+            <Eye className="w-3.5 h-3.5" />
+            {t('sch_readonly', { who: (access.editors || []).map((e) => e.name || e.email).join(', ') || t('sch_readonly_supersu') })}
+          </span>
+        )}
+        {access?.can_manage && (
+          <button onClick={() => setShowEditors(true)} title={t('sch_editors_hint')}
+            className="ml-auto flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white border border-slate-200 text-slate-600 text-[10px] font-black uppercase tracking-widest hover:bg-slate-50">
+            <Users className="w-3.5 h-3.5" /> {t('sch_editors_btn', { n: (access.editors || []).length })}
+          </button>
+        )}
+      </div>
 
       {view === 'moves' ? (
-        <MovementsPanel onReverted={() => { loadWeek(true); loadSummary(); }} />
+        <MovementsPanel canRevert={!readOnly} onReverted={() => { loadWeek(true); loadSummary(); }} />
       ) : (<>
       {/* Barra de semana: navegación + "pestañas" de semanas como la hoja */}
       <div className="bg-white rounded-2xl px-4 py-3 shadow-sm border border-slate-200 space-y-3">
@@ -1174,10 +1286,10 @@ const ShippingScheduler = () => {
             <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 cursor-pointer select-none" title={t('sch_crm_hint')}>
               <input type="checkbox" checked={showCrm} onChange={(e) => toggleCrm(e.target.checked)} /> {t('sch_crm_cols')}
             </label>
-            <button onClick={() => setShowSearch((v) => !v)}
+            {!readOnly && <button onClick={() => setShowSearch((v) => !v)}
               className={`flex items-center gap-1.5 px-3 py-2 rounded-xl font-black text-[10px] uppercase tracking-widest ${showSearch ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
               <Search className="w-3.5 h-3.5" /> {t('sch_search_btn')}
-            </button>
+            </button>}
             <button onClick={() => loadWeek()} disabled={loading}
               className="flex items-center gap-1.5 px-3 py-2 bg-slate-100 text-slate-600 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-slate-200 disabled:opacity-50">
               <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} /> {t('ship_refresh')}
@@ -1239,7 +1351,7 @@ const ShippingScheduler = () => {
       </div>
 
       <div className="flex gap-4 items-start">
-      {showSearch && (
+      {showSearch && !readOnly && (
         <aside className="w-80 flex-shrink-0 bg-white rounded-2xl p-4 shadow-sm border border-slate-200 flex flex-col sticky top-4" style={{ maxHeight: 'calc(100vh - 2rem)' }}>
           <div className="flex items-center gap-2 mb-2">
             <Search className="w-4 h-4 text-blue-600" />
@@ -1307,18 +1419,20 @@ const ShippingScheduler = () => {
                         : t('sch_day_summary', { e: dayExports.length, o: dayLines.length, p: fmtNum(sumPcs(dayLines)) })}
                     </span>
                   </div>
-                  <button onClick={() => addExport(iso)}
+                  {!readOnly && <button onClick={() => addExport(iso)}
                     className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-white/15 hover:bg-white/25 text-[10px] font-black uppercase tracking-widest">
                     <Plus className="w-3.5 h-3.5" /> {t('sch_add_export')}
-                  </button>
+                  </button>}
                 </div>
-                {dayExports.length === 0 ? (
+                {dayExports.length === 0 ? (readOnly ? (
+                  <p className="w-full py-4 rounded-xl border-2 border-dashed border-slate-200 text-center text-[12px] font-bold text-slate-300">{t('sch_no_exports_ro')}</p>
+                ) : (
                   <button onClick={() => addExport(iso)}
                     onDragOver={(e) => overDay(e, iso)} onDrop={(e) => dropOnDay(e, iso)}
                     className="w-full py-4 rounded-xl border-2 border-dashed border-slate-200 text-[12px] font-bold text-slate-400 hover:border-blue-300 hover:text-blue-600 hover:bg-blue-50/40">
                     {t('sch_no_exports')}
                   </button>
-                ) : dayExports.map((e, i) => renderExport(e, i))}
+                )) : dayExports.map((e, i) => renderExport(e, i))}
               </section>
             );
           })}
@@ -1372,7 +1486,7 @@ const ShippingScheduler = () => {
       )}
 
       {/* Barra de acciones de la selección (flotante abajo). */}
-      {selIds.length > 0 && (
+      {selIds.length > 0 && !readOnly && (
         <div className="fixed bottom-5 left-1/2 -translate-x-1/2 z-50 flex flex-wrap items-center gap-2 px-4 py-2.5 rounded-2xl bg-slate-900 text-white shadow-2xl">
           <span className="text-[12px] font-black">{t('sch_sel_count', { n: selIds.length, p: fmtNum(selPcs) })}</span>
           <select value="" onChange={(e) => e.target.value && moveIds(selIds, { exportId: e.target.value })}
@@ -1389,7 +1503,13 @@ const ShippingScheduler = () => {
         </div>
       )}
       </>)}
+
+      {showEditors && access?.can_manage && (
+        <EditorsModal access={access} onClose={() => setShowEditors(false)}
+          onSaved={(d) => { setAccess(d); setShowEditors(false); }} />
+      )}
     </main>
+    </ReadOnlyCtx.Provider>
   );
 };
 

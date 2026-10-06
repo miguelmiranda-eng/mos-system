@@ -51,7 +51,7 @@ from datetime import datetime, timezone, date, timedelta
 
 from fastapi import APIRouter, Request, HTTPException
 
-from deps import db, require_auth, log_activity, require_api_customer
+from deps import db, require_auth, require_supersu, log_activity, require_api_customer
 from services.qty_embarcada import qty_embarcada, qty_embarcada_por_orden, entero_o_none
 from services import shipping_journal as jr
 from services import export_packing as pk
@@ -426,6 +426,91 @@ def _date_fields(day_iso: str) -> dict:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Acceso: el programador lo VEN todos; lo EDITAN sólo los de una lista.
+# ─────────────────────────────────────────────────────────────────────────────
+# Ni el rol ni el nivel de admin sirven para separar: la supervisora de Envíos
+# es admin 3 y quienes sólo consultan (producción) son admin 5. La lista vive
+# en config_options y la administra un supersu desde el propio programador
+# (⚙ Editores), para cubrir ausencias sin tocar código. supersu siempre edita;
+# las llaves de API conservan su superficie documentada (deps.API_SURFACE_PERMITIDA)
+# y el token interno de sync tampoco pasa por aquí.
+ACCESS_ID = "shipping_scheduler_access"
+
+
+async def _editor_ids() -> list:
+    doc = await db.config_options.find_one({"config_id": ACCESS_ID}, {"_id": 0, "editors": 1})
+    if doc is not None:
+        return [str(x) for x in (doc.get("editors") or [])]
+    # Aún sin configurar: editan quienes YA editaban (bitácora), para que el
+    # deploy no deje fuera a nadie. Al guardar la lista por primera vez, manda ella.
+    ids = [i for i in await db.shipping_movements.distinct("user_id") if i]
+    sus = {u["user_id"] async for u in db.users.find(
+        {"user_id": {"$in": ids}, "role": "supersu"}, {"_id": 0, "user_id": 1})}
+    return [i for i in ids if i not in sus]
+
+
+def _always_edits(user: dict) -> bool:
+    return (user.get("role") == "supersu" or bool(user.get("is_api"))
+            or user.get("user_id") == "system_sync")
+
+
+async def can_edit(user: dict) -> bool:
+    return _always_edits(user) or user.get("user_id") in await _editor_ids()
+
+
+async def require_editor(request: Request) -> dict:
+    user = await require_auth(request)
+    if not await can_edit(user):
+        raise HTTPException(status_code=403, detail=(
+            "Envíos programados está en sólo lectura para tu usuario. "
+            "Pide a un supersu que te agregue como editor."))
+    return user
+
+
+@router.get("/access")
+async def get_access(request: Request):
+    """¿Puedo editar? + la lista de editores (todos la ven, para saber a quién
+    pedir un cambio). Al supersu además le llegan los usuarios elegibles."""
+    user = await require_auth(request)
+    ids = await _editor_ids()
+    proj = {"_id": 0, "user_id": 1, "name": 1, "email": 1, "role": 1}
+    editors = await db.users.find({"user_id": {"$in": ids}}, proj).sort("name", 1).to_list(200)
+    manage = user.get("role") == "supersu"
+    out = {"can_edit": await can_edit(user), "can_manage": manage, "editors": editors}
+    if manage:
+        out["users"] = await db.users.find(
+            {"role": {"$nin": ["customer", "external_api"]}, "user_id": {"$exists": True}},
+            proj).sort("name", 1).to_list(1000)
+    return out
+
+
+@router.put("/access")
+async def set_access(request: Request):
+    """Reemplaza la lista de editores (sólo supersu). body: {editors: [user_id]}"""
+    user = await require_supersu(request)
+    body = await request.json()
+    raw = body.get("editors")
+    if not isinstance(raw, list):
+        raise HTTPException(status_code=400, detail="editors debe ser una lista de user_id")
+    wanted = list(dict.fromkeys(str(x).strip() for x in raw if str(x).strip()))
+    found = {u["user_id"]: u async for u in db.users.find(
+        {"user_id": {"$in": wanted}}, {"_id": 0, "user_id": 1, "role": 1})}
+    missing = [i for i in wanted if i not in found]
+    if missing:
+        raise HTTPException(status_code=400, detail=f"Usuarios no encontrados: {', '.join(missing)}")
+    # supersu edita siempre: no se guarda (quitarlo de la lista no le quitaría nada).
+    editors = [i for i in wanted if found[i].get("role") != "supersu"]
+    before = await _editor_ids()
+    await db.config_options.update_one(
+        {"config_id": ACCESS_ID},
+        {"$set": {"editors": editors, "updated_at": datetime.now(timezone.utc).isoformat(),
+                  "updated_by": user.get("user_id"), "updated_by_name": user.get("name")}},
+        upsert=True)
+    await log_activity(user, "update_shipping_editors", {"editors": editors, "before": before})
+    return await get_access(request)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Lectura
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -605,7 +690,7 @@ async def year_summary(request: Request, year: int | None = None):
 
 @router.post("/exports")
 async def create_export(request: Request):
-    user = await require_auth(request)
+    user = await require_editor(request)
     body = await request.json()
     day_iso = _req_date(body.get("date"))
     doc = await _new_export(user, day_iso,
@@ -618,7 +703,7 @@ async def create_export(request: Request):
 
 @router.put("/exports/{export_id}")
 async def update_export(export_id: str, request: Request):
-    user = await require_auth(request)
+    user = await require_editor(request)
     exp = await _get_export(export_id)
     body = await request.json()
     upd = {}
@@ -672,7 +757,7 @@ async def update_export(export_id: str, request: Request):
 @router.post("/exports/{export_id}/assign-number")
 async def assign_export_number(export_id: str, request: Request):
     """Asigna el siguiente EXPORT# consecutivo (mayor capturado + 1)."""
-    user = await require_auth(request)
+    user = await require_editor(request)
     exp = await _get_export(export_id)
     if exp.get("export_no"):
         return _export_out(exp)
@@ -692,7 +777,7 @@ async def assign_export_number(export_id: str, request: Request):
 
 @router.delete("/exports/{export_id}")
 async def delete_export(export_id: str, request: Request, cascade: bool = False):
-    user = await require_auth(request)
+    user = await require_editor(request)
     exp = await _get_export(export_id)
     n = await db.scheduled_shipments.count_documents({"export_id": export_id})
     if n and not cascade:
@@ -733,7 +818,7 @@ async def add_lines(request: Request):
     """Agrega una o varias órdenes a un export. Las que no existen en el CRM se
     reportan en `not_found` (o se agregan como línea manual con manual=true).
     Una orden ya presente en ESTE export se omite (para partirla: duplicar)."""
-    user = await require_auth(request)
+    user = await require_editor(request)
     body = await request.json()
     exp = await _get_export(body.get("export_id"))
     nums = _split_numbers(body.get("order_numbers") or body.get("order_number"))
@@ -811,7 +896,7 @@ async def add_lines(request: Request):
 @router.post("/lines/{shipment_id}/duplicate")
 async def duplicate_line(shipment_id: str, request: Request):
     """Clona una línea en su mismo export (envío partido: "304 - #1 / #2")."""
-    user = await require_auth(request)
+    user = await require_editor(request)
     src = await db.scheduled_shipments.find_one({"shipment_id": shipment_id}, {"_id": 0})
     if not src or not src.get("export_id"):
         raise HTTPException(status_code=404, detail="Línea no encontrada")
@@ -848,7 +933,7 @@ async def move_lines(request: Request):
     """Mueve una o varias líneas (selección o arrastre) a un export, en la
     posición `index` (default: al final) y en el orden recibido. Con el mismo
     export de origen sirve para reacomodar. Renumera destino y orígenes."""
-    user = await require_auth(request)
+    user = await require_editor(request)
     body = await request.json()
     ids = [str(x) for x in (body.get("shipment_ids") or []) if x]
     ids = list(dict.fromkeys(ids))
@@ -900,7 +985,7 @@ async def move_lines(request: Request):
 @router.post("/lines/delete")
 async def delete_lines(request: Request):
     """Quita varias líneas de golpe (selección)."""
-    user = await require_auth(request)
+    user = await require_editor(request)
     body = await request.json()
     ids = list(dict.fromkeys(str(x) for x in (body.get("shipment_ids") or []) if x))
     if not ids:
@@ -926,7 +1011,7 @@ _renumber = jr.renumber
 
 @router.post("")
 async def schedule_shipment(request: Request):
-    user = await require_auth(request)
+    user = await require_editor(request)
     # Tarea 2.3: con llave de API, la orden a programar debe ser del cliente.
     filtro_cliente = require_api_customer(user, request)
     body = await request.json()
@@ -997,7 +1082,7 @@ async def schedule_shipment(request: Request):
 
 @router.put("/{shipment_id}")
 async def update_scheduled(shipment_id: str, request: Request):
-    user = await require_auth(request)
+    user = await require_editor(request)
     sched0 = await db.scheduled_shipments.find_one({"shipment_id": shipment_id}, {"_id": 0})
     if not sched0:
         raise HTTPException(status_code=404, detail="Programación no encontrada")
@@ -1095,7 +1180,7 @@ async def update_scheduled(shipment_id: str, request: Request):
 
 @router.delete("/{shipment_id}")
 async def unschedule(shipment_id: str, request: Request):
-    user = await require_auth(request)
+    user = await require_editor(request)
     # Tarea 2.3: con llave de API, solo se puede desprogramar lo del cliente.
     filtro_cliente = require_api_customer(user, request)
     sched = await db.scheduled_shipments.find_one({"shipment_id": shipment_id}, {"_id": 0})
@@ -1169,7 +1254,7 @@ async def list_movements(request: Request, skip: int = 0, limit: int = 50, q: st
 @router.post("/movements/{movement_id}/revert")
 async def revert_movement(movement_id: str, request: Request):
     """Revierte un movimiento si nada de lo que tocó cambió después."""
-    user = await require_auth(request)
+    user = await require_editor(request)
     try:
         rev = await jr.revert(movement_id, user)
     except LookupError:
