@@ -6,7 +6,7 @@ Contrato:
     (para que el deploy no deje fuera a la supervisora de Envíos).
   - Con lista: sólo ellos + supersu. El nivel de admin NO cuenta (admin 5 fuera
     de la lista = sólo lectura).
-  - Las 12 escrituras dan 403 al que no edita; las lecturas y el PACKING siguen.
+  - Las 13 escrituras dan 403 al que no edita; las lecturas y el PACKING siguen.
   - Sólo supersu cambia la lista.
 
 SEGURIDAD: base DESECHABLE, se niega contra producción, se borra al terminar.
@@ -112,6 +112,7 @@ async def main():
             ("POST", f"{API}/lines/{sid}/duplicate", None),
             ("POST", f"{API}/lines/move", {"shipment_ids": [sid], "move_to_date": "2026-10-08"}),
             ("POST", f"{API}/lines/delete", {"shipment_ids": [sid]}),
+            ("POST", f"{API}/lines/color", {"shipment_ids": [sid], "color": "AMARILLO"}),
             ("POST", f"{API}", {"order_number": "3319", "ship_date": "2026-10-07"}),
             ("PUT", f"{API}/{sid}", {"pcs": 10}),
             ("DELETE", f"{API}/{sid}", None),
@@ -122,7 +123,7 @@ async def main():
             for m, url, body in writes:
                 r = await cs[who].request(m, url, json=body) if body is not None else await cs[who].request(m, url)
                 codes.append(r.status_code)
-            check(f"{who}: las 12 escrituras → 403", codes == [403] * 12, codes)
+            check(f"{who}: las 13 escrituras → 403", codes == [403] * 13, codes)
         check("…y no se tocó nada", sdb.shipping_exports.count_documents({}) == 1
               and sdb.scheduled_shipments.count_documents({}) == 1)
         r = await cs["u_a5"].put(f"{API}/{sid}", json={"pcs": 10})

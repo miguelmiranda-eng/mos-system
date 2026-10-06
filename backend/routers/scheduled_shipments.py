@@ -68,6 +68,18 @@ PAPELERA = "PAPELERA DE RECICLAJE"
 # desplegable de la pestaña "21 SEP - 25 SEP", en su mismo orden.
 STATUSES = ["READY TO SHIP", "IN SETUP", "SURTIDO A PISO", "NECK READY", "PRINTED", "PACKAGED READY",
             "QC READY", "CANCELLED", "SE MUEVE FECHA", "PRINTING", "PRIORITY"]
+# Color de fila manual (como el relleno de Excel); gana sobre el color del
+# status. Los tonos viven en el frontend (ROW_COLORS de ShippingScheduler.js).
+ROW_COLORS = ["AMARILLO", "VERDE", "AZUL", "ROJO", "NARANJA", "MORADO", "GRIS"]
+
+
+def _row_color(v):
+    c = str(v or "").strip().upper() or None
+    if c and c not in ROW_COLORS:
+        raise HTTPException(status_code=400, detail=f"color inválido; opciones: {ROW_COLORS}")
+    return c
+
+
 # STATUS automático = equivalencia con MOS definida por Envíos (2026-09-25).
 # READY TO SHIP y PRIORITY son SÓLO manuales. EN PRODUCCION se parte por piezas
 # impresas (production_logs): sin piezas = IN SETUP, con piezas = PRINTING.
@@ -252,6 +264,7 @@ def _row(sched: dict, order: dict | None, pl_seed: dict | None = None,
         "ship_date": sched.get("ship_date"),
         "pcs": sched.get("pcs"),
         "shipping_no": sched.get("shipping_no"),
+        "row_color": sched.get("row_color"),
         "priority": sched.get("priority"),
         "ship_notes": sched.get("ship_notes"),
         "ship_from": sched.get("ship_from"),
@@ -373,7 +386,35 @@ def _export_out(e: dict) -> dict:
         "export_id", "date", "position", "export_no", "pl_numbers", "truck", "customs_light",
         "cutoff_time", "export_time", "notes", "created_at", "updated_at", "created_by_name",
         # Pie del PACKING LIST de exportación (services/export_packing.py).
-        "transport_company", "driver_name", "license_plate", "seal_numbers")}
+        "transport_company", "driver_name", "license_plate", "seal_numbers",
+        # SHIPPING# es del envío (antes una columna por renglón; ver _derive_shipping_no).
+        "shipping_no")}
+
+
+async def _export_resp(e: dict) -> dict:
+    out = _export_out(e)
+    await _derive_shipping_no([e], [out])
+    return out
+
+
+async def _derive_shipping_no(raws: list, outs: list) -> None:
+    """Exports que aún no tienen SHIPPING# propio (creados cuando era columna
+    por renglón): se muestra el valor más común de sus líneas, sin escribirlo.
+    En cuanto alguien edita el encabezado queda guardado en el export."""
+    pend = {r["export_id"]: o for r, o in zip(raws, outs) if "shipping_no" not in r}
+    if not pend:
+        return
+    counts = {}
+    async for l in db.scheduled_shipments.find(
+            {"export_id": {"$in": list(pend)}, "shipping_no": {"$nin": [None, ""]}},
+            {"_id": 0, "export_id": 1, "shipping_no": 1}):
+        c = counts.setdefault(l["export_id"], {})
+        v = str(l["shipping_no"]).strip()
+        if v:
+            c[v] = c.get(v, 0) + 1
+    for eid, o in pend.items():
+        c = counts.get(eid)
+        o["shipping_no"] = max(c, key=lambda k: (c[k], k)) if c else None
 
 
 async def _get_export(export_id) -> dict:
@@ -590,6 +631,8 @@ async def get_week(request: Request, start: str | None = None):
         {"export_id": {"$in": ids}}, {"_id": 0},
     ).sort([("position", 1), ("created_at", 1)]).to_list(5000) if ids else []
     lines = await _rows(scheds)
+    exp_out = [_export_out(e) for e in exports]
+    await _derive_shipping_no(exports, exp_out)
     # Siguiente EXPORT# sugerido = el mayor capturado + 1.
     top = await db.shipping_exports.find(
         {"export_no": {"$ne": None}}, {"_id": 0, "export_no": 1},
@@ -601,7 +644,7 @@ async def get_week(request: Request, start: str | None = None):
     return {
         "week_start": monday.isoformat(),
         "week_end": sunday.isoformat(),
-        "exports": [_export_out(e) for e in exports],
+        "exports": exp_out,
         "lines": lines,
         "next_export_no": ((top[0]["export_no"] if top else 0) or 0) + 1,
         "statuses": STATUSES,
@@ -710,7 +753,7 @@ async def update_export(export_id: str, request: Request):
     if "export_no" in body:
         upd["export_no"] = _int_or_none(body["export_no"], "export_no", 1, 1_000_000)
     for k, n in (("pl_numbers", 200), ("truck", 120), ("notes", 500), ("transport_company", 120),
-                 ("driver_name", 120), ("license_plate", 40), ("seal_numbers", 120)):
+                 ("driver_name", 120), ("license_plate", 40), ("seal_numbers", 120), ("shipping_no", 40)):
         if k in body:
             upd[k] = _txt(body[k], n)
     if "customs_light" in body:
@@ -751,7 +794,7 @@ async def update_export(export_id: str, request: Request):
         await jr.record(user, "export_update", f"Editó {jr.exp_label(exp)}: {'; '.join(cambios)}",
                         lines=[(i, lines_before[i], lines_after.get(i)) for i in lines_before],
                         exports=[(export_id, exp, after)])
-    return _export_out(after)
+    return await _export_resp(after)
 
 
 @router.post("/exports/{export_id}/assign-number")
@@ -760,7 +803,7 @@ async def assign_export_number(export_id: str, request: Request):
     user = await require_editor(request)
     exp = await _get_export(export_id)
     if exp.get("export_no"):
-        return _export_out(exp)
+        return await _export_resp(exp)
     top = await db.shipping_exports.find(
         {"export_no": {"$ne": None}}, {"_id": 0, "export_no": 1},
     ).sort("export_no", -1).limit(1).to_list(1)
@@ -772,7 +815,7 @@ async def assign_export_number(export_id: str, request: Request):
     await jr.record(user, "export_update",
                     f"Asignó EXPORT#{after.get('export_no')} al export del {jr.fecha(exp.get('date'))}",
                     exports=[(export_id, exp, after)])
-    return _export_out(after)
+    return await _export_resp(after)
 
 
 @router.delete("/exports/{export_id}")
@@ -1002,6 +1045,35 @@ async def delete_lines(request: Request):
     return {"deleted": len(lines)}
 
 
+@router.post("/lines/color")
+async def color_lines(request: Request):
+    """Pinta varias filas de golpe (como el bote de pintura de Excel).
+    body: {shipment_ids: [...], color: "AMARILLO" | null}. null = sin color
+    (vuelve el color del status)."""
+    user = await require_editor(request)
+    body = await request.json()
+    ids = list(dict.fromkeys(str(x) for x in (body.get("shipment_ids") or []) if x))
+    if not ids:
+        raise HTTPException(status_code=400, detail="shipment_ids requerido")
+    color = _row_color(body.get("color"))
+    before = await db.scheduled_shipments.find(
+        {"shipment_id": {"$in": ids}, "export_id": {"$exists": True}}, {"_id": 0}).to_list(1000)
+    changed = [b for b in before if b.get("row_color") != color]
+    if changed:
+        await db.scheduled_shipments.update_many(
+            {"shipment_id": {"$in": [b["shipment_id"] for b in changed]}},
+            {"$set": {"row_color": color, "updated_at": _now()}})
+        await log_activity(user, "color_shipping_lines",
+                           {"orders": [b.get("order_number") for b in changed], "color": color})
+        after = {d["shipment_id"]: d for d in await db.scheduled_shipments.find(
+            {"shipment_id": {"$in": [b["shipment_id"] for b in changed]}}, {"_id": 0}).to_list(1000)}
+        await jr.record(user, "lines_update",
+                        f"{'Pintó' if color else 'Quitó el color de'} {_nums([b.get('order_number') for b in changed])}"
+                        + (f" · {color}" if color else ""),
+                        lines=[(b["shipment_id"], b, after.get(b["shipment_id"])) for b in changed])
+    return {"colored": len(changed), "color": color}
+
+
 _renumber = jr.renumber
 
 
@@ -1112,6 +1184,8 @@ async def update_scheduled(shipment_id: str, request: Request):
         allowed["status"] = st
     if "pcs" in body:
         allowed["pcs"] = _int_or_none(body["pcs"], "pcs")
+    if "row_color" in body:
+        allowed["row_color"] = _row_color(body["row_color"])
     if "priority" in body:
         p = _int_or_none(body["priority"], "priority", 1, 4)
         allowed["priority"] = p

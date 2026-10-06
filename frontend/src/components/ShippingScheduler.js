@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo, useRef, createContext
 import {
   ChevronLeft, ChevronRight, Plus, Trash2, Copy, Download, RefreshCw, Loader2,
   ExternalLink, FileSpreadsheet, Wand2, Search, GripVertical, X, RotateCcw, History, CalendarDays, FileDown,
-  Eye, Users,
+  Eye, Users, PaintBucket,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { toast } from "sonner";
@@ -49,6 +49,12 @@ const STATUS_COLORS = {
   'SE MUEVE FECHA': { row: '#ffedd5', pill: '#ea580c' },
   'CANCELLED': { row: '#fee2e2', pill: '#dc2626' },
 };
+// Color de fila manual (relleno tipo Excel). Gana sobre el color del status;
+// "sin color" lo regresa. Las llaves = ROW_COLORS del backend.
+const ROW_COLORS = {
+  AMARILLO: '#ffff00', VERDE: '#92d050', AZUL: '#9bc2e6', ROJO: '#ff7c80',
+  NARANJA: '#ffc000', MORADO: '#c9b3e6', GRIS: '#bfbfbf',
+};
 const ROOT_ID = 'shipping-scheduler';
 const SCOPED_CSS = `
 #${ROOT_ID} .sch-sheet { background:#fff !important; color:#1e293b !important; }
@@ -57,6 +63,7 @@ const SCOPED_CSS = `
 ${Object.entries(STATUS_COLORS).map(([k, c]) => `#${ROOT_ID} .sch-sheet tbody tr[data-st="${k}"] { background-color:${c.row} !important; }
 #${ROOT_ID} select.sch-pill[data-st="${k}"] { background-color:${c.pill} !important; color:#fff !important; }`).join(' ')}
 #${ROOT_ID} .sch-sheet tbody tr[data-st="CANCELLED"] td { color:#94a3b8 !important; text-decoration:line-through; }
+${Object.entries(ROW_COLORS).map(([k, c]) => `#${ROOT_ID} .sch-sheet tbody tr[data-st][data-rc="${k}"] { background-color:${c} !important; }`).join(' ')}
 #${ROOT_ID} select.sch-pill { background-color:#e2e8f0 !important; color:#475569 !important; border-radius:9999px; }
 #${ROOT_ID} input.sch-cell, #${ROOT_ID} select.sch-cell { background-color:transparent !important; color:inherit !important; }
 #${ROOT_ID} input.sch-cell:hover:not(:disabled) { background-color:rgba(255,255,255,.75) !important; }
@@ -127,8 +134,12 @@ const Cell = ({ value, onSave, type = 'text', list, placeholder, className = '',
 
 // ORDER va primero (pedido de Envíos); antes de ella, la columna de
 // selección + manija de arrastre (SEL_W).
-const COLS = ['ORDER', 'CUSTOMER', 'SHIPPING#', 'DELIVER TO', 'BRANDING', 'CUSTOMER PO.', 'DESIGN #', 'PCS', 'STATUS', 'PRIORITY', 'NOTES', 'SHIPPING FROM', 'CARRIER'];
-const COL_W = [125, 110, 90, 120, 130, 150, 150, 80, 190, 80, 190, 120, 120, 96];
+// SHIPPING# ya no es columna: es del envío y va en el encabezado del export.
+// El Excel la conserva (XL_COLS), llena con el valor del encabezado.
+const COLS = ['ORDER', 'CUSTOMER', 'DELIVER TO', 'BRANDING', 'CUSTOMER PO.', 'DESIGN #', 'PCS', 'STATUS', 'PRIORITY', 'NOTES', 'SHIPPING FROM', 'CARRIER'];
+const COL_W = [125, 110, 120, 130, 150, 150, 80, 190, 80, 190, 120, 120, 120];
+const XL_COLS = ['ORDER', 'CUSTOMER', 'SHIPPING#', ...COLS.slice(2)];
+const XL_W = [125, 110, 90, ...COL_W.slice(2, COLS.length)];
 const SEL_W = 46;
 // Columnas del programador anterior que vienen VIVAS de la orden (solo
 // lectura): cancel date / Days Com., status de producción, pedido vs.
@@ -146,6 +157,38 @@ const MOVE_ACTIONS = ['lines_add', 'lines_update', 'lines_move', 'lines_delete',
 const MOVE_COLORS = {
   lines_add: '#047857', lines_update: '#2563eb', lines_move: '#7c3aed', lines_delete: '#dc2626',
   export_create: '#0d9488', export_update: '#0284c7', export_delete: '#b91c1c', revert: '#475569',
+};
+
+// Bote de pintura (como Excel): paleta fija + "sin color".
+const ColorPicker = ({ value, onPick, dark = false, up = false }) => {
+  const { t } = useLang();
+  const [open, setOpen] = useState(false);
+  const pick = (c) => { setOpen(false); if ((c || null) !== (value || null)) onPick(c); };
+  return (
+    <span className="relative inline-flex">
+      <button onClick={() => setOpen((v) => !v)} title={t('sch_row_color')}
+        className={dark ? 'flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white/15 hover:bg-white/25 text-[11px] font-black' : 'p-1 rounded text-slate-400 hover:text-blue-600'}>
+        <PaintBucket className="w-3.5 h-3.5" style={value ? { color: ROW_COLORS[value] } : undefined} />
+        {dark && t('sch_row_color')}
+      </button>
+      {open && (
+        <>
+          <span className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+          <span className={`sch-sheet absolute right-0 z-50 ${up ? 'bottom-full mb-1' : 'top-full mt-1'} w-44 p-2 rounded-xl border border-slate-200 shadow-xl flex flex-col gap-1.5`}>
+            <span className="grid grid-cols-4 gap-1.5">
+              {Object.entries(ROW_COLORS).map(([k, c]) => (
+                <button key={k} onClick={() => pick(k)} title={t(`sch_color_${k.toLowerCase()}`)}
+                  className={`w-8 h-6 rounded border ${value === k ? 'border-slate-900 ring-2 ring-slate-400' : 'border-slate-300'}`} style={{ background: c }} />
+              ))}
+            </span>
+            <button onClick={() => pick(null)} className="text-[11px] font-bold text-slate-600 hover:bg-slate-100 rounded px-1 py-0.5 text-left">
+              ⊘ {t('sch_color_none')}
+            </button>
+          </span>
+        </>
+      )}
+    </span>
+  );
 };
 
 const MovementsPanel = ({ onReverted, canRevert = true }) => {
@@ -689,9 +732,9 @@ const ShippingScheduler = () => {
       head.push([exp.export_no ? `EXPORT#${exp.export_no}` : 'EXPORT#', exp.pl_numbers || '', '', '', '', '', exp.truck || '', exp.customs_light || '']);
     }
     head.push([dayLabel(exp.date).replace(' · ', ' - '), `CORTE: ${to12h(exp.cutoff_time)}`, '', '', `EXPORT HR: ${to12h(exp.export_time)}`]);
-    head.push(showCrm ? [...COLS, ...CRM_COLS] : COLS);
+    head.push(showCrm ? [...XL_COLS, ...CRM_COLS] : XL_COLS);
     const body = ls.map((l) => [
-      `${l.order_number}${l.late ? ' (LATE)' : ''}`, l.client || '', l.shipping_no || '', l.delivery_to || '',
+      `${l.order_number}${l.late ? ' (LATE)' : ''}`, l.client || '', exp.shipping_no || '', l.delivery_to || '',
       l.branding || '', l.customer_po || '', l.design_num || '',
       l.pcs ?? '', `${l.status_effective || ''}${l.cancel_moved ? ' · SE MUEVE FECHA' : ''}`, l.priority ? `${PRIORITY_LABEL[l.priority]} PRIORIDAD` : '',
       l.ship_notes || '', l.ship_from || '', l.carrier || '',
@@ -701,7 +744,7 @@ const ShippingScheduler = () => {
   };
   const writeXlsx = (aoa, sheet, file) => {
     const ws = XLSX.utils.aoa_to_sheet(aoa);
-    ws['!cols'] = [...COL_W.slice(0, COLS.length), ...(showCrm ? CRM_W : [])].map((w) => ({ wch: Math.round(w / 7) }));
+    ws['!cols'] = [...XL_W, ...(showCrm ? CRM_W : [])].map((w) => ({ wch: Math.round(w / 7) }));
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, sheet.slice(0, 31));
     XLSX.writeFile(wb, file);
@@ -864,6 +907,13 @@ const ShippingScheduler = () => {
       loadSummary();
     } catch (e) { toast.error(e.message); }
   };
+  const colorIds = async (ids, color) => {
+    try {
+      await call(`${API}/lines/color`, 'POST', { shipment_ids: ids, color });
+      const set = new Set(ids);
+      setData((p) => ({ ...p, lines: p.lines.map((l) => (set.has(l.shipment_id) ? { ...l, row_color: color } : l)) }));
+    } catch (e) { toast.error(e.message); }
+  };
   const moveSelectedPrompt = () => {
     const d = window.prompt(t('sch_prompt_date'), isoOf(addDays(weekStart, 7)));
     if (d && /^\d{4}-\d{2}-\d{2}$/.test(d.trim())) moveIds(selIds, { date: d.trim() });
@@ -951,6 +1001,11 @@ const ShippingScheduler = () => {
                 {t('sch_assign_no', { n: data?.next_export_no ?? '' })}
               </button>
             )}
+          </div>
+          <div className="flex items-center gap-1">
+            <span className="text-[11px] font-black text-slate-500 uppercase">SHIPPING#</span>
+            <div className="w-20"><Cell boxed value={exp.shipping_no} placeholder="#1" className="font-black text-slate-800"
+              onSave={(v) => updateExport(exp, { shipping_no: v })} /></div>
           </div>
           <div className="flex items-center gap-1 flex-1 min-w-[240px]">
             <span className="text-[11px] font-black text-slate-500 uppercase">PL</span>
@@ -1061,7 +1116,7 @@ const ShippingScheduler = () => {
                 const isSel = selected.has(l.shipment_id);
                 const hintTop = isDropBlock && dropHint.index === idx;
                 return (
-                  <tr key={l.shipment_id} data-st={l.status_effective || 'none'} data-sid={l.shipment_id}
+                  <tr key={l.shipment_id} data-st={l.status_effective || 'none'} data-rc={l.row_color || undefined} data-sid={l.shipment_id}
                     onDragOver={(e) => overRow(e, exp, idx)} onDrop={dropOnExport}
                     style={{
                       boxShadow: hintTop ? 'inset 0 3px 0 #2563eb'
@@ -1089,7 +1144,6 @@ const ShippingScheduler = () => {
                       </span>
                     </td>
                     <td className="border-r border-slate-200 font-bold text-center">{man ? <Cell value={l.client} onSave={saveManual('client')} className="text-center" /> : ro(l.client)}</td>
-                    <td className="border-r border-slate-200"><Cell value={l.shipping_no} className="text-center font-bold" onSave={(v) => updateLine(l, { shipping_no: v })} /></td>
                     <td className="border-r border-slate-200"><Cell value={l.delivery_to} list="sch-deliver" className="text-center" onSave={(v) => updateLine(l, { delivery_to: v })} /></td>
                     <td className="border-r border-slate-200 text-center">{man ? <Cell value={l.branding} onSave={saveManual('branding')} className="text-center" /> : ro(l.branding)}</td>
                     <td className="border-r border-slate-200 text-center">{man ? <Cell value={l.customer_po} onSave={saveManual('customer_po')} className="text-center" /> : ro(l.customer_po)}</td>
@@ -1152,6 +1206,7 @@ const ShippingScheduler = () => {
                           {moveOptions(l).map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
                           <option value="__date">{t('sch_other_date')}</option>
                         </select>
+                        <ColorPicker value={l.row_color} onPick={(c) => updateLine(l, { row_color: c })} />
                         <button onClick={() => duplicateLine(l)} title={t('sch_duplicate')} className="p-1 rounded text-slate-400 hover:text-blue-600"><Copy className="w-3.5 h-3.5" /></button>
                         <button onClick={() => deleteLine(l)} title={t('sch_delete_line')} className="p-1 rounded text-slate-400 hover:text-red-600"><Trash2 className="w-3.5 h-3.5" /></button>
                       </div>}
@@ -1162,7 +1217,7 @@ const ShippingScheduler = () => {
               {/* Renglón de captura: pega una o varias órdenes y Enter */}
               <tr className="bg-slate-50/60"
                 style={{ boxShadow: isDropBlock && dropHint.index === ls.length ? 'inset 0 3px 0 #2563eb' : undefined }}>
-                <td colSpan={8} className="px-2 py-1.5">
+                <td colSpan={7} className="px-2 py-1.5">
                   {!readOnly && <div className="flex items-center gap-2">
                     <Plus className="w-4 h-4 text-blue-600 flex-shrink-0" />
                     <input value={addText[exp.export_id] || ''}
@@ -1576,6 +1631,7 @@ const ShippingScheduler = () => {
             <option value="">{t('sch_move_to')}</option>
             {exportsList.map((e) => <option key={e.export_id} value={e.export_id}>{exportLabel(e)}</option>)}
           </select>
+          <ColorPicker dark up value={null} onPick={(c) => colorIds(selIds, c)} />
           <button onClick={moveSelectedPrompt}
             className="px-2.5 py-1 rounded-lg bg-white/15 hover:bg-white/25 text-[11px] font-black">{t('sch_other_date')}</button>
           <button onClick={deleteSelected}

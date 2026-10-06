@@ -27,13 +27,13 @@ MESES = ["ENE", "FEB", "MAR", "ABR", "MAY", "JUN", "JUL", "AGO", "SEP", "OCT", "
 LINE_FIELDS = {
     "status": "STATUS", "pcs": "PCS", "shipping_no": "SHIPPING#", "delivery_to": "DELIVER TO",
     "ship_from": "SHIPPING FROM", "carrier": "CARRIER", "priority": "PRIORIDAD",
-    "ship_notes": "NOTES", "manual_fields": "datos manuales", "export_id": "export",
+    "ship_notes": "NOTES", "manual_fields": "datos manuales", "export_id": "export", "row_color": "Color",
 }
 EXPORT_FIELDS = {
     "export_no": "EXPORT#", "pl_numbers": "PL", "truck": "Transporte", "customs_light": "Semáforo",
     "cutoff_time": "Corte", "export_time": "Export HR", "notes": "Notas", "date": "Fecha",
     "transport_company": "Compañía de transporte", "driver_name": "Chofer", "license_plate": "Placas",
-    "seal_numbers": "Sellos",
+    "seal_numbers": "Sellos", "shipping_no": "SHIPPING#",
 }
 
 

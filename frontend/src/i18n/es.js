@@ -2950,6 +2950,11 @@ const es = {
   sch_qty_hint: "Cantidad de la orden / unidades ya embarcadas según el WMS",
   sch_status_auto_hint: "Automático: sale del status de la orden en MOS. Elige una opción para fijarlo a mano.",
   sch_status_auto_none: "sin equivalencia en MOS",
+  // Color de fila (relleno tipo Excel)
+  sch_row_color: "Color",
+  sch_color_amarillo: "Amarillo", sch_color_verde: "Verde", sch_color_azul: "Azul", sch_color_rojo: "Rojo",
+  sch_color_naranja: "Naranja", sch_color_morado: "Morado", sch_color_gris: "Gris",
+  sch_color_none: "Sin color (color del status)",
   sch_find_ph: "Buscar en envíos: orden, cliente, PO, design…",
   pk_pick_client: "Este envío lleva varios clientes: ¿de cuál hago el packing?",
   // Modal "Órdenes por status" (chips de la semana)

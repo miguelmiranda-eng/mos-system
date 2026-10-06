@@ -3136,6 +3136,11 @@ const en = {
   sch_qty_hint: "Order quantity / units already shipped per the WMS",
   sch_status_auto_hint: "Automatic: taken from the order's MOS status. Pick an option to set it by hand.",
   sch_status_auto_none: "no MOS match",
+  // Row color (Excel-like fill)
+  sch_row_color: "Color",
+  sch_color_amarillo: "Yellow", sch_color_verde: "Green", sch_color_azul: "Blue", sch_color_rojo: "Red",
+  sch_color_naranja: "Orange", sch_color_morado: "Purple", sch_color_gris: "Gray",
+  sch_color_none: "No color (status color)",
   sch_find_ph: "Search shipments: order, client, PO, design…",
   pk_pick_client: "This shipment has several clients: which packing?",
   // "Orders by status" modal (week chips)
