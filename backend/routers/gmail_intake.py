@@ -121,6 +121,34 @@ async def _get_config() -> dict:
     return {**DEFAULTS, **cfg}
 
 
+def fuentes_de(cfg: dict) -> list:
+    """Las fuentes que el poller va a recorrer, una por cliente.
+
+    ADAPTADOR DE LECTURA, no migracion: mientras `fuentes` no exista en el
+    documento, se arma UNA fuente con los campos sueltos de siempre
+    (label_name / allowed_domains / auto_contact_*). Asi el intake de Goodie
+    sigue corriendo exactamente igual y el cambio es reversible borrando la
+    lista. En cuanto alguien da de alta un segundo cliente, manda la lista.
+
+    Cada fuente trae lo que distingue a un cliente: su etiqueta de Gmail, de que
+    dominios acepta correo, y a que contacto de Printavo se le crean las quotes.
+    Lo que es del BUZON (que cuenta, cada cuanto, cuantos dias atras) sigue
+    siendo global: es un solo buzon para todos."""
+    lista = cfg.get("fuentes")
+    if isinstance(lista, list) and lista:
+        return [f for f in lista if f.get("activa", True)]
+    return [{
+        "id": "principal",
+        "nombre": cfg.get("nombre_cliente") or "Principal",
+        "label_name": cfg.get("label_name"),
+        "allowed_domains": cfg.get("allowed_domains") or [],
+        "auto_create": bool(cfg.get("auto_create")),
+        "auto_contact_id": cfg.get("auto_contact_id"),
+        "auto_contact_name": cfg.get("auto_contact_name"),
+        "activa": True,
+    }]
+
+
 async def _set_config(update: dict):
     await db.gmail_intake.update_one({"config_id": CONFIG_ID}, {"$set": update}, upsert=True)
 
@@ -282,8 +310,12 @@ def _find_label_id(labels: dict, wanted: str):
     return None
 
 
-def _list_message_ids(svc, label_id: str, q: str, max_results: int) -> list:
-    kwargs = {"userId": 'me', "labelIds": [label_id], "maxResults": max_results}
+def _list_message_ids(svc, label_id, q: str, max_results: int) -> list:
+    """`label_id` puede ser una etiqueta o una lista: Gmail las combina con AND.
+    Con varias se piden los correos que tienen TODAS — asi se separa el
+    "MOS/Revisar" de un cliente del de otro."""
+    ids = label_id if isinstance(label_id, (list, tuple)) else [label_id]
+    kwargs = {"userId": 'me', "labelIds": list(ids), "maxResults": max_results}
     if q:
         kwargs["q"] = q
     res = svc.users().messages().list(**kwargs).execute()
@@ -431,12 +463,15 @@ async def _bound_user(cfg: dict) -> dict:
     return u or {"user_id": cfg.get("user_id"), "email": cfg.get("email"), "name": "Gmail intake"}
 
 
-async def _maybe_auto_create(cfg: dict, item: dict) -> bool:
+async def _maybe_auto_create(cfg: dict, fuente: dict, item: dict) -> bool:
     """Create the quotes for a clean item with the fixed contact. Returns True
     when the item ended up 'creado'. Never raises: a failure is recorded on the
     item (auto_error) and on the config (last_auto_error) and the item stays
-    pending for a human."""
-    if not cfg.get("auto_create") or not cfg.get("auto_contact_id"):
+    pending for a human.
+
+    El contacto sale de LA FUENTE: cada cliente factura al suyo. Un cliente puede
+    tener auto-crear encendido y otro apagado."""
+    if not fuente.get("auto_create") or not fuente.get("auto_contact_id"):
         return False
     if not printavo_client.is_configured():
         return False
@@ -446,7 +481,7 @@ async def _maybe_auto_create(cfg: dict, item: dict) -> bool:
         return False
     user = await _bound_user(cfg)
     try:
-        result = await create_quotes_for(user, cfg["auto_contact_id"], item["styles"])
+        result = await create_quotes_for(user, fuente["auto_contact_id"], item["styles"])
     except Exception as e:
         err = str(e)[:300]
         logger.error(f"[gmail-intake] auto-create failed for PO {item.get('po_number')}: {err}")
@@ -455,7 +490,7 @@ async def _maybe_auto_create(cfg: dict, item: dict) -> bool:
         return False
     ok = [x for x in result.get("results", []) if x.get("ok")]
     failed = [x for x in result.get("results", []) if not x.get("ok")]
-    upd = {"created_quotes": ok, "contact_id": cfg["auto_contact_id"], "auto": True}
+    upd = {"created_quotes": ok, "contact_id": fuente["auto_contact_id"], "auto": True}
     if ok and not failed:
         upd.update({"status": "creado", "resolved_at": datetime.now(timezone.utc).isoformat(),
                     "resolved_by": "auto"})
@@ -471,7 +506,7 @@ async def _maybe_auto_create(cfg: dict, item: dict) -> bool:
     return bool(ok and not failed)
 
 
-async def _process_message(svc, cfg: dict, labels: dict, msg_id: str, forced: bool) -> dict:
+async def _process_message(svc, cfg: dict, fuente: dict, labels: dict, msg_id: str, forced: bool) -> dict:
     """Evaluate one message. Returns {'orders': n, 'ignored': bool, 'skipped': bool}."""
     seen = await db.gmail_intake_messages.find_one({"message_id": msg_id})
     if seen and not forced:
@@ -488,7 +523,7 @@ async def _process_message(svc, cfg: dict, labels: dict, msg_id: str, forced: bo
     created = 0
     auto_created = 0
     duplicates = 0
-    if not _domain_allowed(senders, cfg.get("allowed_domains") or []):
+    if not _domain_allowed(senders, fuente.get("allowed_domains") or []):
         reason = REASON_DOMAIN
     else:
         pdfs = _pdf_parts(msg)
@@ -575,6 +610,8 @@ async def _process_message(svc, cfg: dict, labels: dict, msg_id: str, forced: bo
                 "received_at": _received_at(h, msg),
                 "body_text": body_text,
                 "pdf_text_head": text_head,
+                "fuente": fuente.get("id"),
+                "fuente_nombre": fuente.get("nombre"),
                 "created_at": now,
                 "created_quotes": None,
                 "resolved_at": None,
@@ -603,7 +640,7 @@ async def _process_message(svc, cfg: dict, labels: dict, msg_id: str, forced: bo
                     flags.remove("new_version")
             await db.printavo_intake.insert_one(item)
             created += 1
-            if item["status"] == "pendiente" and await _maybe_auto_create(cfg, item):
+            if item["status"] == "pendiente" and await _maybe_auto_create(cfg, fuente, item):
                 auto_created += 1
         if created == 0 and reason is None:
             reason = ("PDF ya visto (re-adjuntado en el hilo)" if duplicates
@@ -642,35 +679,59 @@ async def run_once(cfg: dict) -> dict:
     cfg["_plantillas"] = await plantillas_activas()
 
     labels = await run_in_threadpool(_label_map, svc)
-    src_id = _find_label_id(labels, cfg.get("label_name") or "")
-    if not src_id:
-        raise RuntimeError(f"la etiqueta '{cfg.get('label_name')}' no existe en el buzón")
     labels = await run_in_threadpool(_ensure_mos_labels, svc, labels)
+
+    fuentes = fuentes_de(cfg)
+    if not fuentes:
+        raise RuntimeError("no hay ningún cliente dado de alta en el intake")
 
     days = max(1, int(cfg.get("days_back") or 7))
     limit = max(1, min(200, int(cfg.get("max_messages") or 50)))
     q = f"has:attachment filename:pdf newer_than:{days}d"
-    normal_ids = await run_in_threadpool(_list_message_ids, svc, src_id, q, limit)
-    forced_ids = await run_in_threadpool(_list_message_ids, svc, labels[LABEL_REVISAR], "", limit)
 
-    summary = {"evaluated": 0, "orders": 0, "ignored": 0, "skipped": 0, "forced": len(forced_ids), "auto_created": 0}
-    for msg_id in forced_ids:
-        r = await _process_message(svc, cfg, labels, msg_id, forced=True)
-        summary["evaluated"] += 1
-        summary["orders"] += r.get("orders", 0)
-        summary["auto_created"] += r.get("auto_created", 0)
-        summary["ignored"] += 1 if r.get("ignored") else 0
-    for msg_id in normal_ids:
-        if msg_id in forced_ids:
+    summary = {"evaluated": 0, "orders": 0, "ignored": 0, "skipped": 0,
+               "forced": 0, "auto_created": 0, "por_cliente": {}}
+    faltantes = []
+
+    for fuente in fuentes:
+        src_id = _find_label_id(labels, fuente.get("label_name") or "")
+        if not src_id:
+            # Una etiqueta mal escrita no debe dejar sin leer a los demas
+            # clientes: se anota y se sigue. Si NINGUNA existe, se avisa al final.
+            faltantes.append(f"{fuente.get('nombre')}: la etiqueta '{fuente.get('label_name')}' no existe")
             continue
-        r = await _process_message(svc, cfg, labels, msg_id, forced=False)
-        if r.get("skipped"):
-            summary["skipped"] += 1
-            continue
-        summary["evaluated"] += 1
-        summary["orders"] += r.get("orders", 0)
-        summary["auto_created"] += r.get("auto_created", 0)
-        summary["ignored"] += 1 if r.get("ignored") else 0
+        # El "revisar a mano" se acota a ESTE cliente pidiendo las dos etiquetas:
+        # Gmail las combina con AND.
+        forced_ids = await run_in_threadpool(
+            _list_message_ids, svc, [src_id, labels[LABEL_REVISAR]], "", limit)
+        normal_ids = await run_in_threadpool(_list_message_ids, svc, src_id, q, limit)
+
+        parcial = {"evaluated": 0, "orders": 0, "auto_created": 0}
+        for msg_id in forced_ids:
+            r = await _process_message(svc, cfg, fuente, labels, msg_id, forced=True)
+            summary["forced"] += 1
+            for k, c in (("evaluated", 1), ("orders", r.get("orders", 0)),
+                         ("auto_created", r.get("auto_created", 0))):
+                summary[k] += c
+                parcial[k] += c
+            summary["ignored"] += 1 if r.get("ignored") else 0
+        for msg_id in normal_ids:
+            if msg_id in forced_ids:
+                continue
+            r = await _process_message(svc, cfg, fuente, labels, msg_id, forced=False)
+            if r.get("skipped"):
+                summary["skipped"] += 1
+                continue
+            for k, c in (("evaluated", 1), ("orders", r.get("orders", 0)),
+                         ("auto_created", r.get("auto_created", 0))):
+                summary[k] += c
+                parcial[k] += c
+            summary["ignored"] += 1 if r.get("ignored") else 0
+        summary["por_cliente"][fuente.get("nombre") or fuente.get("id")] = parcial
+
+    if faltantes and len(faltantes) == len(fuentes):
+        raise RuntimeError("; ".join(faltantes))
+    summary["avisos"] = faltantes
     return summary
 
 
@@ -739,7 +800,62 @@ async def status(request: Request):
     cfg["printavo_configured"] = printavo_client.is_configured()
     cfg["connected"] = bool(cfg.get("user_id"))
     cfg["pending"] = await db.printavo_intake.count_documents({"status": "pendiente"})
+    # Siempre normalizadas: la pantalla no tiene que saber si el documento ya
+    # tiene la lista o todavia son los campos sueltos de un solo cliente.
+    cfg["fuentes"] = fuentes_de({**cfg, "fuentes": cfg.get("fuentes")})
+    cfg["multi"] = isinstance(cfg.get("fuentes"), list) and len(cfg["fuentes"]) > 1
     return cfg
+
+
+def _limpiar_fuentes(lista) -> list:
+    """Normaliza y valida la lista de clientes del intake.
+
+    Se valida aqui y no en la pantalla porque esta lista decide a QUE contacto de
+    Printavo se le crean quotes solas: una fuente con la etiqueta de un cliente y
+    el contacto de otro le facturaria al equivocado. Dos reglas duras: etiqueta
+    obligatoria, y no se puede encender auto-crear sin contacto."""
+    if not isinstance(lista, list):
+        raise HTTPException(400, "Las fuentes deben venir como lista")
+    out, vistas = [], set()
+    for i, f in enumerate(lista):
+        if not isinstance(f, dict):
+            raise HTTPException(400, "Cada fuente debe ser un objeto")
+        etiqueta = str(f.get("label_name") or "").strip()
+        nombre = str(f.get("nombre") or "").strip() or f"Cliente {i + 1}"
+        if not etiqueta:
+            raise HTTPException(400, f"«{nombre}»: falta la etiqueta de Gmail")
+        clave = _norm_etiqueta(etiqueta)
+        if clave in vistas:
+            raise HTTPException(400, f"La etiqueta «{etiqueta}» está repetida en dos clientes")
+        vistas.add(clave)
+        doms = f.get("allowed_domains") or []
+        if isinstance(doms, str):
+            doms = re.split(r"[,\s;]+", doms)
+        doms = sorted({d.strip().lower().lstrip("@") for d in doms if d and str(d).strip()})
+        auto = bool(f.get("auto_create"))
+        contacto = (str(f.get("auto_contact_id") or "").strip() or None)
+        if auto and not contacto:
+            raise HTTPException(400, f"«{nombre}»: elige el contacto de Printavo antes de activar auto-crear")
+        out.append({
+            "id": str(f.get("id") or "").strip() or f"f{i + 1}",
+            "nombre": nombre,
+            "label_name": etiqueta,
+            "allowed_domains": doms,
+            "auto_create": auto,
+            "auto_contact_id": contacto,
+            "auto_contact_name": (str(f.get("auto_contact_name") or "").strip() or None),
+            "activa": bool(f.get("activa", True)),
+        })
+    ids = [f["id"] for f in out]
+    if len(set(ids)) != len(ids):
+        raise HTTPException(400, "Hay dos clientes con el mismo identificador")
+    return out
+
+
+def _norm_etiqueta(s: str) -> str:
+    x = unicodedata.normalize("NFKD", s or "")
+    x = "".join(c for c in x if not unicodedata.combining(c))
+    return re.sub(r"\s+", " ", x.strip().lower())
 
 
 @router.put("/config")
@@ -749,6 +865,8 @@ async def update_config(request: Request):
     allowed = {}
     if "enabled" in body:
         allowed["enabled"] = bool(body["enabled"])
+    if "fuentes" in body:
+        allowed["fuentes"] = _limpiar_fuentes(body["fuentes"])
     if "label_name" in body:
         allowed["label_name"] = str(body["label_name"]).strip() or DEFAULTS["label_name"]
     if "allowed_domains" in body:
@@ -856,6 +974,13 @@ async def reparse_item(request: Request, item_id: str):
         raise HTTPException(400, "No hay buzón conectado")
     if _run_lock.locked():
         raise HTTPException(409, "Ya hay una pasada en curso; intenta en un momento")
+    # De qué cliente es este ítem: los nuevos lo traen anotado; los de antes del
+    # multi-cliente no, y para ésos la primera fuente es la correcta porque era
+    # la única que existía.
+    fuentes = fuentes_de(cfg)
+    fuente = next((f for f in fuentes if f.get("id") == item.get("fuente")), None) or fuentes[0]
+    cfg["_plantillas"] = await plantillas_activas()
+
     async with _run_lock:
         svc, err = await _get_gmail_service(cfg["user_id"])
         if not svc:
@@ -863,7 +988,7 @@ async def reparse_item(request: Request, item_id: str):
         labels = await run_in_threadpool(_label_map, svc)
         labels = await run_in_threadpool(_ensure_mos_labels, svc, labels)
         try:
-            await _process_message(svc, cfg, labels, item["gmail_message_id"], forced=True)
+            await _process_message(svc, cfg, fuente, labels, item["gmail_message_id"], forced=True)
         except Exception as e:
             raise HTTPException(400, f"No se pudo releer: {str(e)[:200]}")
     await log_activity(user, "gmail_intake_reparse", {"item_id": item_id})

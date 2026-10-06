@@ -36,7 +36,12 @@ export default function PrintavoExport() {
   const [showCfg, setShowCfg] = useState(false);
   const showCfgRef = useRef(false);
   showCfgRef.current = showCfg;
-  const [cfgDraft, setCfgDraft] = useState({ label_name: "", allowed_domains: "", days_back: 7 });
+  const [cfgDraft, setCfgDraft] = useState({ days_back: 7 });
+  // Los clientes del intake. Cada uno trae su etiqueta de Gmail, de qué dominios
+  // acepta correo y a qué contacto de Printavo se le crean las quotes. El buzón
+  // y la frecuencia son globales: es un solo buzón para todos.
+  const [clientes, setClientes] = useState([]);
+  const [buscaContacto, setBuscaContacto] = useState({ i: null, q: "", res: [] });
 
   const [showResolved, setShowResolved] = useState(false);
   const showResolvedRef = useRef(false);
@@ -52,22 +57,35 @@ export default function PrintavoExport() {
       // Sólo refresca el borrador si el panel está cerrado: una pasada (↻) no
       // debe borrar lo que el usuario está escribiendo.
       if (!showCfgRef.current) {
-        setCfgDraft({ label_name: st.label_name || "", allowed_domains: (st.allowed_domains || []).join(", "), days_back: st.days_back || 7 });
+        setCfgDraft({ days_back: st.days_back || 7 });
+        setClientes((st.fuentes || []).map((f) => ({
+          ...f, allowed_domains: (f.allowed_domains || []).join(", "),
+        })));
       }
     } catch { /* la bandeja es opcional: si falla, la carga manual sigue funcionando */ }
   }, []);
 
   // Contacto fijo para auto-crear (mismo buscador de contactos que el paso 3)
-  const [autoQuery, setAutoQuery] = useState("");
-  const [autoContacts, setAutoContacts] = useState([]);
-  const searchAutoContacts = async (q) => {
-    setAutoQuery(q);
-    if (q.trim().length < 2) { setAutoContacts([]); return; }
+  const searchAutoContacts = async (i, q) => {
+    setBuscaContacto({ i, q, res: [] });
+    if (q.trim().length < 2) return;
     try {
       const res = await fetch(`${API}/printavo-export/contacts?q=${encodeURIComponent(q.trim())}`, { credentials: "include" });
       const data = await res.json();
-      setAutoContacts(data.contacts || []);
-    } catch { setAutoContacts([]); }
+      setBuscaContacto((b) => (b.i === i ? { ...b, res: data.contacts || [] } : b));
+    } catch { /* sin resultados es un estado válido */ }
+  };
+  const editarCliente = (i, cambios) =>
+    setClientes((cs) => cs.map((c, j) => (j === i ? { ...c, ...cambios } : c)));
+  const agregarCliente = () =>
+    setClientes((cs) => [...cs, {
+      id: `f${Date.now().toString(36)}`, nombre: "", label_name: "",
+      allowed_domains: "", auto_create: false, auto_contact_id: null,
+      auto_contact_name: null, activa: true,
+    }]);
+  const quitarCliente = (i) => {
+    if (!window.confirm(t('pexport_cli_quitar_confirm', { n: clientes[i]?.nombre || "" }))) return;
+    setClientes((cs) => cs.filter((_, j) => j !== i));
   };
   const putConfig = async (body, okMsg) => {
     try {
@@ -77,12 +95,6 @@ export default function PrintavoExport() {
       loadIntake();
     } catch (e) { toast.error(e.message); }
   };
-  const setAutoContact = (c) => { setAutoContacts([]); setAutoQuery(""); putConfig({ auto_contact_id: c.id, auto_contact_name: `${c.company} · ${c.name}` }, t('pexport_intake_auto_contact_set')); };
-  const toggleAutoCreate = (on) => {
-    if (on && !window.confirm(t('pexport_intake_auto_create_confirm'))) return;
-    putConfig({ auto_create: on });
-  };
-
   useEffect(() => { loadIntake(); }, [loadIntake, showResolved]);
   useEffect(() => {
     if (searchParams.get("gmail_connected")) {
@@ -123,7 +135,10 @@ export default function PrintavoExport() {
   const saveCfg = async () => {
     try {
       const res = await fetch(`${API}/gmail-intake/config`, { method: "PUT", headers: { "Content-Type": "application/json" }, credentials: "include",
-        body: JSON.stringify({ label_name: cfgDraft.label_name, allowed_domains: cfgDraft.allowed_domains, days_back: Number(cfgDraft.days_back) || 7 }) });
+        body: JSON.stringify({
+          fuentes: clientes.map((c) => ({ ...c, allowed_domains: c.allowed_domains })),
+          days_back: Number(cfgDraft.days_back) || 7,
+        }) });
       if (!res.ok) throw new Error((await res.json()).detail || "Error");
       toast.success(t('pexport_intake_cfg_saved'));
       setShowCfg(false); loadIntake();
@@ -309,9 +324,13 @@ export default function PrintavoExport() {
               <p className="text-[11px] text-muted-foreground font-mono">
                 {t('pexport_intake_meta', { label: intake.label_name, last: intake.last_run_at ? new Date(intake.last_run_at).toLocaleString() : "—" })}
                 {" · "}
-                {intake.auto_create
-                  ? t('pexport_intake_auto_on', { contact: intake.auto_contact_name || "?", n: intake.auto_created_count || 0 })
-                  : t('pexport_intake_auto_off')}
+                {(() => {
+                  const fs = intake.fuentes || [];
+                  const con = fs.filter((f) => f.auto_create).length;
+                  return con
+                    ? t('pexport_cli_auto_on', { n: con, total: fs.length, q: intake.auto_created_count || 0 })
+                    : t('pexport_intake_auto_off');
+                })()}
               </p>
             )}
             {intake.last_auto_error && (
@@ -321,46 +340,79 @@ export default function PrintavoExport() {
             )}
 
             {showCfg && (
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 bg-secondary/20 border border-border rounded-xl p-4">
-                <Field label={t('pexport_intake_cfg_label')} value={cfgDraft.label_name} onChange={(v) => setCfgDraft((d) => ({ ...d, label_name: v }))} />
-                <Field label={t('pexport_intake_cfg_domains')} value={cfgDraft.allowed_domains} onChange={(v) => setCfgDraft((d) => ({ ...d, allowed_domains: v }))} />
-                <Field label={t('pexport_intake_cfg_days')} value={cfgDraft.days_back} onChange={(v) => setCfgDraft((d) => ({ ...d, days_back: v }))} />
-                <div className="md:col-span-3 flex justify-end">
+              <div className="bg-secondary/20 border border-border rounded-xl p-4 space-y-4">
+                <div className="flex flex-wrap items-end gap-3">
+                  <div className="w-40">
+                    <Field label={t('pexport_intake_cfg_days')} value={cfgDraft.days_back}
+                      onChange={(v) => setCfgDraft((d) => ({ ...d, days_back: v }))} />
+                  </div>
+                  <p className="text-xs text-muted-foreground flex-1 min-w-[200px]">{t('pexport_cli_ayuda')}</p>
+                  <button onClick={agregarCliente} className="px-3 py-2 rounded-lg bg-secondary/60 hover:bg-secondary border border-border text-[11px] font-black uppercase tracking-widest">
+                    + {t('pexport_cli_agregar')}
+                  </button>
                   <button onClick={saveCfg} className="px-4 py-2 bg-primary text-black rounded-lg font-black text-[11px] uppercase tracking-widest">{t('save')}</button>
                 </div>
 
-                {/* Auto-crear en Printavo: contacto fijo + switch */}
-                <div className="md:col-span-3 border-t border-border pt-3 space-y-2">
-                  <p className="text-[10px] uppercase tracking-widest text-muted-foreground/60 font-black">{t('pexport_intake_auto_title')}</p>
-                  <p className="text-xs text-muted-foreground">{t('pexport_intake_auto_help')}</p>
-                  <div className="flex flex-wrap items-center gap-3">
-                    <div className="relative flex-1 min-w-[240px]">
-                      {intake.auto_contact_id ? (
-                        <div className="flex items-center justify-between bg-emerald-500/10 border border-emerald-500/30 rounded-lg px-3 py-2">
-                          <span className="text-sm font-bold">{intake.auto_contact_name}</span>
-                          <button onClick={() => putConfig({ auto_contact_id: null, auto_create: false })} className="p-1 hover:bg-secondary rounded"><X className="w-4 h-4" /></button>
-                        </div>
-                      ) : (
-                        <input value={autoQuery} onChange={(e) => searchAutoContacts(e.target.value)} placeholder={t('pexport_intake_auto_contact_search')}
-                          className="w-full bg-secondary/50 border border-border p-2 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
-                      )}
-                      {autoContacts.length > 0 && (
-                        <div className="absolute z-20 mt-1 w-full bg-card border border-border rounded-lg divide-y divide-border/50 overflow-hidden shadow-xl">
-                          {autoContacts.map((c) => (
-                            <button key={c.id} onClick={() => setAutoContact(c)} className="w-full text-left px-3 py-2 hover:bg-secondary/50">
-                              <p className="text-sm font-semibold">{c.company}</p>
-                              <p className="text-xs text-muted-foreground">{c.name} {c.email ? `· ${c.email}` : ""}</p>
-                            </button>
-                          ))}
-                        </div>
-                      )}
+                {clientes.length === 0 && <p className="text-sm text-muted-foreground">{t('pexport_cli_ninguno')}</p>}
+
+                {clientes.map((c, i) => (
+                  <div key={c.id || i} className={`border rounded-xl p-3 space-y-3 ${c.activa ? "border-border bg-card/40" : "border-dashed border-border/60 opacity-60"}`}>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <input value={c.nombre} onChange={(e) => editarCliente(i, { nombre: e.target.value })}
+                        placeholder={t('pexport_cli_nombre')}
+                        className="flex-1 min-w-[160px] bg-background/60 border border-border/50 rounded px-2 py-1.5 text-sm font-bold" />
+                      <label className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide cursor-pointer select-none">
+                        <input type="checkbox" checked={c.activa !== false}
+                          onChange={(e) => editarCliente(i, { activa: e.target.checked })} className="w-3.5 h-3.5" />
+                        {t('pexport_cli_activa')}
+                      </label>
+                      <button onClick={() => quitarCliente(i)} className="p-1.5 rounded-lg hover:bg-destructive/10 text-destructive"><Trash2 className="w-4 h-4" /></button>
                     </div>
-                    <label className={`flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide select-none ${intake.auto_contact_id ? "cursor-pointer" : "opacity-50"}`}>
-                      <input type="checkbox" disabled={!intake.auto_contact_id} checked={!!intake.auto_create} onChange={(e) => toggleAutoCreate(e.target.checked)} className="w-3.5 h-3.5" />
-                      {t('pexport_intake_auto_switch')}
-                    </label>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <Field label={t('pexport_intake_cfg_label')} value={c.label_name}
+                        onChange={(v) => editarCliente(i, { label_name: v })} warn={!c.label_name} />
+                      <Field label={t('pexport_intake_cfg_domains')} value={c.allowed_domains}
+                        onChange={(v) => editarCliente(i, { allowed_domains: v })} />
+                    </div>
+                    <div className="flex flex-wrap items-center gap-3">
+                      <div className="relative flex-1 min-w-[240px]">
+                        {c.auto_contact_id ? (
+                          <div className="flex items-center justify-between bg-emerald-500/10 border border-emerald-500/30 rounded-lg px-3 py-2">
+                            <span className="text-sm font-bold">{c.auto_contact_name}</span>
+                            <button onClick={() => editarCliente(i, { auto_contact_id: null, auto_contact_name: null, auto_create: false })}
+                              className="p-1 hover:bg-secondary rounded"><X className="w-4 h-4" /></button>
+                          </div>
+                        ) : (
+                          <input value={buscaContacto.i === i ? buscaContacto.q : ""}
+                            onChange={(e) => searchAutoContacts(i, e.target.value)}
+                            placeholder={t('pexport_intake_auto_contact_search')}
+                            className="w-full bg-secondary/50 border border-border p-2 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
+                        )}
+                        {buscaContacto.i === i && buscaContacto.res.length > 0 && (
+                          <div className="absolute z-20 mt-1 w-full bg-card border border-border rounded-lg divide-y divide-border/50 overflow-hidden shadow-xl">
+                            {buscaContacto.res.map((ct) => (
+                              <button key={ct.id}
+                                onClick={() => { editarCliente(i, { auto_contact_id: ct.id, auto_contact_name: `${ct.company} · ${ct.name}` }); setBuscaContacto({ i: null, q: "", res: [] }); }}
+                                className="w-full text-left px-3 py-2 hover:bg-secondary/50">
+                                <p className="text-sm font-semibold">{ct.company}</p>
+                                <p className="text-xs text-muted-foreground">{ct.name} {ct.email ? `· ${ct.email}` : ""}</p>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                      <label className={`flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide select-none ${c.auto_contact_id ? "cursor-pointer" : "opacity-50"}`}>
+                        <input type="checkbox" disabled={!c.auto_contact_id} checked={!!c.auto_create}
+                          onChange={(e) => {
+                            if (e.target.checked && !window.confirm(t('pexport_intake_auto_create_confirm'))) return;
+                            editarCliente(i, { auto_create: e.target.checked });
+                          }} className="w-3.5 h-3.5" />
+                        {t('pexport_intake_auto_switch')}
+                      </label>
+                    </div>
                   </div>
-                </div>
+                ))}
+                <p className="text-[11px] text-muted-foreground">{t('pexport_cli_guardar_aviso')}</p>
               </div>
             )}
 
