@@ -56,6 +56,11 @@ TOL_RENGLON = 8
 # antes de considerarla de otra columna.
 TOL_COLUMNA = 18
 
+# Separacion maxima entre dos palabras del MISMO valor, en proporcion al alto de
+# la letra: un espacio mide ~0.3 em y el hueco entre columnas casi siempre pasa
+# de 1 em. "CULTURE KINGS" (titulo grande) va a 4.9pt con letra de ~16pt.
+HUECO_PALABRA_EM = 0.6
+
 
 class Pagina:
     """Lo que el motor necesita de una pagina, calculado UNA vez.
@@ -174,14 +179,29 @@ def _debajo_de(pag, spec):
     # tope, un encabezado con la celda vacia se traia el primer renglon que
     # hubiera mas abajo ("Total Items : 2" en el ticket de Kohls).
     max_abajo = spec.get("max_abajo", 26)
+    # Entra la palabra que TERMINA despues del borde izquierdo del rotulo, no solo
+    # la que empieza despues: un valor alineado a la derecha arranca antes que su
+    # encabezado. Con `x0 >= rotulo` el "CULTURE" de "CULTURE KINGS" (x 435-539,
+    # bajo "Due" en 517) se quedaba fuera y la tienda salia como "KINGS".
     abajo = [w for w in pag.palabras
              if top + TOL_RENGLON < w["top"] <= top + max_abajo
-             and w["x0"] >= x0 - 2
+             and w["x1"] > x0 - 2
              and (derecha is None or w["x1"] <= derecha)]
     if not abajo:
         return None
     primer_top = min(w["top"] for w in abajo)
     celda = [w for w in abajo if abs(w["top"] - primer_top) <= TOL_RENGLON]
+    # Y hacia la izquierda se sigue el valor mientras las palabras vayan PEGADAS
+    # (separacion de un espacio): "THE CULTURE KINGS" entero aunque "THE" quede
+    # completo antes del rotulo. Un hueco mayor ya es otra columna.
+    vecinas = sorted((w for w in pag.palabras
+                      if abs(w["top"] - primer_top) <= TOL_RENGLON and w not in celda),
+                     key=lambda w: -w["x1"])
+    for w in vecinas:
+        izq = min(c["x0"] for c in celda)
+        alto = max(w.get("bottom", w["top"]) - w["top"], 1)
+        if 0 <= izq - w["x1"] <= alto * HUECO_PALABRA_EM:
+            celda.append(w)
     celda.sort(key=lambda w: w["x0"])
     return " ".join(w["text"] for w in celda).strip() or None
 
@@ -362,6 +382,15 @@ def _coincide_huella(pag, huella):
         if _norm(s) in texto:
             return False
     return True
+
+
+def huella_definida(plantilla):
+    """Una plantilla sin al menos un texto en `contiene` acepta CUALQUIER pagina:
+    en produccion intentaria leer el PDF de un cliente que nadie reconoce e
+    inventaria datos. No se deja activar asi, y si alguna quedo activa sin huella
+    (SPEKTRUM nacio antes de esta regla) el lector se la salta."""
+    huella = (plantilla or {}).get("huella") or {}
+    return any((s or "").strip() for s in (huella.get("contiene") or []))
 
 
 def _a_numero(v, entero=False):

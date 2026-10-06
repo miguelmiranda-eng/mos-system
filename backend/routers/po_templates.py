@@ -36,7 +36,7 @@ from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 from deps import db, log_activity, logger, require_admin, require_admin_level
 from routers.import_router import SIZES_MAP
 from printavo_export import QUOTE_POR_OMISION, build_quote_input
-from services.po_templates import leer_pdf
+from services.po_templates import leer_pdf, huella_definida
 
 router = APIRouter(prefix="/api/po-templates")
 
@@ -214,7 +214,13 @@ async def actualizar(request: Request, tid: str):
     # Tocar la LECTURA invalida la validacion (lo que se probo ya no es esto).
     # Tocar la SALIDA no: la validacion comprueba que el PDF se lea, y como se
     # vea la quote no cambia eso.
-    if {"huella", "campos", "tallas"} & set(cambios):
+    # Se compara contra lo guardado: la pantalla manda SIEMPRE las tres llaves, y
+    # con solo ver si venian, darle Guardar sin tocar nada apagaba una plantilla
+    # activa (paso con SPEKTRUM el 2026-10-06: activada 19:28, Guardar 19:29, apagada).
+    actual = await db.po_templates.find_one({"template_id": tid}, {"_id": 0})
+    if not actual:
+        raise HTTPException(404, "No existe")
+    if any(k in cambios and cambios[k] != (actual.get(k) or {}) for k in ("huella", "campos", "tallas")):
         cambios["validada_con"] = None
         cambios["activa"] = False
     cambios["updated_at"] = _ahora()
@@ -271,6 +277,9 @@ async def activar(request: Request, tid: str):
         raise HTTPException(400, "Pruébala contra un segundo PDF antes de activarla")
     if activa and not (plantilla.get("campos") or {}).get("design_num"):
         raise HTTPException(400, "Falta señalar el número de diseño: sin eso no hay estilo")
+    if activa and not huella_definida(plantilla):
+        raise HTTPException(400, "Falta la huella: sin un texto que identifique al cliente, "
+                                 "la plantilla intentaría leer el PDF de cualquiera")
     await db.po_templates.update_one({"template_id": tid},
                                      {"$set": {"activa": activa, "updated_at": _ahora()}})
     await log_activity(user, "po_template_activate", {"template_id": tid, "activa": activa})

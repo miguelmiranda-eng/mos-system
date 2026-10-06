@@ -128,7 +128,9 @@ def _ruteo():
     _, eng = px.parse_po_bytes(data, [{**activa, "activa": False}])
     ok(eng == "text", "una plantilla apagada no debe participar")
 
-    rota = {"id": "rota", "activa": True, "huella": {},
+    # Con huella que SI casa: sin ella el lector la saltaria antes de llegar al
+    # error y este caso dejaria de probar lo que dice probar.
+    rota = {"id": "rota", "activa": True, "huella": activa["huella"],
             "campos": {"x": {"tipo": "patron", "patron": "(("}}, "tallas": {}}
     _, eng = px.parse_po_bytes(data, [rota, activa])
     ok(eng == "text", "una plantilla rota no debe tumbar la lectura")
@@ -138,8 +140,17 @@ def _ruteo():
     px.parse_pdf = lambda d: []
     try:
         recs, eng = px.parse_po_bytes(data, [activa])
+        # La MISMA plantilla sin huella acepta cualquier pagina: el lector debe
+        # saltarla en vez de leer el PDF de un cliente que nadie reconoce.
+        for vacia in ({}, {"contiene": []}, {"contiene": ["  "]}):
+            _, eng_v = px.parse_po_bytes(data, [{**activa, "huella": vacia}])
+            ok(eng_v == "none", f"plantilla activa con huella {vacia!r} no debe leer nada (dio {eng_v!r})")
     finally:
         px.parse_pdf = orig
+    from services.po_templates import huella_definida
+    ok(huella_definida(activa), "la huella del banco debe contar como definida")
+    ok(not huella_definida({"huella": {"no_contiene": ["X"]}}),
+       "solo `no_contiene` no identifica a nadie: no cuenta como huella")
     ok(eng == "plantilla:banco_pruebas_mct", f"la plantilla debia atraparlo (dio {eng!r})")
     ok(len(recs) == 5, f"debia sacar 5 estilos, saco {len(recs)}")
     if recs:
@@ -211,6 +222,34 @@ def _salida():
     return malas
 
 
+def _debajo_alineado_derecha():
+    """`debajo_de` con un valor que ARRANCA antes que su encabezado.
+
+    Geometria medida en el PO de Culture Kings 4004681: el titulo "CULTURE KINGS"
+    va alineado a la derecha bajo "Due Date", y "CULTURE" empieza 80pt antes que
+    "Due". La regla vieja (`x0 >= rotulo`) lo tiraba y la tienda salia "KINGS".
+    Sintetico a proposito: ese PDF no esta en el corpus."""
+    from services.po_templates import Pagina, _debajo_de
+
+    def w(t, x0, x1, top, alto=16):
+        return {"text": t, "x0": x0, "x1": x1, "top": top, "bottom": top + alto}
+
+    pag = Pagina.__new__(Pagina)
+    pag.palabras = [
+        w("Due", 517.5, 536.0, 8.2, 9.8), w("Date", 538.7, 560.0, 8.2, 9.8),
+        w("2026-09-30", 570.0, 627.3, 8.2, 9.8),
+        w("Ship", 300.0, 330.0, 31.5),                       # otra columna, hueco grande
+        w("THE", 404.0, 430.0, 31.5),
+        w("CULTURE", 435.0, 539.0, 31.5), w("KINGS", 543.9, 616.0, 31.5),
+    ]
+    pag.texto = ""
+    malas = []
+    v = _debajo_de(pag, {"tipo": "debajo_de", "rotulo": "Due"})
+    if v != "THE CULTURE KINGS":
+        malas.append(f"debajo_de: valor alineado a la derecha dio {v!r}, se esperaba 'THE CULTURE KINGS'")
+    return malas
+
+
 def main():
     if not os.path.isdir(CORPUS) or not os.path.exists(GOLDEN):
         print("=" * 60)
@@ -245,6 +284,7 @@ def main():
 
     difs += _ruteo()
     difs += _salida()
+    difs += _debajo_alineado_derecha()
 
     print("=" * 60)
     if difs:

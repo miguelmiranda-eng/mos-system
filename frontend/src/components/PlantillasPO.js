@@ -28,6 +28,17 @@ const CAMPOS = [
   { k: "cancel_date" },
 ];
 
+// "Campo" activo especial: señalar una palabra la agrega a la huella en vez de
+// mapear un dato.
+const HUELLA = "__huella";
+
+/** Igual que `_norm` del motor: minúsculas, sin acentos, espacios colapsados.
+ *  Si allá cambia, aquí también — si no, el chip diría "está" y el motor no. */
+function norm(s) {
+  return (s || "").normalize("NFKD").replace(/[̀-ͯ]/g, "")
+    .trim().toLowerCase().replace(/\s+/g, " ");
+}
+
 // Mismas tolerancias que el motor (services/po_templates.py): un rótulo y su
 // contenido no caen exactamente a la misma altura, y una celda va pegada a su
 // encabezado. Si allá cambian, aquí también.
@@ -106,6 +117,10 @@ export default function PlantillasPO() {
 
   const [lista, setLista] = useState([]);
   const [sel, setSel] = useState(null);          // plantilla en edición
+  // Lo último que el servidor tiene guardado de `sel`, para saber si hay cambios
+  // sin guardar. Sin esto, mapear y luego elegir otra plantilla tiraba el trabajo
+  // en silencio y al volver la plantilla "se había guardado vacía".
+  const [guardada, setGuardada] = useState(null);
   const [draft, setDraft] = useState(null);      // { draft_id, filename, paginas }
   const [pagina, setPagina] = useState(0);
   const [campoActivo, setCampoActivo] = useState(null);
@@ -128,6 +143,19 @@ export default function PlantillasPO() {
         : det ? JSON.stringify(det) : "";
     throw new Error(`${queHacia}: ${texto || `el servidor respondió ${r.status}`}`);
   };
+
+  const huellaDe = (p) => p && JSON.stringify(
+    ["nombre", "huella", "campos", "tallas", "quote"].map((k) => p[k] ?? null));
+  const abrir = (p) => { setSel(p); setGuardada(huellaDe(p)); };
+  const sinGuardar = !!sel && huellaDe(sel) !== guardada;
+
+  // Cerrar o recargar la pestaña con cambios: el navegador pregunta.
+  useEffect(() => {
+    if (!sinGuardar) return undefined;
+    const avisar = (e) => { e.preventDefault(); e.returnValue = ""; };
+    window.addEventListener("beforeunload", avisar);
+    return () => window.removeEventListener("beforeunload", avisar);
+  }, [sinGuardar]);
 
   const cargarLista = useCallback(async () => {
     try {
@@ -177,7 +205,7 @@ export default function PlantillasPO() {
         toast[d.valida ? "success" : "warning"](
           d.valida ? t('ppo_validada', { n: d.estilos }) : t('ppo_no_valida'));
         cargarLista();
-        setSel((s) => ({ ...s, validada_con: d.valida ? file.name : null, activa: false }));
+        setSel((s) => ({ ...s, validada_con: d.valida ? file.name : null }));
       } else {
         const r = await fetch(`${API}/po-templates/borrador`, {
           method: "POST", credentials: "include", body: fd });
@@ -189,6 +217,7 @@ export default function PlantillasPO() {
   };
 
   const nueva = async () => {
+    if (sinGuardar && !window.confirm(t('ppo_descartar'))) return;
     const nombre = window.prompt(t('ppo_nombre_pregunta'));
     if (!nombre?.trim()) return;
     try {
@@ -196,7 +225,7 @@ export default function PlantillasPO() {
         method: "POST", headers: { "Content-Type": "application/json" },
         credentials: "include", body: JSON.stringify({ nombre: nombre.trim() }) });
       const d = await leer(r, t('ppo_nueva'));
-      setSel(d); setDraft(null); setPrevia(null); cargarLista();
+      abrir(d); setDraft(null); setPrevia(null); cargarLista();
     } catch (e) { toast.error(e.message); }
   };
 
@@ -210,7 +239,7 @@ export default function PlantillasPO() {
           tallas: sel.tallas || {}, quote: sel.quote || {},
         }) });
       const d = await leer(r, t('save'));
-      setSel(d); cargarLista(); toast.success(t('ppo_guardada'));
+      abrir(d); cargarLista(); toast.success(t('ppo_guardada'));
     } catch (e) { toast.error(e.message || String(e)); }
   };
 
@@ -236,18 +265,46 @@ export default function PlantillasPO() {
     } catch (e) { toast.error(e.message); }
   };
 
+  // ── Huella: qué textos dicen "este PDF es de este cliente" ───────────────
+  // Sin ella la plantilla acepta cualquier PDF; el backend no deja activarla.
+  const editarHuella = (lista, valores) => setSel((s) => ({
+    ...s, huella: { ...(s.huella || {}), [lista]: valores },
+  }));
+  const agregarHuella = (lista, texto) => {
+    const v = (texto || "").trim();
+    if (!v) return;
+    const actuales = (sel.huella || {})[lista] || [];
+    if (actuales.some((x) => norm(x) === norm(v))) return;
+    editarHuella(lista, [...actuales, v]);
+  };
+  const quitarHuella = (lista, i) =>
+    editarHuella(lista, ((sel.huella || {})[lista] || []).filter((_, j) => j !== i));
+
   const clicPalabra = (idx, ev) => {
     if (!campoActivo) { toast.info(t('ppo_elige_campo')); return; }
     const pg = draft.paginas[pagina];
     const caja = lienzoRef.current.getBoundingClientRect();
-    setMenu({
-      idx, opciones: deducirAncla(pg.palabras, idx),
-      x: ev.clientX - caja.left, y: ev.clientY - caja.top,
-    });
+    let opciones;
+    if (campoActivo === HUELLA) {
+      // La palabra sola o el renglón entero ("RANGE NAME:", "CULTURE KINGS").
+      const w = pg.palabras[idx];
+      const renglon = pg.palabras
+        .filter((o) => Math.abs(o.y - w.y) <= TOL_RENGLON)
+        .sort((a, b) => a.x - b.x).map((o) => o.t).join(" ").trim();
+      opciones = [{ modo: "huella", rotulo: w.t, valor: w.t }];
+      if (renglon && renglon !== w.t) opciones.push({ modo: "huella", rotulo: renglon, valor: renglon });
+    } else {
+      opciones = deducirAncla(pg.palabras, idx);
+    }
+    setMenu({ idx, opciones, x: ev.clientX - caja.left, y: ev.clientY - caja.top });
   };
 
-  const aplicar = (spec) => {
-    setSel((s) => ({ ...s, campos: { ...(s.campos || {}), [campoActivo]: spec } }));
+  const aplicar = (o) => {
+    if (campoActivo === HUELLA) {
+      agregarHuella("contiene", o.valor);
+    } else {
+      setSel((s) => ({ ...s, campos: { ...(s.campos || {}), [campoActivo]: o.spec } }));
+    }
     setMenu(null); setCampoActivo(null);
   };
 
@@ -286,6 +343,12 @@ export default function PlantillasPO() {
   const recordDePagina = () =>
     (previa?.records || []).find((r) => r._pagina === pagina + 1) || previa?.records?.[0] || null;
 
+  const describirRegla = (spec) => {
+    if (["derecha_de", "debajo_de"].includes(spec.tipo)) return t(`ppo_modo_${spec.tipo}`, { r: spec.rotulo });
+    if (spec.tipo === "fijo") return t('ppo_modo_fijo', { r: spec.valor });
+    return t('ppo_regla_otra', { tipo: spec.tipo });
+  };
+
   const valorDe = (k) => {
     const r = recordDePagina();
     if (!r) return null;
@@ -295,12 +358,26 @@ export default function PlantillasPO() {
 
   const pg = draft?.paginas?.[pagina];
 
+  // El texto de la página en orden de lectura, para decir si cada texto de la
+  // huella está o no. Renglones agrupados por altura: ordenar sólo por `y`
+  // intercalaría palabras de renglones vecinos y partiría "RANGE NAME:".
+  const textoPagina = (() => {
+    if (!pg) return null;
+    const ws = [...pg.palabras].sort((a, b) => a.y - b.y || a.x - b.x);
+    const renglones = [];
+    for (const w of ws) {
+      const r = renglones[renglones.length - 1];
+      if (r && Math.abs(w.y - r.y) <= 3) r.ws.push(w); else renglones.push({ y: w.y, ws: [w] });
+    }
+    return norm(renglones.map((r) => r.ws.sort((a, b) => a.x - b.x).map((w) => w.t).join(" ")).join("\n"));
+  })();
+
   return (
     <div className="min-h-screen bg-background text-foreground font-barlow">
       <Toaster position="bottom-right" theme="dark" />
       <header className="sticky top-0 z-40 bg-background/80 backdrop-blur-xl border-b border-border h-16 flex items-center justify-between px-6">
         <div className="flex items-center gap-4">
-          <button onClick={() => navigate("/home")} className="w-10 h-10 flex items-center justify-center rounded-xl bg-secondary/50 hover:bg-secondary border border-white/5">
+          <button onClick={() => { if (!sinGuardar || window.confirm(t('ppo_descartar'))) navigate("/home"); }} className="w-10 h-10 flex items-center justify-center rounded-xl bg-secondary/50 hover:bg-secondary border border-white/5">
             <ArrowLeft className="w-5 h-5" />
           </button>
           <div>
@@ -325,7 +402,11 @@ export default function PlantillasPO() {
               {lista.map((p) => (
                 <div key={p.template_id}
                   className={`flex items-center gap-2 rounded-lg px-3 py-2 cursor-pointer border ${sel?.template_id === p.template_id ? "bg-primary/10 border-primary/40" : "border-transparent hover:bg-secondary/40"}`}
-                  onClick={() => { setSel(p); setPrevia(null); setCampoActivo(null); }}>
+                  onClick={() => {
+                    if (p.template_id === sel?.template_id) return;
+                    if (sinGuardar && !window.confirm(t('ppo_descartar'))) return;
+                    abrir(p); setPrevia(null); setCampoActivo(null);
+                  }}>
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-bold truncate">{p.nombre}</p>
                     <p className="text-[10px] font-mono text-muted-foreground">
@@ -339,6 +420,50 @@ export default function PlantillasPO() {
               ))}
             </div>
           </section>
+
+          {sel && (
+            <section className="bg-card/60 border border-border rounded-2xl p-4 space-y-3">
+              <h2 className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t('ppo_h_titulo')}</h2>
+              <p className="text-xs text-muted-foreground">{t('ppo_h_ayuda')}</p>
+              {["contiene", "no_contiene"].map((lista) => (
+                <div key={lista} className="space-y-1.5">
+                  <p className="text-[10px] uppercase tracking-widest text-muted-foreground/60 font-black">{t(`ppo_h_${lista}`)}</p>
+                  {((sel.huella || {})[lista] || []).map((txt, i) => {
+                    const esta = textoPagina === null ? null : textoPagina.includes(norm(txt));
+                    // En "contiene" lo bueno es que esté; en "no_contiene", que no.
+                    const bien = esta === null ? null : (lista === "contiene" ? esta : !esta);
+                    return (
+                      <div key={i} className="flex items-center gap-2 rounded-lg px-2 py-1 bg-secondary/20 border border-border">
+                        <span className="text-sm font-mono flex-1 truncate" title={txt}>{txt}</span>
+                        {bien !== null && (
+                          <span className={`text-[10px] font-bold ${bien ? "text-emerald-600" : "text-amber-600"}`}>
+                            {esta ? t('ppo_h_esta') : t('ppo_h_no_esta')}
+                          </span>
+                        )}
+                        <button onClick={() => quitarHuella(lista, i)} className="p-0.5 rounded hover:bg-secondary"><X className="w-3 h-3" /></button>
+                      </div>
+                    );
+                  })}
+                  <input placeholder={t('ppo_h_agregar_ph')}
+                    onKeyDown={(e) => {
+                      if (e.key !== "Enter") return;
+                      agregarHuella(lista, e.currentTarget.value);
+                      e.currentTarget.value = "";
+                    }}
+                    className="w-full bg-background/60 border border-border/50 rounded px-2 py-1 text-sm font-mono focus:ring-1 focus:ring-primary" />
+                </div>
+              ))}
+              {draft && (
+                <button onClick={() => setCampoActivo(campoActivo === HUELLA ? null : HUELLA)}
+                  className={`w-full px-3 py-2 rounded-lg border text-[11px] font-black uppercase tracking-widest flex items-center justify-center gap-1.5 ${campoActivo === HUELLA ? "border-primary bg-primary/10 text-primary" : "border-border bg-secondary/40 hover:bg-secondary"}`}>
+                  <Crosshair className="w-3.5 h-3.5" /> {campoActivo === HUELLA ? t('ppo_h_senalando') : t('ppo_h_senalar')}
+                </button>
+              )}
+              {!((sel.huella || {}).contiene || []).some((x) => (x || "").trim()) && (
+                <p className="text-xs bg-amber-500/10 border border-amber-500/30 text-amber-600 rounded-lg px-3 py-2">{t('ppo_h_vacia')}</p>
+              )}
+            </section>
+          )}
 
           {sel && (
             <section className="bg-card/60 border border-border rounded-2xl p-4 space-y-3">
@@ -367,6 +492,10 @@ export default function PlantillasPO() {
                             className="w-full bg-background/60 border border-border/50 rounded px-2 py-1 text-sm font-mono focus:ring-1 focus:ring-primary" />
                         : val !== null
                           ? <p className="text-sm font-mono text-emerald-600 truncate">{val}</p>
+                          // Sin PDF cargado no hay contra qué probar: se muestra la
+                          // regla GUARDADA. Decir "no encontró nada" aquí hacía ver
+                          // vacía una plantilla que sí estaba guardada.
+                          : spec && !draft ? <p className="text-xs text-muted-foreground truncate">{describirRegla(spec)}</p>
                           : spec ? <p className="text-xs text-amber-600">{t('ppo_sin_valor')}</p>
                             : <p className="text-xs text-muted-foreground/60">{activo ? t('ppo_ahora_senala') : t('ppo_sin_mapear')}</p>}
                     </div>
@@ -453,7 +582,9 @@ export default function PlantillasPO() {
                 <div className="flex-1" />
                 <button onClick={guardar} className="px-3 py-2 rounded-lg bg-secondary/60 hover:bg-secondary border border-border text-[11px] font-black uppercase tracking-widest flex items-center gap-1.5">
                   <Save className="w-3.5 h-3.5" /> {t('save')}
+                  {sinGuardar && <span className="w-2 h-2 rounded-full bg-amber-500" title={t('ppo_sin_guardar')} />}
                 </button>
+                {sinGuardar && <span className="text-[11px] font-bold text-amber-600">{t('ppo_sin_guardar')}</span>}
                 <label className="px-3 py-2 rounded-lg bg-secondary/60 hover:bg-secondary border border-border text-[11px] font-black uppercase tracking-widest cursor-pointer flex items-center gap-1.5">
                   <Upload className="w-3.5 h-3.5" /> {t('ppo_validar')}
                   <input type="file" accept="application/pdf" className="hidden"
@@ -464,6 +595,12 @@ export default function PlantillasPO() {
                   <Power className="w-3.5 h-3.5" /> {sel.activa ? t('ppo_activa') : t('ppo_activar')}
                 </button>
               </div>
+
+              {!draft && (
+                <div className="text-xs bg-secondary/40 border border-border rounded-lg px-3 py-2 text-muted-foreground">
+                  {t('ppo_sin_pdf', { n: Object.keys(sel.campos || {}).length })}
+                </div>
+              )}
 
               {!sel.validada_con && (
                 <div className="text-xs bg-amber-500/10 border border-amber-500/30 text-amber-600 rounded-lg px-3 py-2">
@@ -489,10 +626,10 @@ export default function PlantillasPO() {
                       <div className="absolute z-20 bg-card border border-border rounded-xl shadow-2xl p-2 w-64"
                         style={{ left: Math.min(menu.x, 300), top: menu.y + 8 }}>
                         <p className="text-[10px] font-black uppercase tracking-widest text-muted-foreground px-2 pb-1">
-                          {t(`ppo_campo_${campoActivo}`)}
+                          {campoActivo === HUELLA ? t('ppo_h_titulo') : t(`ppo_campo_${campoActivo}`)}
                         </p>
                         {menu.opciones.map((o, i) => (
-                          <button key={i} onClick={() => aplicar(o.spec)}
+                          <button key={i} onClick={() => aplicar(o)}
                             className="w-full text-left px-2 py-1.5 rounded-lg hover:bg-secondary/60 text-sm">
                             {t(`ppo_modo_${o.modo}`, { r: o.rotulo })}
                           </button>

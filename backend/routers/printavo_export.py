@@ -48,6 +48,11 @@ def parse_po_bytes(data: bytes, plantillas: list = None) -> tuple:
     for plantilla in (plantillas or []):
         if not plantilla.get("activa"):
             continue
+        from services.po_templates import huella_definida
+        if not huella_definida(plantilla):
+            # Sin huella acepta cualquier PDF; vale mas no leer que inventar.
+            logger.warning(f"[printavo-export] plantilla {plantilla.get('id')} activa SIN huella: se salta")
+            continue
         try:
             import io as _io
             import pdfplumber as _pdfplumber
