@@ -477,7 +477,7 @@ export default function PlantillasPO() {
                       </p>
                     )}
                     {previa.records.slice(0, 4).map((r, i) => (
-                      <div key={i} className="border border-border rounded-lg p-3 text-sm">
+                      <div key={i} className={`border rounded-lg p-3 text-sm ${r._incompleto?.length ? "border-dashed border-amber-500/40" : "border-border"}`}>
                         <p className="font-bold font-mono">{r.design_num} · {r.color} · {r.qty} pcs</p>
                         <p className="text-xs text-muted-foreground font-mono mt-1">
                           PO {r.po_number || "—"} · {r.brand || "—"} · {JSON.stringify(r.sizes)}
@@ -485,7 +485,16 @@ export default function PlantillasPO() {
                         {!r.sizes_match && <p className="text-xs text-amber-600 mt-1">{t('ppo_tallas_no_cuadran', { a: r.qty_from_sizes, b: r.qty })}</p>}
                       </div>
                     ))}
-                    {previa.estilos === 0 && <p className="text-sm text-amber-600">{t('ppo_nada_aun')}</p>}
+                    {recordDePagina()?._incompleto?.length > 0 && (
+                      <p className="text-sm text-amber-600">
+                        {t('ppo_falta_para_estilo', {
+                          f: recordDePagina()._incompleto
+                            .map((c) => (c === "sizes" ? t('ppo_t_titulo') : t(`ppo_campo_${c}`)))
+                            .join(", "),
+                        })}
+                      </p>
+                    )}
+                    {previa.estilos === 0 && !recordDePagina() && <p className="text-sm text-amber-600">{t('ppo_nada_aun')}</p>}
                   </>
                 )}
               </div>

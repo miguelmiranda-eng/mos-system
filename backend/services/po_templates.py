@@ -378,9 +378,16 @@ def _a_numero(v, entero=False):
     return int(round(n)) if entero else n
 
 
-def leer_pagina(page, plantilla, mapa_tallas):
+def leer_pagina(page, plantilla, mapa_tallas, parcial=False):
     """Aplica una plantilla a UNA pagina. Devuelve el registro o None si la
-    pagina no es de este cliente (huella) o no trae lo minimo para ser un estilo."""
+    pagina no es de este cliente (huella) o no trae lo minimo para ser un estilo.
+
+    `parcial=True` es para la pantalla de mapeo: devuelve el registro AUNQUE le
+    falte lo minimo, anotando en `_incompleto` que le falta. Sin esto, mientras
+    no estuvieran mapeados el numero de diseño Y las tallas no habia registro, y
+    la pantalla decia "la regla no encontro nada" en TODOS los campos — incluido
+    el que se acababa de mapear bien. En produccion sigue devolviendo None: una
+    pagina a medio leer no puede convertirse en una quote."""
     pag = Pagina(page)
     if not _coincide_huella(pag, plantilla.get("huella") or {}):
         return None
@@ -401,8 +408,11 @@ def leer_pagina(page, plantilla, mapa_tallas):
 
     # Minimo para considerarla un estilo: identificador y tallas. Sin esto una
     # portada o una hoja de instrucciones pasaria como estilo vacio.
-    if not rec.get("design_num") or not rec["sizes"]:
-        return None
+    falta = [c for c, v in (("design_num", rec.get("design_num")), ("sizes", rec["sizes"])) if not v]
+    if falta:
+        if not parcial:
+            return None
+        rec["_incompleto"] = falta
 
     rec["flags"] = [f for f, falta in (
         ("retailer_missing", not rec.get("brand")),
@@ -452,11 +462,13 @@ def _completar(rec, plantilla):
     return rec
 
 
-def leer_pdf(pdf, plantilla, mapa_tallas):
-    """Un registro por pagina que pase la huella (una pagina = un estilo)."""
+def leer_pdf(pdf, plantilla, mapa_tallas, parcial=False):
+    """Un registro por pagina que pase la huella (una pagina = un estilo).
+
+    `parcial` sube hasta aqui desde la pantalla de mapeo; ver leer_pagina."""
     out = []
     for page in pdf.pages:
-        rec = leer_pagina(page, plantilla, mapa_tallas)
+        rec = leer_pagina(page, plantilla, mapa_tallas, parcial=parcial)
         if rec:
             out.append(rec)
     return out

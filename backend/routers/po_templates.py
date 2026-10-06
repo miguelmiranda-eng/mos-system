@@ -121,14 +121,16 @@ async def probar_borrador(request: Request, draft_id: str):
     await require_admin(request)
     doc = await _borrador(draft_id)
     plantilla = await request.json()
-    return _correr(plantilla, doc["pdf"])
+    return _correr(plantilla, doc["pdf"], parcial=True)
 
 
-def _correr(plantilla: dict, data: bytes) -> dict:
+def _correr(plantilla: dict, data: bytes, parcial: bool = False) -> dict:
+    """`parcial` es para la pantalla de mapeo: deja ver lo que cada regla saca
+    aunque a la plantilla todavia le falten campos para producir un estilo."""
     try:
         with pdfplumber.open(io.BytesIO(data)) as pdf:
             total = len(pdf.pages)
-            recs = leer_pdf(pdf, plantilla or {}, SIZES_MAP)
+            recs = leer_pdf(pdf, plantilla or {}, SIZES_MAP, parcial=parcial)
     except Exception as e:                            # noqa: BLE001
         logger.error(f"[po-templates] fallo al correr la plantilla: {e}")
         raise HTTPException(400, f"La plantilla falló: {str(e)[:200]}")
@@ -146,9 +148,12 @@ def _correr(plantilla: dict, data: bytes) -> dict:
                                 for g in q.get("lineItemGroups", [])]}
         except Exception as e:                        # noqa: BLE001
             quote = {"error": str(e)[:200]}
+    completos = [r for r in recs if not r.get("_incompleto")]
     return {
         "paginas": total,
-        "estilos": len(recs),
+        # "estilos" son los que YA sirven; los parciales se ven en records con su
+        # `_incompleto`, para no decir "3 estilos" de algo que aun no lo es.
+        "estilos": len(completos),
         "records": recs,
         "quote": quote,
         # Lo que le falta para poder crear sin revisión, con el mismo criterio

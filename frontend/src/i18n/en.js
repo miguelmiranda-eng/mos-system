@@ -1153,6 +1153,7 @@ const en = {
   ppo_previa_resumen: "{p} page(s) · {e} style(s) detected",
   ppo_pagina_sin_estilo: "You are on page {p}, which produces no style. What you see below comes from page {otras}. Map on one of those.",
   ppo_nada_aun: "No style comes out with the current rules. The design number or the sizes are missing.",
+  ppo_falta_para_estilo: "The rules you made already work. For this to count as a style you still need: {f}.",
   ppo_tallas_no_cuadran: "Sizes add up to {a} but the quantity says {b}",
   ppo_validar: "Test with another PDF",
   ppo_validada: "It worked: {n} style(s) in the second PDF",

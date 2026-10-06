@@ -967,6 +967,7 @@ const es = {
   ppo_previa_resumen: "{p} página(s) · {e} estilo(s) detectado(s)",
   ppo_pagina_sin_estilo: "Estás viendo la página {p}, que no produce ningún estilo. Lo que ves abajo viene de la página {otras}. Mapea sobre una de ésas.",
   ppo_nada_aun: "Con las reglas de ahora no sale ningún estilo. Faltan el número de diseño o las tallas.",
+  ppo_falta_para_estilo: "Las reglas que ya hiciste funcionan. Para que esto cuente como un estilo falta señalar: {f}.",
   ppo_tallas_no_cuadran: "Las tallas suman {a} y la cantidad dice {b}",
   ppo_validar: "Probar con otro PDF",
   ppo_validada: "Funcionó: {n} estilo(s) en el segundo PDF",
