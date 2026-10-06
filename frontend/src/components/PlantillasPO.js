@@ -232,6 +232,9 @@ export default function PlantillasPO() {
     editQuote((q) => { q.grupos.splice(gi, 1); });
   };
 
+  const editarTallas = (cambios) =>
+    setSel((s) => ({ ...s, tallas: { ...(s.tallas || {}), ...cambios } }));
+
   const quitarCampo = (k) => setSel((s) => {
     const c = { ...(s.campos || {}) }; delete c[k]; return { ...s, campos: c };
   });
@@ -314,6 +317,52 @@ export default function PlantillasPO() {
                   );
                 })}
               </div>
+            </section>
+          )}
+
+          {sel && (
+            <section className="bg-card/60 border border-border rounded-2xl p-4 space-y-3">
+              <h2 className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t('ppo_t_titulo')}</h2>
+              <p className="text-xs text-muted-foreground">{t('ppo_t_ayuda')}</p>
+
+              <div className="flex gap-2">
+                {["rejilla", "pares"].map((tipo) => (
+                  <button key={tipo} onClick={() => editarTallas({ tipo })}
+                    className={`flex-1 px-2 py-2 rounded-lg border text-[11px] font-black uppercase tracking-wide ${((sel.tallas || {}).tipo || "rejilla") === tipo ? "bg-primary/15 border-primary/50 text-primary" : "border-border hover:bg-secondary/40"}`}>
+                    {t(`ppo_t_${tipo}`)}
+                  </button>
+                ))}
+              </div>
+              <p className="text-[11px] text-muted-foreground/80">
+                {t(`ppo_t_${((sel.tallas || {}).tipo || "rejilla")}_ej`)}
+              </p>
+
+              {((sel.tallas || {}).tipo || "rejilla") === "rejilla" ? (
+                <div className="grid grid-cols-2 gap-2">
+                  <Campo label={t('ppo_t_rotulo_tallas')} mono
+                    value={(sel.tallas || {}).rotulo_tallas ?? "SIZE"}
+                    onChange={(v) => editarTallas({ rotulo_tallas: v })} />
+                  <Campo label={t('ppo_t_rotulo_cant')} mono
+                    value={(sel.tallas || {}).rotulo_cantidades ?? "QTY"}
+                    onChange={(v) => editarTallas({ rotulo_cantidades: v })} />
+                </div>
+              ) : (
+                <Campo label={t('ppo_t_excluir')} mono
+                  value={((sel.tallas || {}).excluir || ["TOTAL", "UNITS"]).join(", ")}
+                  onChange={(v) => editarTallas({ excluir: v.split(",").map((x) => x.trim()).filter(Boolean) })} />
+              )}
+
+              {previa?.records?.[0] && (
+                <div className="border-t border-border pt-2">
+                  <p className="text-[10px] font-black uppercase tracking-widest text-muted-foreground/60 mb-1">{t('ppo_t_leidas')}</p>
+                  <p className="text-sm font-mono">
+                    {Object.entries(previa.records[0].sizes || {}).map(([k, v]) => `${k}:${v}`).join("  ") || "—"}
+                  </p>
+                  <p className={`text-xs mt-1 ${previa.records[0].sizes_match ? "text-emerald-600" : "text-amber-600"}`}>
+                    {t('ppo_t_suma', { a: previa.records[0].qty_from_sizes, b: previa.records[0].qty ?? "—" })}
+                  </p>
+                </div>
+              )}
             </section>
           )}
         </aside>
