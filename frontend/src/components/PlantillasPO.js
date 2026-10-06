@@ -7,6 +7,10 @@ import {
   Plus, Trash2, Save, Power, Crosshair, X, ChevronUp, ChevronDown, Receipt,
 } from "lucide-react";
 import { toast } from "sonner";
+// El Toaster de sonner se monta POR PÁGINA: los de App.js viven dentro de las
+// pantallas de login, así que sin éste ningún aviso de esta pantalla se ve —
+// ni los errores ni los "guardado", y los botones parecen muertos.
+import { Toaster } from "./ui/sonner";
 
 // Los datos que MOS necesita de cualquier PO. La plantilla del cliente se arma
 // señalando dónde vive cada uno dentro de SU formato.
@@ -293,6 +297,7 @@ export default function PlantillasPO() {
 
   return (
     <div className="min-h-screen bg-background text-foreground font-barlow">
+      <Toaster position="bottom-right" theme="dark" />
       <header className="sticky top-0 z-40 bg-background/80 backdrop-blur-xl border-b border-border h-16 flex items-center justify-between px-6">
         <div className="flex items-center gap-4">
           <button onClick={() => navigate("/home")} className="w-10 h-10 flex items-center justify-center rounded-xl bg-secondary/50 hover:bg-secondary border border-white/5">

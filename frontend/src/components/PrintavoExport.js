@@ -7,6 +7,10 @@ import {
   Search, FileText, Send, X, Package, Mail, RefreshCw, Trash2, ExternalLink, Settings2,
 } from "lucide-react";
 import { toast } from "sonner";
+// El Toaster de sonner se monta POR PÁGINA: los de App.js viven dentro de las
+// pantallas de login, así que sin éste ningún aviso de esta pantalla se ve —
+// ni los errores ni los "guardado", y los botones parecen muertos.
+import { Toaster } from "./ui/sonner";
 
 export default function PrintavoExport() {
   const navigate = useNavigate();
@@ -256,6 +260,7 @@ export default function PrintavoExport() {
 
   return (
     <div className="min-h-screen bg-background text-foreground font-barlow flex flex-col relative overflow-hidden">
+      <Toaster position="bottom-right" theme="dark" />
       <div className="absolute top-0 right-0 w-1/2 h-1/2 bg-primary/5 blur-[120px] rounded-full -translate-y-1/2 translate-x-1/2 pointer-events-none" />
 
       <header className="sticky top-0 z-40 bg-background/80 backdrop-blur-xl border-b border-border h-16 flex items-center justify-between px-6 shadow-sm">
