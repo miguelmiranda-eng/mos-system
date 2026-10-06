@@ -35,6 +35,7 @@ from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 
 from deps import db, log_activity, logger, require_admin, require_admin_level
 from routers.import_router import SIZES_MAP
+from printavo_export import QUOTE_POR_OMISION, build_quote_input
 from services.po_templates import leer_pdf
 
 router = APIRouter(prefix="/api/po-templates")
@@ -131,10 +132,25 @@ def _correr(plantilla: dict, data: bytes) -> dict:
     except Exception as e:                            # noqa: BLE001
         logger.error(f"[po-templates] fallo al correr la plantilla: {e}")
         raise HTTPException(400, f"La plantilla falló: {str(e)[:200]}")
+    # Vista previa de la QUOTE con el primer estilo: es lo que vuelve editable la
+    # estructura de salida — se ve el efecto de cada cambio sin crear nada en
+    # Printavo. Si la plantilla de salida esta mal escrita se reporta el motivo
+    # en vez de tumbar la vista previa de la lectura, que es independiente.
+    quote = None
+    if recs:
+        try:
+            q = build_quote_input({**recs[0], "_quote_tpl": (plantilla or {}).get("quote")},
+                                  "vista-previa")
+            quote = {"nickname": q.get("nickname"),
+                     "grupos": [[li.get("description") for li in g.get("lineItems", [])]
+                                for g in q.get("lineItemGroups", [])]}
+        except Exception as e:                        # noqa: BLE001
+            quote = {"error": str(e)[:200]}
     return {
         "paginas": total,
         "estilos": len(recs),
         "records": recs,
+        "quote": quote,
         # Lo que le falta para poder crear sin revisión, con el mismo criterio
         # que usa el intake. Se calcula aquí para que la pantalla no lo duplique.
         "pendientes": sorted({f for r in recs for f in (r.get("flags") or [])}),
@@ -167,6 +183,10 @@ async def crear(request: Request):
         "campos": body.get("campos") or {},
         "tallas": body.get("tallas") or {"tipo": "rejilla", "rotulo_tallas": "SIZE",
                                          "rotulo_cantidades": "QTY"},
+        # Nace con la estructura de salida de siempre, escrita como dato: asi un
+        # cliente nuevo ya produce una quote valida y ademas se puede ver y
+        # cambiar desde la pantalla.
+        "quote": body.get("quote") or QUOTE_POR_OMISION,
         "validada_con": None,            # nombre del 2o PDF con el que se probó
         "created_at": _ahora(),
         "created_by": user.get("email"),
@@ -182,10 +202,13 @@ async def crear(request: Request):
 async def actualizar(request: Request, tid: str):
     user = await require_admin(request)
     body = await request.json()
-    cambios = {k: body[k] for k in ("nombre", "huella", "campos", "tallas") if k in body}
+    cambios = {k: body[k] for k in ("nombre", "huella", "campos", "tallas", "quote") if k in body}
     if not cambios:
         raise HTTPException(400, "Nada que actualizar")
     # Tocar las reglas invalida la validación: lo que se probó ya no es esto.
+    # Tocar la LECTURA invalida la validacion (lo que se probo ya no es esto).
+    # Tocar la SALIDA no: la validacion comprueba que el PDF se lea, y como se
+    # vea la quote no cambia eso.
     if {"huella", "campos", "tallas"} & set(cambios):
         cambios["validada_con"] = None
         cambios["activa"] = False

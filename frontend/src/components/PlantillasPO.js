@@ -4,7 +4,7 @@ import { API } from "../lib/constants";
 import { useLang } from "../contexts/LanguageContext";
 import {
   ArrowLeft, Upload, Loader2, CheckCircle2, AlertTriangle, FileText,
-  Plus, Trash2, Save, Power, Crosshair, X,
+  Plus, Trash2, Save, Power, Crosshair, X, ChevronUp, ChevronDown, Receipt,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -64,6 +64,14 @@ function deducirAncla(palabras, idx) {
   opciones.push({ modo: "fijo", rotulo: w.t, spec: { tipo: "fijo", valor: w.t } });
   return opciones;
 }
+
+const Campo = ({ label, value, onChange, mono }) => (
+  <div>
+    <label className="text-[10px] uppercase tracking-widest text-muted-foreground/60 font-black block mb-1">{label}</label>
+    <input value={value ?? ""} onChange={(e) => onChange(e.target.value)}
+      className={`w-full bg-background/60 border border-border/50 rounded px-2 py-1.5 text-sm ${mono ? "font-mono" : ""} focus:ring-1 focus:ring-primary`} />
+  </div>
+);
 
 export default function PlantillasPO() {
   const navigate = useNavigate();
@@ -157,7 +165,7 @@ export default function PlantillasPO() {
     try {
       const r = await fetch(`${API}/po-templates/${sel.template_id}`, {
         method: "PUT", headers: { "Content-Type": "application/json" }, credentials: "include",
-        body: JSON.stringify({ nombre: sel.nombre, huella: sel.huella, campos: sel.campos, tallas: sel.tallas }) });
+        body: JSON.stringify({ nombre: sel.nombre, huella: sel.huella, campos: sel.campos, tallas: sel.tallas, quote: sel.quote }) });
       const d = await r.json();
       if (!r.ok) throw new Error(d.detail);
       setSel(d); cargarLista(); toast.success(t('ppo_guardada'));
@@ -200,6 +208,28 @@ export default function PlantillasPO() {
   const aplicar = (spec) => {
     setSel((s) => ({ ...s, campos: { ...(s.campos || {}), [campoActivo]: spec } }));
     setMenu(null); setCampoActivo(null);
+  };
+
+  // ── Estructura de la quote en Printavo ──────────────────────────────────
+  // Se edita sobre `sel.quote` y cada cambio dispara la vista previa, así que el
+  // efecto se ve antes de crear nada.
+  const editQuote = (fn) => setSel((s) => {
+    const q = JSON.parse(JSON.stringify(s.quote || { nickname: "", grupos: [] }));
+    fn(q);
+    return { ...s, quote: q };
+  });
+  const editarLinea = (gi, li, cambios) => editQuote((q) => { Object.assign(q.grupos[gi].lineas[li], cambios); });
+  const agregarLinea = (gi) => editQuote((q) => { q.grupos[gi].lineas.push({ tipo: "texto", texto: "" }); });
+  const quitarLinea = (gi, li) => editQuote((q) => { q.grupos[gi].lineas.splice(li, 1); });
+  const moverLinea = (gi, li, d) => editQuote((q) => {
+    const ls = q.grupos[gi].lineas, j = li + d;
+    if (j < 0 || j >= ls.length) return;
+    [ls[li], ls[j]] = [ls[j], ls[li]];
+  });
+  const agregarGrupo = () => editQuote((q) => { q.grupos.push({ lineas: [] }); });
+  const quitarGrupo = (gi) => {
+    if (!window.confirm(t('ppo_q_quitar_grupo'))) return;
+    editQuote((q) => { q.grupos.splice(gi, 1); });
   };
 
   const quitarCampo = (k) => setSel((s) => {
@@ -394,6 +424,86 @@ export default function PlantillasPO() {
                     ))}
                     {previa.estilos === 0 && <p className="text-sm text-amber-600">{t('ppo_nada_aun')}</p>}
                   </>
+                )}
+              </div>
+
+              {/* Cómo se verá en Printavo */}
+              <div className="bg-card/60 border border-border rounded-2xl p-4 space-y-3">
+                <h2 className="text-[10px] font-black uppercase tracking-widest text-muted-foreground flex items-center gap-2">
+                  <Receipt className="w-4 h-4 text-primary" /> {t('ppo_q_titulo')}
+                </h2>
+                <p className="text-xs text-muted-foreground">{t('ppo_q_ayuda')}</p>
+
+                <Campo label={t('ppo_q_nickname')} value={(sel.quote || {}).nickname || ""}
+                  onChange={(v) => editQuote((q) => { q.nickname = v; })} mono />
+
+                {((sel.quote || {}).grupos || []).map((g, gi) => (
+                  <div key={gi} className="border border-border rounded-xl p-3 space-y-2">
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground flex-1">
+                        {t('ppo_q_grupo', { n: gi + 1 })}
+                      </span>
+                      <button onClick={() => agregarLinea(gi)} className="px-2 py-1 rounded-lg bg-secondary/60 hover:bg-secondary border border-border text-[10px] font-black uppercase tracking-wide">
+                        + {t('ppo_q_linea')}
+                      </button>
+                      <button onClick={() => quitarGrupo(gi)} className="p-1 rounded hover:bg-destructive/10 text-destructive"><Trash2 className="w-3.5 h-3.5" /></button>
+                    </div>
+                    {(g.lineas || []).length === 0 && <p className="text-xs text-muted-foreground/60">{t('ppo_q_grupo_vacio')}</p>}
+                    {(g.lineas || []).map((ln, li) => (
+                      <div key={li} className="flex flex-wrap items-start gap-2 bg-secondary/20 rounded-lg p-2">
+                        <select value={ln.tipo || "texto"} onChange={(e) => editarLinea(gi, li, { tipo: e.target.value })}
+                          className="bg-background/60 border border-border/50 rounded px-2 py-1 text-xs">
+                          <option value="texto">{t('ppo_q_tipo_texto')}</option>
+                          <option value="prenda">{t('ppo_q_tipo_prenda')}</option>
+                          <option value="packing">{t('ppo_q_tipo_packing')}</option>
+                        </select>
+                        {(ln.tipo || "texto") === "texto" && (
+                          <textarea value={ln.texto || ""} rows={Math.min(5, (ln.texto || "").split("\n").length || 1)}
+                            onChange={(e) => editarLinea(gi, li, { texto: e.target.value })}
+                            placeholder={t('ppo_q_texto_ph')}
+                            className="flex-1 min-w-[200px] bg-background/60 border border-border/50 rounded px-2 py-1 text-xs font-mono resize-y" />
+                        )}
+                        {ln.tipo === "packing" && (
+                          <input value={ln.encabezado || ""} onChange={(e) => editarLinea(gi, li, { encabezado: e.target.value })}
+                            placeholder={t('ppo_q_packing_ph')}
+                            className="flex-1 min-w-[200px] bg-background/60 border border-border/50 rounded px-2 py-1 text-xs font-mono" />
+                        )}
+                        {ln.tipo === "prenda" && (
+                          <p className="flex-1 min-w-[200px] text-xs text-muted-foreground py-1">{t('ppo_q_prenda_nota')}</p>
+                        )}
+                        <input value={ln.precio ?? ""} onChange={(e) => editarLinea(gi, li, { precio: e.target.value })}
+                          placeholder="$" title={t('ppo_q_precio')}
+                          className="w-16 bg-background/60 border border-border/50 rounded px-2 py-1 text-xs font-mono" />
+                        <div className="flex items-center gap-0.5">
+                          <button onClick={() => moverLinea(gi, li, -1)} className="p-1 rounded hover:bg-secondary"><ChevronUp className="w-3.5 h-3.5" /></button>
+                          <button onClick={() => moverLinea(gi, li, 1)} className="p-1 rounded hover:bg-secondary"><ChevronDown className="w-3.5 h-3.5" /></button>
+                          <button onClick={() => quitarLinea(gi, li)} className="p-1 rounded hover:bg-destructive/10 text-destructive"><X className="w-3.5 h-3.5" /></button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ))}
+                <button onClick={agregarGrupo} className="px-3 py-1.5 rounded-lg bg-secondary/60 hover:bg-secondary border border-border text-[11px] font-black uppercase tracking-widest">
+                  + {t('ppo_q_grupo_nuevo')}
+                </button>
+
+                {previa?.quote && (
+                  <div className="border-t border-border pt-3 space-y-2">
+                    <p className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">{t('ppo_q_asi_queda')}</p>
+                    {previa.quote.error
+                      ? <p className="text-sm text-destructive">{previa.quote.error}</p>
+                      : <>
+                        <p className="text-sm font-mono font-bold">{previa.quote.nickname}</p>
+                        {(previa.quote.grupos || []).map((g, i) => (
+                          <div key={i} className="border border-border/60 rounded-lg p-2">
+                            <p className="text-[10px] font-black uppercase text-muted-foreground/60 mb-1">{t('ppo_q_grupo', { n: i + 1 })}</p>
+                            {g.map((d, j) => (
+                              <p key={j} className="text-[11px] font-mono whitespace-pre-wrap border-b border-border/30 last:border-0 py-1">{d}</p>
+                            ))}
+                          </div>
+                        ))}
+                      </>}
+                  </div>
                 )}
               </div>
             </>

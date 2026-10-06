@@ -725,6 +725,100 @@ def _tops_needed_desc(r):
     return "TOPS NEEDED:"
 
 
+class _Campos(dict):
+    """Diccionario para `format_map` que nunca truena.
+
+    Una plantilla de salida la escribe una persona, no un programador: si teclea
+    `{tienda}` en vez de `{brand}`, lo correcto es que la quote salga con el
+    hueco a la vista y se corrija, no que reviente la creacion a media pasada.
+    Soporta `{campo|alterno}` para el valor de respaldo cuando el campo viene
+    vacio — que es como se escribe "el PO de tienda, o N/A si no hay"."""
+
+    def __missing__(self, clave):
+        campo, _, alterno = clave.partition("|")
+        v = self.get(campo.strip())
+        if v in (None, "", [], {}):
+            return alterno.strip()
+        return v
+
+
+def _texto_plantilla(txt, r):
+    campos = _Campos({k: ("" if v is None else v) for k, v in r.items()})
+    # Lo que un humano espera de los campos compuestos: el pack y las tallas
+    # como lista, no como repr de Python.
+    campos["pack"] = r.get("pack_raw") or "\n".join(r.get("pack_lines") or [])
+    campos["tallas"] = "\n".join(r.get("pack_lines") or [])
+    campos["status_visible"] = _status_disp(r)
+    try:
+        return str(txt or "").format_map(campos)
+    except (ValueError, IndexError):
+        # Llaves mal balanceadas ({ sin cerrar): se deja el texto tal cual en vez
+        # de perder la linea.
+        return str(txt or "")
+
+
+def _grupos_de_plantilla(r, quote_tpl, sizes_input, category_id=None):
+    """Arma los lineItemGroups a partir de una plantilla de salida (puro dato).
+
+    Tres tipos de linea, que es lo que un cliente necesita describir:
+      texto    texto libre con {campos} del PO; opcional `precio` y `categoria`
+      prenda   la linea de la prenda: descripcion + color + tallas + precio
+      packing  el bloque PACK del PO con su encabezado de tienda
+
+    Un grupo que queda sin lineas se omite: Printavo rechaza grupos vacios."""
+    grupos = []
+    for g in (quote_tpl.get("grupos") or []):
+        items = []
+        for ln in (g.get("lineas") or []):
+            tipo = (ln or {}).get("tipo") or "texto"
+            if tipo == "prenda":
+                items.append(_li(_garment_description(r), color=r.get("color"),
+                                 sizes=sizes_input, price=r.get("unit_price") or 0.0,
+                                 category_id=category_id if ln.get("categoria") else None))
+            elif tipo == "packing":
+                prefijo = r.get("brand_prefix") or (r.get("brand") or "").split()[0] if r.get("brand") else ""
+                pack = r.get("pack_raw") or "\n".join(r.get("pack_lines") or [])
+                cabeza = _texto_plantilla(ln.get("encabezado") or "{prefijo} PO {store_po|N/A}",
+                                          {**r, "prefijo": prefijo})
+                pie = _texto_plantilla(ln.get("pie") or "", r)
+                desc = f"{cabeza}\nPACK\n{pack}" + (f"\n\n\n\n{pie}" if pie else "")
+                items.append(_li(desc, price=float(ln.get("precio") or 0.0)))
+            else:
+                txt = _texto_plantilla(ln.get("texto"), r)
+                if not (txt or "").strip() and ln.get("omitir_si_vacio"):
+                    continue
+                items.append(_li(txt, price=float(ln.get("precio") or 0.0),
+                                 category_id=category_id if ln.get("categoria") else None))
+        if items:
+            grupos.append(items)
+    return grupos
+
+
+# La estructura de salida con la que nace un cliente nuevo: la misma que hoy
+# produce `_spencers_groups`, pero escrita como dato para que se pueda editar
+# desde la pantalla sin tocar codigo.
+QUOTE_POR_OMISION = {
+    "nickname": "{brand} PO#{po_number} - {store_po|N/A} - {design_num}",
+    "grupos": [
+        {"lineas": [
+            {"tipo": "texto", "texto": PRODUCTION_DEPT},
+            {"tipo": "prenda"},
+            {"tipo": "texto", "texto": "TOPS NEEDED:\n{tops_needed}", "categoria": True},
+            {"tipo": "texto", "texto": "FRONT PRINT\n{front_print|NECK LABEL\nFINISHING}", "categoria": True},
+            {"tipo": "texto", "texto": "APPROVAL METHOD:\n" + APPROVAL_METHOD_DEFAULT},
+            {"tipo": "texto", "texto": ALLOWED_SHORTAGE_DEFAULT},
+            {"tipo": "texto", "texto": SPECIAL_NOTES_HEADER},
+        ]},
+        {"lineas": [
+            {"tipo": "texto", "texto": PACKING_DEPT},
+            {"tipo": "packing", "encabezado": "{prefijo} PO {store_po|N/A}", "pie": PACK_REFERENCES},
+            {"tipo": "texto", "texto": NEW_BOXES, "precio": NEW_BOXES_PRICE},
+            {"tipo": "texto", "texto": SPECIAL_NOTES_HEADER},
+        ]},
+    ],
+}
+
+
 def _spencers_groups(r, sizes_input, category_id=None):
     """2-group SPENCERS template. Alineado con el master invoice #2406
     (SPENCERS PO#21767 - 323354 - THT0109M1000 - ROLLOUT):
@@ -856,7 +950,13 @@ def build_quote_input(r: dict, contact_id: str, contact: dict = None, owner_id: 
         raise ValueError("Falta la tienda (brand): el PDF no la trae reconocible; captúrala en la revisión")
     is_tractor = "TRACTOR" in brand_up
     is_spektrum = "CULTURE KING" in brand_up or "SPEKTRUM" in brand_up
-    if is_tractor:
+    # Un registro leido con una plantilla de PDF carga su plantilla de SALIDA.
+    # Si no la trae (Goodie, Culture Kings, o una plantilla sin personalizar),
+    # manda la eleccion por marca de siempre.
+    quote_tpl = r.get("_quote_tpl")
+    if quote_tpl and quote_tpl.get("grupos"):
+        groups = _grupos_de_plantilla(r, quote_tpl, sizes_input, category_id)
+    elif is_tractor:
         groups = _tractor_groups(r, sizes_input, category_id)
     elif is_spektrum:
         groups = _spektrum_groups(r, sizes_input, category_id)
@@ -875,6 +975,8 @@ def build_quote_input(r: dict, contact_id: str, contact: dict = None, owner_id: 
         # Calcado al #3182: "CULTURE KINGS - PO#4004615 - DOOM VERSUS AVENGERS TEE - NEW".
         # El status ('NEW'/'REORDER') lo agrega Viviana en la revisión (el PO no lo trae).
         nickname = f"{brand} - PO#{r['po_number']} - {r['description']}"
+    elif quote_tpl and quote_tpl.get("nickname"):
+        nickname = _texto_plantilla(quote_tpl["nickname"], r)
     else:
         # Nickname alineado con master invoice #2406: "PO#21767" (sin espacio).
         nickname = f"{brand} PO#{r['po_number']} - {r['store_po'] or 'N/A'} - {r['design_num']}"

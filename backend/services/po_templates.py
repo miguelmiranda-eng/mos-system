@@ -373,6 +373,11 @@ def leer_pagina(page, plantilla, mapa_tallas):
         ("po_missing", not rec.get("po_number")),
     ) if falta]
     rec["plantilla"] = plantilla.get("id")
+    # La plantilla de SALIDA viaja con el registro: asi `build_quote_input` la usa
+    # sin tener que consultar la base (corre en hilo aparte) ni recibir un
+    # argumento extra por toda la cadena.
+    if (plantilla.get("quote") or {}).get("grupos"):
+        rec["_quote_tpl"] = plantilla["quote"]
     return _completar(rec, plantilla)
 
 

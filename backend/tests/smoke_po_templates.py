@@ -153,6 +153,64 @@ def _ruteo():
     return malas
 
 
+
+def _salida():
+    """La plantilla de SALIDA escrita como dato tiene que dar la MISMA quote que
+    el codigo que reemplaza.
+
+    Es la condicion para que un cliente nuevo nazca con algo que ya funciona: si
+    `QUOTE_POR_OMISION` se desviara de `_spencers_groups`, cada cliente dado de
+    alta desde la pantalla produciria quotes distintas a las que hace el equipo a
+    mano, y nadie se daria cuenta hasta verlas en Printavo."""
+    from printavo_export import QUOTE_POR_OMISION, build_quote_input
+
+    r = {
+        "po_number": "23258", "store_po": "327049", "brand": "SPENCER GIFTS",
+        "brand_prefix": "SPENCER", "design_num": "CHC0004J3351", "color": "PINK",
+        "blank": "BC1019", "description": "RACER TANK", "qty": 806, "unit_price": 1.45,
+        "sizes": {"S": 201, "M": 202}, "pack_lines": ["SM - 201", "MD - 202"],
+        "pack_raw": "SM - 200\nMD- 200", "division": "MEN SS", "status": "ORIGINAL",
+        "front_print": "", "approval_method": "", "tops_needed": "1 SM",
+        "photo_approval": False, "resize": "", "sample_required": False,
+        "cancel_date": None, "ship_date": None, "retailer": "SPENCER GIFTS",
+        "blanks_to_use": "", "blanks_trim": "", "packing_instructions": [],
+        "po_discrepancy": False, "store_po_notes": None, "qty_from_sizes": 403,
+        "sizes_match": False, "flags": [],
+    }
+    malas = []
+    a = build_quote_input(r, "c1")
+    b = build_quote_input({**r, "_quote_tpl": QUOTE_POR_OMISION}, "c1")
+    if a["nickname"] != b["nickname"]:
+        malas.append(f"salida: nickname {a['nickname']!r} -> {b['nickname']!r}")
+    da = [li["description"] for g in a["lineItemGroups"] for li in g["lineItems"]]
+    dbb = [li["description"] for g in b["lineItemGroups"] for li in g["lineItems"]]
+    if len(da) != len(dbb):
+        malas.append(f"salida: {len(da)} linea(s) con codigo, {len(dbb)} con plantilla")
+    for x, y in zip(da, dbb):
+        if x != y:
+            malas.append(f"salida: linea {x[:40]!r} -> {y[:40]!r}")
+    pa = [li.get("price") for g in a["lineItemGroups"] for li in g["lineItems"]]
+    pb = [li.get("price") for g in b["lineItemGroups"] for li in g["lineItems"]]
+    if pa != pb:
+        malas.append(f"salida: precios {pa} -> {pb}")
+
+    # Un grupo sin lineas no se manda: Printavo rechaza grupos vacios.
+    c = build_quote_input({**r, "_quote_tpl": {"nickname": "x", "grupos": [
+        {"lineas": [{"tipo": "texto", "texto": "UNA"}]}, {"lineas": []}]}}, "c1")
+    if len(c["lineItemGroups"]) != 1:
+        malas.append(f"salida: el grupo vacio debia omitirse ({len(c['lineItemGroups'])} grupos)")
+
+    # Un campo mal escrito por una persona NO debe tumbar la creacion.
+    try:
+        d = build_quote_input({**r, "_quote_tpl": {"nickname": "{no_existe|sin dato}", "grupos": [
+            {"lineas": [{"tipo": "texto", "texto": "{tampoco_existe}"}]}]}}, "c1")
+        if d["nickname"] != "sin dato":
+            malas.append(f"salida: el valor de respaldo no se aplico ({d['nickname']!r})")
+    except Exception as e:                            # noqa: BLE001
+        malas.append(f"salida: un campo inexistente reventó la quote: {str(e)[:70]}")
+    return malas
+
+
 def main():
     if not os.path.isdir(CORPUS) or not os.path.exists(GOLDEN):
         print("=" * 60)
@@ -186,6 +244,7 @@ def main():
                 ok += 1
 
     difs += _ruteo()
+    difs += _salida()
 
     print("=" * 60)
     if difs:
