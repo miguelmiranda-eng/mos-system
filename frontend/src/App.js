@@ -707,6 +707,7 @@ const PackingListTool = lazy(() => import("./components/PackingList"));
 const ScheduledReports = lazy(() => import("./components/ScheduledReports"));
 const PrintavoSync = lazy(() => import("./components/PrintavoSync"));
 const PrintavoExport = lazy(() => import("./components/PrintavoExport"));
+const PlantillasPO = lazy(() => import("./components/PlantillasPO"));
 const BlockerTool = lazy(() => import("./components/BlockerTool"));
 const SheetsPage = lazy(() => import("./sheets/SheetsPage"));
 
@@ -920,6 +921,11 @@ function AppRouter() {
       <Route path="/printavo-export" element={
         <AdminRoute>
           <PrintavoExport />
+        </AdminRoute>
+      } />
+      <Route path="/plantillas-po" element={
+        <AdminRoute>
+          <PlantillasPO />
         </AdminRoute>
       } />
       <Route path="/blocker-tool" element={

@@ -72,16 +72,24 @@ class Pagina:
     def palabras_de_renglon(self, top, tol=TOL_RENGLON):
         return [w for w in self.palabras if abs(w["top"] - top) <= tol]
 
-    def buscar_rotulo(self, rotulo):
-        """Primera aparicion de un rotulo (una o varias palabras seguidas).
+    def buscar_rotulo(self, rotulo, ocurrencia=0):
+        """Aparicion N de un rotulo (una o varias palabras seguidas).
 
         Devuelve (x0, x1, top) o None. Compara sin acentos ni mayusculas y
         admite que pdfplumber parta el rotulo en varias palabras: "CUST PO" puede
-        venir como ["CUST","PO"] o como ["CUST PO"]."""
+        venir como ["CUST","PO"] o como ["CUST PO"].
+
+        `ocurrencia` existe porque el mismo texto aparece varias veces en una hoja
+        y quedarse con la primera elige la equivocada: en estos tickets "CUST"
+        esta tanto en el encabezado del cliente como en la columna "CUST PO" de
+        la tabla. El mapeador SABE cual señalo el usuario, asi que lo guarda en la
+        regla y aqui se respeta. Si esa aparicion ya no existe (el PDF cambio),
+        se cae a la primera en vez de no devolver nada."""
         objetivo = _norm(rotulo)
         if not objetivo:
             return None
         partes = objetivo.split()
+        hallazgos = []
         for i, w in enumerate(self.palabras):
             if _norm(w["text"]) != partes[0]:
                 continue
@@ -98,8 +106,10 @@ class Pagina:
                     break
                 x1 = sig["x1"]
             if ok:
-                return (x0, x1, top)
-        return None
+                hallazgos.append((x0, x1, top))
+        if not hallazgos:
+            return None
+        return hallazgos[ocurrencia] if 0 <= ocurrencia < len(hallazgos) else hallazgos[0]
 
 
 def _norm(s):
@@ -122,7 +132,7 @@ def _derecha_de(pag, spec):
     `hasta` corta cuando el renglon sigue con OTRO rotulo: en el ticket de Goodie
     el renglon dice "CUSTOMER MEIJER ISSUE DATE 18-SEP-26" y sin el corte se
     traeria tambien "ISSUE DATE 18-SEP-26"."""
-    pos = pag.buscar_rotulo(spec.get("rotulo", ""))
+    pos = pag.buscar_rotulo(spec.get("rotulo", ""), spec.get("ocurrencia", 0))
     if not pos:
         return None
     _, x1, top = pos
@@ -151,7 +161,7 @@ def _debajo_de(pag, spec):
     El ancho de la celda lo fija el encabezado de AL LADO (`limite`), no un ancho
     guardado: asi el mapeo aguanta que cambie la tipografia o el ancho de la
     columna. Se toma el primer renglon con contenido debajo del encabezado."""
-    pos = pag.buscar_rotulo(spec.get("rotulo", ""))
+    pos = pag.buscar_rotulo(spec.get("rotulo", ""), spec.get("ocurrencia", 0))
     if not pos:
         return None
     x0, x1, top = pos
@@ -264,7 +274,7 @@ def _columna(pag, spec):
       fila    "ultima" (por defecto) o "primera" dentro del recorte
     """
     izq = pag.buscar_rotulo(spec.get("desde", "")) if spec.get("desde") else None
-    anc = pag.buscar_rotulo(spec.get("rotulo", "")) if spec.get("rotulo") else None
+    anc = pag.buscar_rotulo(spec.get("rotulo", ""), spec.get("ocurrencia", 0)) if spec.get("rotulo") else None
     if not anc:
         return None
     x0 = izq[1] if izq else anc[0]
