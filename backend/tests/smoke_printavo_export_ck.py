@@ -168,6 +168,40 @@ check("2,124 piezas leídas del texto -> SIN setup fee",
 check("'Units: 1,275' -> 1275",
       _parse_culturekings_text(CK_TEXT.replace("Units: 301", "Units: 1,275"))["units"] == 1275)
 
+print("\n3e) formato 2025 ('WK11 Y25 - PO Sheets'): fecha con 'algo: n', PO en su renglón")
+# Capa de texto real de la pág. 1 del PDF de WK11 (con Units subido a 1200 para
+# probar que el PO no se confunde con las unidades del renglón de arriba).
+CK_2025 = """Date CK Submitted: 4/3/2025 8:16pm Due Date: 3/17/2025
+CULTURE KINGS
+WK11 Y25 (03/10/25 - 03/14/25)
+RANGE NAME: CK X WRESTLEMANIA 25 PT 1
+Priority 1 - High
+PACKAGING INSTRUCTIONS
+DOBLADO EN INDIVIDUAL
+AGREGAR WOVEN LABEL NECK PRINT
+No CK x WWE
+Name: TRIPLE H WM 41 HOODIE
+Color:
+White {YW100}
+Blank:
+UNIVERSAL - CK - PREMIUM OVERSIZED HOODIE
+Units: 1200
+PO #: 2151361
+XS:24 , S:120 , M:228 , L:396 , XL:252 , 2XL:156 , 3XL:24 Total: 1200
+RECIBIDO:
+"""
+d25 = _parse_culturekings_text(CK_2025)
+check("las tallas salen del desglose, NO de la línea de fecha ('8:16', 'Date: 3')",
+      d25 and d25["sizes"] == {"XS": 24, "S": 120, "M": 228, "L": 396, "XL": 252, "2XL": 156, "3XL": 24},
+      f"{d25 and d25['sizes']}")
+check("PO del mismo renglón (no las unidades 1200 de arriba)", d25 and d25["po_number"] == "2151361",
+      f"{d25 and d25['po_number']}")
+check("Due Date: 3/17/2025 -> 2025-03-17", d25 and d25["due_date"] == "2025-03-17", f"{d25 and d25['due_date']}")
+check("color sin el código entre llaves", d25 and d25["color"] == "White", f"{d25 and d25['color']!r}")
+check("units 1200", d25 and d25["units"] == 1200, f"{d25 and d25['units']}")
+r25 = _spektrum_record(d25)
+check("cuadra 1200 = 1200", r25["sizes_match"] is True, f"{r25['qty']} vs {r25['qty_from_sizes']}")
+
 print("\n4) _iso: ISO passthrough sin romper los formatos de Goodie")
 check("2026-09-30 -> 2026-09-30", _iso("2026-09-30") == "2026-09-30", f"{_iso('2026-09-30')!r}")
 check("18-JUN-26 -> 2026-06-18 (Goodie intacto)", _iso("18-JUN-26") == "2026-06-18", f"{_iso('18-JUN-26')!r}")

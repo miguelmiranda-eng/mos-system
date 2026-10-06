@@ -584,11 +584,16 @@ _CK_LABEL_RES = {
 # ("47, S: 106") no se confunde con miles.
 _CK_NUM = r"\d{1,3}(?:,\d{3})+(?!\d)|\d+"
 _CK_UNITS_RE = re.compile(rf"^\s*Units:\s*({_CK_NUM})", re.I | re.M)
-_CK_DUE_RE = re.compile(r"Due Date\s+(\d{4}-\d{2}-\d{2})", re.I)
+# 'Due Date 2026-09-30' (formato 2026) o 'Due Date: 3/17/2025' (formato 2025).
+_CK_DUE_RE = re.compile(r"Due Date\s*:?\s*(\d{4}-\d{2}-\d{2}|\d{1,2}/\d{1,2}/\d{4})", re.I)
 # El número de PO cae en la línea ANTERIOR a la etiqueta ('4004681\nPO #:'); se
 # intenta primero número-antes-de-etiqueta y luego el orden natural.
 _CK_PO_BEFORE_RE = re.compile(r"(\d{4,})\s*\n\s*PO\s*#\s*:", re.I)
 _CK_PO_AFTER_RE = re.compile(r"PO\s*#\s*:\s*(\d+)", re.I)
+# 'PO #: 2151359' en el MISMO renglón (formato 2025). Se intenta ANTES que el
+# número-antes-de-etiqueta: ahí el renglón anterior es 'Units: 1200', y con
+# 4+ dígitos el patrón de antes tomaba las unidades como PO.
+_CK_PO_SAME_LINE_RE = re.compile(r"PO\s*#\s*:[ \t]*(\d{5,})", re.I)
 # Tallas 'TOK: n'. El \b inicial impide partir 'Total' en 'otal' (el {1,4} sin
 # ancla capturaba los últimos 4 chars de una palabra larga).
 _CK_SIZE_LINE_RE = re.compile(rf"\b([A-Za-z0-9]{{1,4}})\s*:\s*({_CK_NUM})")
@@ -606,12 +611,15 @@ def _parse_culturekings_text(text: str) -> dict:
     if not text:
         return None
     name = _ck_first(_CK_LABEL_RES["name"], text)
-    # Línea de tallas: la que trae varios 'TOK: n' (la del desglose), no la de un
-    # solo campo. Se toma la primera línea con 2+ pares.
+    # Línea de tallas: la que trae varios 'TALLA: n' (la del desglose), no la de
+    # un solo campo. Se toma la primera línea con 2+ pares cuya llave sea una
+    # TALLA de verdad: en el formato 2025 la primera línea con dos "algo: n" es
+    # 'Date CK Submitted: 4/3/2025 8:16pm Due Date: 3/17/2025' (lee '8:16' y
+    # 'Date: 3'), y las tallas reales salían en 0 en los 9 estilos.
     sizes = {}
     for ln in text.splitlines():
         pairs = _CK_SIZE_LINE_RE.findall(ln)
-        pairs = [(t, n) for t, n in pairs if t.upper() != "TOTAL"]
+        pairs = [(t, n) for t, n in pairs if t.upper() in SIZES_MAP]
         if len(pairs) >= 2:
             for tok, n in pairs:
                 sizes[tok.upper()] = sizes.get(tok.upper(), 0) + int(n.replace(",", ""))
@@ -621,8 +629,11 @@ def _parse_culturekings_text(text: str) -> dict:
         return None
 
     po = ""
+    ms = _CK_PO_SAME_LINE_RE.search(text)
     mb = _CK_PO_BEFORE_RE.search(text)
-    if mb:
+    if ms:
+        po = ms.group(1)
+    elif mb:
         po = mb.group(1)
     else:
         ma = _CK_PO_AFTER_RE.search(text)
@@ -636,10 +647,12 @@ def _parse_culturekings_text(text: str) -> dict:
         "range_name": _ck_first(_CK_LABEL_RES["range_name"], text) or None,
         "po_number": po or None,
         "name": name,
-        "color": _ck_first(_CK_LABEL_RES["color"], text) or None,
+        # El código entre llaves ({YW100}) no es parte del color (igual que en el
+        # formato tabla): en Printavo queda "White".
+        "color": re.sub(r"\s*\{[^}]*\}\s*", " ", _ck_first(_CK_LABEL_RES["color"], text)).strip() or None,
         "blank": _ck_first(_CK_LABEL_RES["blank"], text) or None,
         "units": int(units.replace(",", "")) if units else None,
-        "due_date": _ck_first(_CK_DUE_RE, text) or None,
+        "due_date": _iso(_ck_first(_CK_DUE_RE, text)) or None,
         "sizes": sizes,
         # Pasos de empaque: el molde #3182 los baja del PO (un line item c/u).
         "packing_instructions": _ck_packing_instructions(text),

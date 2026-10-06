@@ -583,6 +583,47 @@ async def _marcar_existentes(records: list, store_po=None):
     return pos, existentes, creados
 
 
+def _plan_auto(item: dict):
+    """Que estilos se pueden crear solos. Devuelve (indices, motivo, esperan).
+
+    Un PDF de UN solo PO (Goodie) es todo o nada, como siempre: si algo no esta
+    limpio, espera entero (`motivo`). Una HOJA con varios PO (Spektrum) son
+    ordenes independientes: se crean las limpias y las que tienen problema
+    esperan en la bandeja (`esperan` = {po: motivo}). Sin esto, un solo PO que no
+    cuadra (en los PDFs reales pasa: 2174838 trae 1,200 vs 1,201; 2151359 y
+    2151360, 250 vs 251) bloqueaba la hoja entera y el auto-crear nunca corria."""
+    styles = item.get("styles") or []
+    pos = item.get("po_numbers") or list(dict.fromkeys(
+        r.get("po_number") for r in styles if r.get("po_number")))
+    if len(pos) <= 1:
+        why = _auto_block_reason(item)
+        return ([] if why else list(range(len(styles)))), why, {}
+    flags = set(item.get("flags") or [])
+    # Lo que es del PDF entero sigue frenando todo.
+    for f, m in (("retailer_missing", "tienda no detectada"), ("po_missing", "PO# no detectado"),
+                 ("new_version", "revisión de un PO ya visto")):
+        if f in flags:
+            return [], m, {}
+    idx, esperan = [], {}
+    for i, r in enumerate(styles):
+        po = r.get("po_number")
+        if r.get("ya_creado"):
+            continue                                  # ya esta en Printavo: ni crear ni esperar
+        if r.get("ya_en_mos"):
+            continue                                  # ya es orden en MOS
+        if "totales_no_cuadran" in (r.get("flags") or []):
+            esperan[po] = "los totales del PDF no cuadran"
+        elif not r.get("sizes_match", True):
+            esperan[po] = f"tallas ≠ cantidad ({r.get('qty_from_sizes')} vs {r.get('qty')})"
+        elif not (r.get("brand") or "").strip():
+            esperan[po] = "tienda no detectada"
+        else:
+            idx.append(i)
+    why = None if idx else ("; ".join(f"PO {p}: {m}" for p, m in esperan.items())
+                            or "todos sus PO ya existen o ya se crearon")
+    return idx, why, esperan
+
+
 def _auto_block_reason(item: dict):
     """Why an item must wait for a human instead of being auto-created. None = clean."""
     flags = set(item.get("flags") or [])
@@ -626,13 +667,14 @@ async def _maybe_auto_create(cfg: dict, fuente: dict, item: dict) -> bool:
         return False
     if not printavo_client.is_configured():
         return False
-    why = _auto_block_reason(item)
-    if why:
+    idx, why, esperan = _plan_auto(item)
+    if not idx:
         await db.printavo_intake.update_one({"item_id": item["item_id"]}, {"$set": {"auto_skipped": why}})
         return False
     user = fuente.get("_usuario") or await _bound_user(cfg)
+    elegidos = [item["styles"][i] for i in idx]
     try:
-        result = await create_quotes_for(user, fuente["auto_contact_id"], item["styles"])
+        result = await create_quotes_for(user, fuente["auto_contact_id"], elegidos)
     except Exception as e:
         err = str(e)[:300]
         logger.error(f"[gmail-intake] auto-create failed for PO {item.get('po_number')}: {err}")
@@ -641,21 +683,31 @@ async def _maybe_auto_create(cfg: dict, fuente: dict, item: dict) -> bool:
         return False
     ok = [x for x in result.get("results", []) if x.get("ok")]
     failed = [x for x in result.get("results", []) if not x.get("ok")]
-    upd = {"created_quotes": ok, "contact_id": fuente["auto_contact_id"], "auto": True,
-           "styles": _marcar_creados(item["styles"], result.get("results", []))}
-    if ok and not failed:
-        upd.update({"status": "creado", "resolved_at": datetime.now(timezone.utc).isoformat(),
-                    "resolved_by": "auto"})
-    else:
+    # Los resultados vienen en el orden de `elegidos`; se regresan a su lugar en
+    # la lista completa para marcar justo esos estilos.
+    por_estilo = [None] * len(item["styles"])
+    for i, res in zip(idx, result.get("results", [])):
+        por_estilo[i] = res
+    styles = _marcar_creados(item["styles"], por_estilo)
+    upd = {"created_quotes": ok, "contact_id": fuente["auto_contact_id"], "auto": True, "styles": styles}
+    if failed:
         # Partial or total failure: stays pending, with the errors visible.
         upd["auto_error"] = "; ".join(f"{x.get('design_num')}: {x.get('error')}" for x in failed)[:500]
         await _set_config({"last_auto_error": f"PO {item.get('po_number')}: {upd['auto_error']}"})
+    if esperan:
+        # Hoja con varios PO: se crearon los limpios y estos esperan a una persona.
+        upd["auto_skipped"] = "; ".join(f"PO {p}: {m}" for p, m in esperan.items())[:500]
+    if all(r.get("ya_creado") or r.get("ya_en_mos") for r in styles):
+        upd.update({"status": "creado", "resolved_at": datetime.now(timezone.utc).isoformat(),
+                    "resolved_by": "auto"})
     await db.printavo_intake.update_one({"item_id": item["item_id"]}, {"$set": upd})
     if ok:
         await _set_config({"auto_created_count": int(cfg.get("auto_created_count") or 0) + len(ok)})
         cfg["auto_created_count"] = int(cfg.get("auto_created_count") or 0) + len(ok)
-    logger.info(f"[gmail-intake] auto-created {len(ok)} quote(s) for PO {item.get('po_number')} ({len(failed)} failed)")
-    return bool(ok and not failed)
+    logger.info(f"[gmail-intake] auto-created {len(ok)} quote(s) for PO {item.get('po_number')} "
+                f"({len(failed)} failed, {len(esperan)} esperan)")
+    # True si se creo ALGO: el correo lleva la etiqueta "MOS/Quote creada".
+    return bool(ok)
 
 
 async def _process_message(svc, cfg: dict, fuente: dict, labels: dict, msg_id: str, forced: bool) -> dict:

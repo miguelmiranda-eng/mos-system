@@ -11,14 +11,17 @@ Los PDFs son de un cliente y NO van al repo: viven en tests/fixtures/po_spk/
 Que se comprueba:
   1. hoja de 27 POs en un PDF: 27 estilos, un item, `po_numbers` con los 27
   2. limpio + auto-crear: crea una quote por PO y cierra el item
-  3. algunos POs ya en MOS: el item espera, SOLO esos estilos marcados
+  3. algunos POs ya en MOS: SOLO esos se saltan, el resto se crea
   4. todos los POs ya en MOS: "ya_existe", nada que hacer
   5. una quote truena a la mitad: las que si salieron quedan marcadas
   6. PDF nuevo que NO cubre al pendiente: no lo tira de la bandeja
   7. PDF nuevo que SI lo cubre: lo reemplaza
-  8. formato tabla (NITEHARTS): se lee, y sus totales que no cuadran bloquean
+  8. formato tabla (NITEHARTS): se lee; la pagina con totales malos espera,
+     la otra se crea
   9. reenviado desde @prosper-mfg.com con lista estricta: se ignora
  10. la Priority List (no es orden): se ignora
+ 11. formato 2025 (WK11, 9 POs, 'XS:3 ,'): 7 se crean y los 2 que no cuadran
+     en el propio PDF (250 vs 251) esperan en la bandeja
 """
 import asyncio
 import copy
@@ -39,6 +42,7 @@ DIR = os.path.join(os.path.dirname(__file__), "fixtures", "po_spk")
 SHEETS = os.path.join(DIR, "po_sheets_09_24_26.pdf")
 NITE = os.path.join(DIR, "ck_niteharts_pos.pdf")
 PRIORITY = os.path.join(DIR, "priority_list_09_24_26.pdf")
+WK11 = os.path.join(DIR, "wk11_y25_po_sheets.pdf")
 DESCUADRADO = "2174838"     # en la hoja real trae 1,200 contra 1,201 tallas
 
 ok = fail = 0
@@ -240,10 +244,9 @@ async def main():
     it = items()[0]
     marcados = sorted(r["po_number"] for r in it["styles"] if r.get("ya_en_mos"))
     check("SOLO esos 3 estilos marcados", marcados == sorted(ya), f"{marcados}")
-    check("el item espera (no se cierra: hay 23 nuevos)", it.get("status") == "pendiente", it.get("status"))
-    check("no se creo NADA (antes: duplicaba o perdia)", CREADAS == [], f"{CREADAS}")
-    check("el motivo dice cuales ordenes", all(f"#{p[-3:]}" in (g._auto_block_reason(it) or "") for p in ya),
-          g._auto_block_reason(it))
+    check("se crean los 23 nuevos y NINGUNO de los 3 existentes (antes duplicaba)",
+          len(CREADAS) == 23 and not set(CREADAS) & set(ya), f"{len(CREADAS)} {set(CREADAS) & set(ya)}")
+    check("item cerrado: todo quedo creado o ya existia", it.get("status") == "creado", it.get("status"))
 
     print("\n4) los 27 ya estan en MOS")
     preparar(ordenes=todos)
@@ -295,9 +298,11 @@ async def main():
     check("4 POs leidos", sorted(it.get("po_numbers") or []) == ["4005620", "4005621", "4005622", "4005623"],
           f"{it.get('po_numbers')}")
     check("marca de totales en el item", "totales_no_cuadran" in (it.get("flags") or []), f"{it.get('flags')}")
-    check("no se crea solo", CREADAS == [] and it.get("status") == "pendiente",
-          f"{CREADAS} {it.get('status')}")
-    check("motivo claro", "totales" in (g._auto_block_reason(it) or ""), g._auto_block_reason(it))
+    check("se crean SOLO los 2 de la pagina que cuadra", sorted(CREADAS) == ["4005622", "4005623"], f"{CREADAS}")
+    check("el item espera por los otros 2", it.get("status") == "pendiente", it.get("status"))
+    check("el aviso dice cuales esperan y por que",
+          all(f"PO {p}" in (it.get("auto_skipped") or "") for p in ("4005620", "4005621"))
+          and "totales" in (it.get("auto_skipped") or ""), it.get("auto_skipped"))
 
     print("\n9) reenviado desde @prosper-mfg.com con lista estricta")
     preparar()
@@ -313,6 +318,25 @@ async def main():
     await procesar("p")
     check("no crea item", items() == [])
     check("etiqueta MOS/Ignorado", "MOS/Ignorado" in ETIQUETADO.get("p", []), f"{ETIQUETADO}")
+
+    print("\n11) formato 2025 (WK11): 9 POs, 2 descuadrados en el propio PDF")
+    if os.path.exists(WK11):
+        preparar()
+        correo("w", JOSE, WK11)
+        await procesar("w")
+        it = items()[0] if items() else {}
+        check("9 POs leidos con sus tallas", it.get("style_count") == 9
+              and all(r.get("qty_from_sizes") for r in it.get("styles", [])), f"{it.get('style_count')}")
+        check("7 se crean", len(CREADAS) == 7 and not {"2151359", "2151360"} & set(CREADAS), f"{CREADAS}")
+        check("los 2 descuadrados esperan, con el motivo",
+              "PO 2151359: tallas" in (it.get("auto_skipped") or "")
+              and "PO 2151360: tallas" in (it.get("auto_skipped") or ""), it.get("auto_skipped"))
+        check("pendiente con 7 marcados ya_creado (al revisarlo solo quedan los 2)",
+              it.get("status") == "pendiente" and sum(bool(r.get("ya_creado")) for r in it["styles"]) == 7)
+        check("fecha de entrega leida (3/17/2025)", it["styles"][0].get("cancel_date") == "2025-03-17",
+              it["styles"][0].get("cancel_date"))
+    else:
+        print("   (sin wk11_y25_po_sheets.pdf: caso saltado)")
 
     print(f"\n{'=' * 60}\n   {ok} PASS / {fail} FAIL\n{'=' * 60}")
     return 1 if fail else 0
