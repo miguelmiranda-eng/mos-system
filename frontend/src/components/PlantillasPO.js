@@ -111,6 +111,20 @@ export default function PlantillasPO() {
   const lienzoRef = useRef(null);
   const [escala, setEscala] = useState(1);
 
+  /** Lee la respuesta y, si falló, lanza un error CON TEXTO.
+   *  Sin esto, una respuesta sin `detail` dejaba el mensaje vacío: el toast salía
+   *  en blanco y el botón parecía no hacer nada — que es peor que un error feo. */
+  const leer = async (r, queHacia) => {
+    let d = null;
+    try { d = await r.json(); } catch { /* el servidor no devolvió JSON */ }
+    if (r.ok) return d;
+    const det = d?.detail;
+    const texto = typeof det === "string" ? det
+      : Array.isArray(det) ? det.map((x) => x?.msg || JSON.stringify(x)).join("; ")
+        : det ? JSON.stringify(det) : "";
+    throw new Error(`${queHacia}: ${texto || `el servidor respondió ${r.status}`}`);
+  };
+
   const cargarLista = useCallback(async () => {
     try {
       const r = await fetch(`${API}/po-templates`, { credentials: "include" });
@@ -152,10 +166,10 @@ export default function PlantillasPO() {
       const fd = new FormData();
       fd.append("file", file);
       if (paraValidar) {
+        if (!sel?.template_id) throw new Error(t('ppo_err_sin_id'));
         const r = await fetch(`${API}/po-templates/${sel.template_id}/validar`, {
           method: "POST", credentials: "include", body: fd });
-        const d = await r.json();
-        if (!r.ok) throw new Error(d.detail);
+        const d = await leer(r, t('ppo_validar'));
         toast[d.valida ? "success" : "warning"](
           d.valida ? t('ppo_validada', { n: d.estilos }) : t('ppo_no_valida'));
         cargarLista();
@@ -163,8 +177,7 @@ export default function PlantillasPO() {
       } else {
         const r = await fetch(`${API}/po-templates/borrador`, {
           method: "POST", credentials: "include", body: fd });
-        const d = await r.json();
-        if (!r.ok) throw new Error(d.detail);
+        const d = await leer(r, t('ppo_sube_pdf'));
         setDraft(d); setPagina(0); setMenu(null);
       }
     } catch (e) { toast.error(e.message); }
@@ -178,21 +191,23 @@ export default function PlantillasPO() {
       const r = await fetch(`${API}/po-templates`, {
         method: "POST", headers: { "Content-Type": "application/json" },
         credentials: "include", body: JSON.stringify({ nombre: nombre.trim() }) });
-      const d = await r.json();
-      if (!r.ok) throw new Error(d.detail);
+      const d = await leer(r, t('ppo_nueva'));
       setSel(d); setDraft(null); setPrevia(null); cargarLista();
     } catch (e) { toast.error(e.message); }
   };
 
   const guardar = async () => {
     try {
+      if (!sel?.template_id) throw new Error(t('ppo_err_sin_id'));
       const r = await fetch(`${API}/po-templates/${sel.template_id}`, {
         method: "PUT", headers: { "Content-Type": "application/json" }, credentials: "include",
-        body: JSON.stringify({ nombre: sel.nombre, huella: sel.huella, campos: sel.campos, tallas: sel.tallas, quote: sel.quote }) });
-      const d = await r.json();
-      if (!r.ok) throw new Error(d.detail);
+        body: JSON.stringify({
+          nombre: sel.nombre, huella: sel.huella || {}, campos: sel.campos || {},
+          tallas: sel.tallas || {}, quote: sel.quote || {},
+        }) });
+      const d = await leer(r, t('save'));
       setSel(d); cargarLista(); toast.success(t('ppo_guardada'));
-    } catch (e) { toast.error(e.message); }
+    } catch (e) { toast.error(e.message || String(e)); }
   };
 
   const activar = async (activa) => {
@@ -200,8 +215,7 @@ export default function PlantillasPO() {
       const r = await fetch(`${API}/po-templates/${sel.template_id}/activar`, {
         method: "POST", headers: { "Content-Type": "application/json" },
         credentials: "include", body: JSON.stringify({ activa }) });
-      const d = await r.json();
-      if (!r.ok) throw new Error(d.detail);
+      const d = await leer(r, t('ppo_activar')); void d;
       setSel((s) => ({ ...s, activa })); cargarLista();
       toast.success(activa ? t('ppo_activada') : t('ppo_desactivada'));
     } catch (e) { toast.error(e.message); }

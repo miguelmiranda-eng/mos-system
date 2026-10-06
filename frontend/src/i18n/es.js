@@ -978,6 +978,7 @@ const es = {
   ppo_activada: "Plantilla activada",
   ppo_desactivada: "Plantilla apagada",
   ppo_guardada: "Plantilla guardada",
+  ppo_err_sin_id: "Esta plantilla no está guardada todavía. Vuelve a elegirla en la lista de la izquierda.",
   ppo_borrar_confirm: "¿Borrar la plantilla «{n}»?",
   ppo_campo_po_number: "PO# del cliente",
   ppo_campo_design_num: "Número de diseño",

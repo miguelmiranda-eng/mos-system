@@ -1164,6 +1164,7 @@ const en = {
   ppo_activada: "Template activated",
   ppo_desactivada: "Template switched off",
   ppo_guardada: "Template saved",
+  ppo_err_sin_id: "This template is not saved yet. Pick it again from the list on the left.",
   ppo_borrar_confirm: "Delete the template “{n}”?",
   ppo_campo_po_number: "Customer PO#",
   ppo_campo_design_num: "Design number",
