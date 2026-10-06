@@ -740,6 +740,13 @@ const ShippingScheduler = () => {
     } catch (e) { toast.error(e.message || t('pk_err')); }
     finally { setPkBusy(null); }
   };
+  // Definido ANTES de openPacking, que lo usa: invertido no truena sólo porque
+  // openPacking corre en un clic, pero es la forma frágil (TDZ) conocida.
+  const exportLabel = (e) => {
+    const d = parseIso(e.date);
+    const idx = exportsList.filter((x) => x.date === e.date).indexOf(e) + 1;
+    return `${DAYS_SHORT[L][(d.getDay() + 6) % 7]} ${pad(d.getDate())} · ${e.export_no ? `EXP#${e.export_no}` : `${t('sch_block')} ${idx}`}`;
+  };
   // Un envío puede llevar varios clientes = varios packings (PLGTS, PLSKT…):
   // con uno solo se genera directo; con varios se elige de cuál.
   const openPacking = async (exp) => {
@@ -799,11 +806,6 @@ const ShippingScheduler = () => {
     setWeekStart(ws.find((w) => isoOf(w) === today) || ws[0]);
   };
 
-  const exportLabel = (e) => {
-    const d = parseIso(e.date);
-    const idx = exportsList.filter((x) => x.date === e.date).indexOf(e) + 1;
-    return `${DAYS_SHORT[L][(d.getDay() + 6) % 7]} ${pad(d.getDate())} · ${e.export_no ? `EXP#${e.export_no}` : `${t('sch_block')} ${idx}`}`;
-  };
   const moveOptions = (line) => exportsList
     .filter((e) => e.export_id !== line.export_id)
     .map((e) => ({ id: e.export_id, label: exportLabel(e) }));
