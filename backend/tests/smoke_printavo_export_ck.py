@@ -149,6 +149,25 @@ g1_big = [it["description"] for it in build_quote_input(r_big, "CID", category_i
 check("units>=1500 -> sin SETUP FEE", not any(x.startswith("SETUP FEE") for x in g1_big), f"{g1_big}")
 check("PRINTED NECK LABEL igual presente con qty grande", "PRINTED NECK LABEL" in g1_big, f"{g1_big}")
 
+print("\n3d) coma de miles: del TEXTO a la quote (el 3c entra con units ya numérico)")
+# Formato real del PO 4005609: "Units: 1,275". Con (\d+) se leía 1, y un PO de
+# 2,124 (#3212, PO 4004622) se leía 2 y salía CON setup fee.
+mil = _parse_culturekings_text(CK_TEXT.replace("Units: 301", "Units: 2,124").replace(
+    "XS: 5, S: 35, M: 55, L: 80, XL: 70, 2XL: 45, 3XL: 15 Total: 301",
+    "XS: 47, S: 106, M: 1,266, L: 284, XL: 260, 2XL: 88, 3XL: 73 Total: 2,124"))
+check("units '2,124' -> 2124", mil["units"] == 2124, f"{mil['units']!r}")
+check("talla 'M: 1,266' -> 1266 y la coma de la lista no se confunde con miles",
+      mil["sizes"] == {"XS": 47, "S": 106, "M": 1266, "L": 284, "XL": 260, "2XL": 88, "3XL": 73},
+      f"{mil['sizes']}")
+r_mil = _spektrum_record(mil)
+check("tallas cuadran con la cantidad (2124)", r_mil["sizes_match"] is True,
+      f"{r_mil['qty']} vs {r_mil['qty_from_sizes']}")
+g1_mil = [it["description"] for it in build_quote_input(r_mil, "CID", category_id="CAT")["lineItemGroups"][0]["lineItems"]]
+check("2,124 piezas leídas del texto -> SIN setup fee",
+      not any(x.startswith("SETUP FEE") for x in g1_mil), f"{g1_mil}")
+check("'Units: 1,275' -> 1275",
+      _parse_culturekings_text(CK_TEXT.replace("Units: 301", "Units: 1,275"))["units"] == 1275)
+
 print("\n4) _iso: ISO passthrough sin romper los formatos de Goodie")
 check("2026-09-30 -> 2026-09-30", _iso("2026-09-30") == "2026-09-30", f"{_iso('2026-09-30')!r}")
 check("18-JUN-26 -> 2026-06-18 (Goodie intacto)", _iso("18-JUN-26") == "2026-06-18", f"{_iso('18-JUN-26')!r}")

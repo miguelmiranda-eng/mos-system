@@ -577,7 +577,13 @@ _CK_LABEL_RES = {
     "color":      re.compile(r"^\s*Color:\s*(.+)", re.I | re.M),
     "blank":      re.compile(r"^\s*Blank:\s*(.+)", re.I | re.M),
 }
-_CK_UNITS_RE = re.compile(r"^\s*Units:\s*(\d+)", re.I | re.M)
+# Cantidades con coma de miles ("Units: 1,275"). Con (\d+) a secas se leia 1:
+# la quote quedaba con tallas != cantidad y, peor, un PO de 2,124 se leia 2 y se
+# le ponia el SETUP FEE (< 1,500). Le paso a #3212 (PO 4004622). La coma solo
+# cuenta pegada a 3 digitos exactos, asi el separador de la lista de tallas
+# ("47, S: 106") no se confunde con miles.
+_CK_NUM = r"\d{1,3}(?:,\d{3})+(?!\d)|\d+"
+_CK_UNITS_RE = re.compile(rf"^\s*Units:\s*({_CK_NUM})", re.I | re.M)
 _CK_DUE_RE = re.compile(r"Due Date\s+(\d{4}-\d{2}-\d{2})", re.I)
 # El número de PO cae en la línea ANTERIOR a la etiqueta ('4004681\nPO #:'); se
 # intenta primero número-antes-de-etiqueta y luego el orden natural.
@@ -585,7 +591,7 @@ _CK_PO_BEFORE_RE = re.compile(r"(\d{4,})\s*\n\s*PO\s*#\s*:", re.I)
 _CK_PO_AFTER_RE = re.compile(r"PO\s*#\s*:\s*(\d+)", re.I)
 # Tallas 'TOK: n'. El \b inicial impide partir 'Total' en 'otal' (el {1,4} sin
 # ancla capturaba los últimos 4 chars de una palabra larga).
-_CK_SIZE_LINE_RE = re.compile(r"\b([A-Za-z0-9]{1,4})\s*:\s*(\d+)")
+_CK_SIZE_LINE_RE = re.compile(rf"\b([A-Za-z0-9]{{1,4}})\s*:\s*({_CK_NUM})")
 
 
 def _ck_first(rx, text):
@@ -608,7 +614,7 @@ def _parse_culturekings_text(text: str) -> dict:
         pairs = [(t, n) for t, n in pairs if t.upper() != "TOTAL"]
         if len(pairs) >= 2:
             for tok, n in pairs:
-                sizes[tok.upper()] = sizes.get(tok.upper(), 0) + int(n)
+                sizes[tok.upper()] = sizes.get(tok.upper(), 0) + int(n.replace(",", ""))
             break
     # Firma de un PO de Culture Kings: nombre + desglose de tallas presentes.
     if not name or not sizes:
@@ -632,7 +638,7 @@ def _parse_culturekings_text(text: str) -> dict:
         "name": name,
         "color": _ck_first(_CK_LABEL_RES["color"], text) or None,
         "blank": _ck_first(_CK_LABEL_RES["blank"], text) or None,
-        "units": int(units) if units else None,
+        "units": int(units.replace(",", "")) if units else None,
         "due_date": _ck_first(_CK_DUE_RE, text) or None,
         "sizes": sizes,
         # Pasos de empaque: el molde #3182 los baja del PO (un line item c/u).
