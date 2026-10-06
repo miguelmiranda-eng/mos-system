@@ -32,6 +32,7 @@ import {
   Settings,
   SlidersHorizontal,
   Table2,
+  Crosshair,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useLang } from '../../contexts/LanguageContext';
@@ -458,6 +459,10 @@ const Sidebar = ({
                     <button onClick={() => { navigate('/printavo-export'); if (isMobile) onClose(); }} className={navItem(false)} title={t('dash_po_to_quote_title')}>
                       <Package size={15} className={iconCls(false)} />
                       <span>PO → Quote</span>
+                    </button>
+                    <button onClick={() => { navigate('/plantillas-po'); if (isMobile) onClose(); }} className={navItem(false)} title={t('ppo_subtitulo')}>
+                      <Crosshair size={15} className={iconCls(false)} />
+                      <span>{t('ppo_titulo')}</span>
                     </button>
                   </CollapsibleContent>
                 </Collapsible>
