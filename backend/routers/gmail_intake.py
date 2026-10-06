@@ -428,6 +428,31 @@ def _list_message_ids(svc, label_id, q: str, max_results: int) -> list:
     return [m["id"] for m in res.get("messages", [])]
 
 
+def _list_label_thread_message_ids(svc, label_id, q: str, max_threads: int, days: int) -> list:
+    """Los mensajes de los HILOS que llevan la etiqueta, no solo los mensajes
+    etiquetados.
+
+    En Gmail la etiqueta vive en cada mensaje, aunque la pantalla la muestre por
+    conversacion: etiquetar un hilo a mano marca los mensajes que YA estaban, y
+    una respuesta que llega despues no la trae. Paso con Spektrum el 2026-10-06:
+    Ana mando un PO, Jesus etiqueto el hilo, Ana respondio con el PDF bueno
+    (WK11) y ese mensaje nunca se leyo. Solo cuentan los mensajes dentro de la
+    ventana de dias: un hilo viejo reactivado no debe resucitar PDFs de hace
+    meses."""
+    kwargs = {"userId": 'me', "labelIds": [label_id], "maxResults": max_threads}
+    if q:
+        kwargs["q"] = q
+    hilos = svc.users().threads().list(**kwargs).execute().get("threads", [])
+    corte_ms = (datetime.now(timezone.utc).timestamp() - days * 86400) * 1000
+    ids = []
+    for t in hilos:
+        th = svc.users().threads().get(userId='me', id=t["id"], format='minimal').execute()
+        for m in th.get("messages", []):
+            if int(m.get("internalDate") or 0) >= corte_ms and m["id"] not in ids:
+                ids.append(m["id"])
+    return ids
+
+
 def _get_message(svc, msg_id: str) -> dict:
     return svc.users().messages().get(userId='me', id=msg_id, format='full').execute()
 
@@ -869,10 +894,16 @@ async def _process_message(svc, cfg: dict, fuente: dict, labels: dict, msg_id: s
     if auto_created:
         add.append(labels[LABEL_QUOTE])
     remove = [labels[LABEL_REVISAR]] if forced else []
-    try:
-        await run_in_threadpool(_modify_labels, svc, msg_id, add, remove)
-    except Exception as e:
-        logger.warning(f"[gmail-intake] label update failed for {msg_id}: {e}")
+    # Una respuesta del hilo que NO trae la etiqueta del cliente y no tiene PDF
+    # (la platica interna: "¿se va a preparar?") se registra como vista para no
+    # pedirla cada pasada, pero no se le pegan etiquetas MOS/*: medido en el
+    # buzon de Goodie eran 29 mensajes asi y ninguno traia PDF.
+    etiquetado = _find_label_id(labels, fuente.get("label_name") or "") in (msg.get("labelIds") or [])
+    if forced or etiquetado or _pdf_parts(msg):
+        try:
+            await run_in_threadpool(_modify_labels, svc, msg_id, add, remove)
+        except Exception as e:
+            logger.warning(f"[gmail-intake] label update failed for {msg_id}: {e}")
     await db.gmail_intake_messages.update_one(
         {"message_id": msg_id},
         {"$set": {"message_id": msg_id, "thread_id": thread_id, "subject": subject,
@@ -951,7 +982,9 @@ async def run_once(cfg: dict) -> dict:
         # Gmail las combina con AND.
         forced_ids = await run_in_threadpool(
             _list_message_ids, svc, [src_id, labels[LABEL_REVISAR]], "", limit)
-        normal_ids = await run_in_threadpool(_list_message_ids, svc, src_id, q, limit)
+        # Por HILO: una respuesta que llega despues de etiquetar la conversacion
+        # no trae la etiqueta, y es justo donde el cliente manda el PO corregido.
+        normal_ids = await run_in_threadpool(_list_label_thread_message_ids, svc, src_id, q, limit, days)
 
         parcial = {"evaluated": 0, "orders": 0, "auto_created": 0}
         for msg_id in forced_ids:

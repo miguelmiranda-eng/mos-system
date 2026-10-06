@@ -139,9 +139,12 @@ ETIQUETADO = {}
 CREADAS = []
 
 
-def correo(mid, remitente, pdf_path, asunto="CK PO SHEETS"):
-    CORREOS[mid] = {"remitente": remitente, "asunto": asunto,
-                    "pdf": open(pdf_path, "rb").read(), "fn": os.path.basename(pdf_path)}
+def correo(mid, remitente, pdf_path, asunto="CK PO SHEETS", etiquetas=("SPK",)):
+    """`etiquetas` = las que trae ESE mensaje en Gmail. Una respuesta que llega
+    despues de etiquetar el hilo no trae ninguna. `pdf_path=None` = sin PDF."""
+    CORREOS[mid] = {"remitente": remitente, "asunto": asunto, "etiquetas": list(etiquetas),
+                    "pdf": open(pdf_path, "rb").read() if pdf_path else None,
+                    "fn": os.path.basename(pdf_path) if pdf_path else None}
 
 
 def preparar(ordenes=(), falla_en=None, solo=None):
@@ -152,11 +155,13 @@ def preparar(ordenes=(), falla_en=None, solo=None):
     ETIQUETADO.clear()
     CREADAS.clear()
     g._get_message = lambda svc, mid: {"id": mid, "threadId": f"t-{mid}", "internalDate": "1791300000000",
+                                       "labelIds": CORREOS[mid]["etiquetas"],
                                        "payload": {"headers": [
                                            {"name": "From", "value": CORREOS[mid]["remitente"]},
                                            {"name": "Subject", "value": CORREOS[mid]["asunto"]},
                                            {"name": "Date", "value": "Tue, 6 Oct 2026 19:00:00 +0000"}]}}
-    g._pdf_parts = lambda msg: [(CORREOS[msg["id"]]["fn"], "att", len(CORREOS[msg["id"]]["pdf"]))]
+    g._pdf_parts = lambda msg: ([(CORREOS[msg["id"]]["fn"], "att", len(CORREOS[msg["id"]]["pdf"]))]
+                                if CORREOS[msg["id"]]["pdf"] else [])
     g._get_attachment = lambda svc, mid, att: CORREOS[mid]["pdf"]
     g._body_text = lambda msg, limit=4000: ""
     g._modify_labels = lambda svc, mid, add, remove: ETIQUETADO.__setitem__(mid, list(add))
@@ -185,7 +190,7 @@ async def _bound_user(cfg):
     return {"user_id": "u", "email": "intake@prosper-mfg.com", "name": "intake"}
 g._bound_user = _bound_user
 
-LABELS = {n: n for n in g.MOS_LABELS}
+LABELS = {**{n: n for n in g.MOS_LABELS}, "SPK": "SPK"}
 CFG = {"user_id": "u", "auto_created_count": 0}
 
 
@@ -337,6 +342,20 @@ async def main():
               it["styles"][0].get("cancel_date"))
     else:
         print("   (sin wk11_y25_po_sheets.pdf: caso saltado)")
+
+    print("\n12) respuestas del hilo que NO traen la etiqueta (Gmail etiqueta por mensaje)")
+    preparar()
+    correo("r_pdf", "Ana Flores <ana@spektrumca.com>", WK11 if os.path.exists(WK11) else SHEETS,
+           "Re: Test order", etiquetas=())
+    correo("r_chat", "Lily Acosta <lily.acosta@prosper-mfg.com>", None, "Re: Test order", etiquetas=())
+    await procesar("r_pdf")
+    await procesar("r_chat")
+    check("la respuesta con el PO se procesa aunque no traiga la etiqueta",
+          any(i["gmail_message_id"] == "r_pdf" for i in items()) and CREADAS, f"{CREADAS}")
+    check("y queda etiquetada en Gmail (MOS/Orden)", "MOS/Orden" in ETIQUETADO.get("r_pdf", []), f"{ETIQUETADO}")
+    check("la platica sin PDF NO recibe etiquetas MOS", "r_chat" not in ETIQUETADO, f"{ETIQUETADO}")
+    check("pero queda vista (no se vuelve a pedir cada pasada)",
+          any(m["message_id"] == "r_chat" for m in g.db.gmail_intake_messages.docs))
 
     print(f"\n{'=' * 60}\n   {ok} PASS / {fail} FAIL\n{'=' * 60}")
     return 1 if fail else 0

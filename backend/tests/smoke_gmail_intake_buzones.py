@@ -99,6 +99,7 @@ def preparar(buzon_spk_ok=True, general_ok=True, hay_general=True):
     g._ensure_mos_labels = lambda svc, labels: {**labels, **{n: n for n in g.MOS_LABELS}}
     g._list_message_ids = lambda svc, label, q, limit: (
         [] if isinstance(label, list) else [f"{svc}:{label}:m1"])
+    g._list_label_thread_message_ids = lambda svc, label, q, limit, days: [f"{svc}:{label}:m1"]
     procesados = []
 
     async def procesar(svc, cfg, fuente, labels, msg_id, forced):
@@ -165,6 +166,46 @@ async def main():
     check("Goodie -> general", svc == "SVC_GENERAL" and es_general, f"{svc} {clave}")
     check("_todas_las_fuentes incluye inactivas",
           [f["id"] for f in g._todas_las_fuentes(cfg)] == ["principal", "spk", "off"])
+
+    print("\n7) la respuesta que llega DESPUES de etiquetar el hilo tambien se lee")
+    # El hilo real de Spektrum (2026-10-06): Ana manda 2143744.pdf, Jesus
+    # etiqueta el hilo con SPK, Ana responde con el WK11 -> esa respuesta NO
+    # trae la etiqueta (Gmail etiqueta por mensaje).
+    import importlib
+    gi = importlib.reload(g)              # la funcion real, sin los parches de arriba
+    from datetime import datetime, timezone
+    ahora_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+    dia = 86400 * 1000
+    hilo = {"id": "t1", "messages": [
+        {"id": "viejo", "internalDate": str(ahora_ms - 30 * dia), "labelIds": []},       # fuera de ventana
+        {"id": "m_2143744", "internalDate": str(ahora_ms - dia), "labelIds": ["SPK"]},
+        {"id": "m_wk11", "internalDate": str(ahora_ms - dia + 240000), "labelIds": []},   # SIN etiqueta
+    ]}
+
+    class Req:
+        def __init__(self, r): self.r = r
+        def execute(self): return self.r
+
+    class Threads:
+        def list(self, **kw):
+            self.kw = kw
+            return Req({"threads": [{"id": "t1"}]})
+        def get(self, **kw): return Req(hilo)
+
+    class Users:
+        th = Threads()
+        def threads(self): return self.th
+
+    class Svc:
+        u = Users()
+        def users(self): return self.u
+
+    svc = Svc()
+    ids = gi._list_label_thread_message_ids(svc, "SPK", "has:attachment filename:pdf newer_than:7d", 50, 7)
+    check("lee la respuesta sin etiqueta (el WK11)", "m_wk11" in ids, f"{ids}")
+    check("y el mensaje etiquetado", "m_2143744" in ids, f"{ids}")
+    check("NO resucita mensajes fuera de la ventana", "viejo" not in ids, f"{ids}")
+    check("filtra hilos por la etiqueta del cliente", svc.u.th.kw.get("labelIds") == ["SPK"], f"{svc.u.th.kw}")
 
     print(f"\n{'=' * 60}\n   {ok} PASS / {fail} FAIL\n{'=' * 60}")
     return 1 if fail else 0
