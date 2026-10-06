@@ -58,3 +58,88 @@ async def config_put(request: Request):
         raise HTTPException(400, str(e))
     await log_activity(user, "wms_auditorias_config_update", cfg)
     return cfg
+
+
+# ── Sesiones de auditoría por caja (Sampling) ─────────────────────────────────
+def _http(e: "auditorias.AuditError"):
+    return HTTPException(e.status, e.detail)
+
+
+@router.get("/sessions")
+async def sessions_list(request: Request):
+    await require_action(request, "auditorias.view")
+    qp = request.query_params
+    try:
+        limit = int(qp.get("limit") or 50)
+    except (TypeError, ValueError):
+        limit = 50
+    return await auditorias.list_sessions(limit)
+
+
+@router.post("/sessions")
+async def sessions_create(request: Request):
+    user = await require_action(request, "auditorias.manage")
+    body = await request.json() if request.headers.get("content-length") else {}
+    return await auditorias.create_session(user, (body or {}).get("note") or "")
+
+
+@router.get("/sessions/{session_id}")
+async def sessions_get(session_id: str, request: Request):
+    await require_action(request, "auditorias.view")
+    s = await auditorias.get_session(session_id)
+    if not s:
+        raise HTTPException(404, "Sesión de auditoría no encontrada.")
+    return s
+
+
+@router.delete("/sessions/{session_id}")
+async def sessions_delete(session_id: str, request: Request):
+    user = await require_action(request, "auditorias.manage")
+    res = await auditorias.delete_session(session_id)
+    await log_activity(user, "wms_auditoria_session_delete", {"session_id": session_id, **res})
+    return res
+
+
+@router.post("/sessions/{session_id}/boxes")
+async def sessions_add_box(session_id: str, request: Request):
+    await require_action(request, "auditorias.manage")
+    body = await request.json()
+    try:
+        return await auditorias.add_box(session_id, (body or {}).get("box_id") or "")
+    except auditorias.AuditError as e:
+        raise _http(e)
+
+
+@router.put("/sessions/{session_id}/boxes/{box_id}")
+async def sessions_set_box(session_id: str, box_id: str, request: Request):
+    user = await require_action(request, "auditorias.manage")
+    body = await request.json()
+    try:
+        return await auditorias.set_box_count(
+            session_id, box_id, user,
+            counted_units=(body or {}).get("counted_units"),
+            content_ok=bool((body or {}).get("content_ok", True)),
+            located_ok=bool((body or {}).get("located_ok", True)))
+    except auditorias.AuditError as e:
+        raise _http(e)
+
+
+@router.delete("/sessions/{session_id}/boxes/{box_id}")
+async def sessions_remove_box(session_id: str, box_id: str, request: Request):
+    await require_action(request, "auditorias.manage")
+    try:
+        return await auditorias.remove_box(session_id, box_id)
+    except auditorias.AuditError as e:
+        raise _http(e)
+
+
+@router.post("/sessions/{session_id}/close")
+async def sessions_close(session_id: str, request: Request):
+    user = await require_action(request, "auditorias.manage")
+    try:
+        s = await auditorias.close_session(session_id)
+    except auditorias.AuditError as e:
+        raise _http(e)
+    await log_activity(user, "wms_auditoria_session_close",
+                       {"session_id": session_id, "metrics": s.get("metrics")})
+    return s

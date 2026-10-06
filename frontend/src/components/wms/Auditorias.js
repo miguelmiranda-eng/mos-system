@@ -10,11 +10,12 @@ import {
 } from "recharts";
 import { toast } from "sonner";
 import { useLang } from "../../contexts/LanguageContext";
-import { fetcher, putter, useWms } from "./lib";
+import { fetcher, poster, putter, deleter, useWms } from "./lib";
 import { Card, StatCard, Btn, Chip, cls, TableShell, tableCls, EmptyState } from "./ui";
 
 const TABS = [
   { id: "kpis", key: "wms_aud_tab_kpis" },
+  { id: "sampling", key: "wms_aud_tab_sampling" },
   { id: "pick", key: "wms_aud_tab_pick" },
   { id: "putaway", key: "wms_aud_tab_putaway" },
   { id: "receiving", key: "wms_aud_tab_receiving" },
@@ -65,17 +66,20 @@ export function AuditoriasModule() {
             </button>
           ))}
         </div>
-        <div className="flex items-center gap-2 ml-auto">
-          <label className="text-xs text-muted-foreground">{t("wms_aud_from")}</label>
-          <input type="date" value={since} max={until} onChange={(e) => setSince(e.target.value)}
-                 className={`${cls.input} w-auto`} data-testid="aud-since" />
-          <label className="text-xs text-muted-foreground">{t("wms_aud_to")}</label>
-          <input type="date" value={until} min={since} onChange={(e) => setUntil(e.target.value)}
-                 className={`${cls.input} w-auto`} data-testid="aud-until" />
-        </div>
+        {tab !== "reasons" && tab !== "sampling" && (
+          <div className="flex items-center gap-2 ml-auto">
+            <label className="text-xs text-muted-foreground">{t("wms_aud_from")}</label>
+            <input type="date" value={since} max={until} onChange={(e) => setSince(e.target.value)}
+                   className={`${cls.input} w-auto`} data-testid="aud-since" />
+            <label className="text-xs text-muted-foreground">{t("wms_aud_to")}</label>
+            <input type="date" value={until} min={since} onChange={(e) => setUntil(e.target.value)}
+                   className={`${cls.input} w-auto`} data-testid="aud-until" />
+          </div>
+        )}
       </Card>
 
       {tab === "kpis" && <KpisTab t={t} since={since} until={until} />}
+      {tab === "sampling" && <SamplingTab t={t} canManage={canManage} />}
       {(tab === "pick" || tab === "putaway" || tab === "receiving") && (
         <FeedTab t={t} kind={tab} since={since} until={until} />
       )}
@@ -349,6 +353,217 @@ function ReasonsTab({ t, canManage }) {
         </div>
       )}
     </Card>
+  );
+}
+
+// ── Muestreo por caja (Sampling Results) ──────────────────────────────────────
+function SamplingTab({ t, canManage }) {
+  const [sessions, setSessions] = useState([]);
+  const [sel, setSel] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [boxDraft, setBoxDraft] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const loadList = useCallback(async () => {
+    setLoading(true);
+    try { const d = await fetcher("/auditorias/sessions"); setSessions(d.sessions || []); }
+    catch { toast.error(t("wms_aud_load_err")); }
+    finally { setLoading(false); }
+  }, [t]);
+
+  useEffect(() => { loadList(); }, [loadList]);
+
+  const openSession = async (id) => {
+    try { setSel(await fetcher(`/auditorias/sessions/${id}`)); }
+    catch { toast.error(t("wms_aud_load_err")); }
+  };
+
+  const create = async () => {
+    setBusy(true);
+    try {
+      const res = await poster("/auditorias/sessions", {});
+      if (res.ok) { const s = await res.json(); await loadList(); setSel(s); }
+      else toast.error(t("wms_aud_save_err"));
+    } finally { setBusy(false); }
+  };
+
+  const addBox = async () => {
+    const v = boxDraft.trim();
+    if (!v || !sel) return;
+    setBusy(true);
+    try {
+      const res = await poster(`/auditorias/sessions/${sel.session_id}/boxes`, { box_id: v });
+      if (res.ok) { setSel(await res.json()); setBoxDraft(""); }
+      else { const e = await res.json().catch(() => ({})); toast.error(e.detail || t("wms_aud_box_err")); }
+    } finally { setBusy(false); }
+  };
+
+  const setCount = async (box, patch) => {
+    const units = patch.counted_units != null ? patch.counted_units : box.counted_units;
+    if (units == null || units === "") return;
+    const body = {
+      counted_units: Number(units),
+      content_ok: patch.content_ok != null ? patch.content_ok : (box.content_ok !== false),
+      located_ok: patch.located_ok != null ? patch.located_ok : (box.located_ok !== false),
+    };
+    try {
+      const res = await putter(`/auditorias/sessions/${sel.session_id}/boxes/${box.box_id}`, body);
+      if (res.ok) setSel(await res.json());
+      else { const e = await res.json().catch(() => ({})); toast.error(e.detail || t("wms_aud_box_err")); }
+    } catch { toast.error(t("wms_aud_box_err")); }
+  };
+
+  const removeBox = async (box) => {
+    try { await deleter(`/auditorias/sessions/${sel.session_id}/boxes/${box.box_id}`); openSession(sel.session_id); }
+    catch { toast.error(t("wms_aud_box_err")); }
+  };
+
+  const closeSession = async () => {
+    if (!window.confirm(t("wms_aud_confirm_close"))) return;
+    const res = await poster(`/auditorias/sessions/${sel.session_id}/close`, {});
+    if (res.ok) { toast.success(t("wms_aud_session_closed_ok")); setSel(await res.json()); loadList(); }
+    else toast.error(t("wms_aud_save_err"));
+  };
+
+  const editable = canManage && sel && sel.status === "open";
+  const m = sel?.metrics || {};
+
+  return (
+    <div className="grid grid-cols-1 lg:grid-cols-[280px_1fr] gap-4">
+      {/* Lista de sesiones */}
+      <Card className="p-3 space-y-2 h-fit">
+        <div className="flex items-center justify-between">
+          <h3 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">{t("wms_aud_sessions")}</h3>
+          {canManage && (
+            <Btn variant="primary" onClick={create} disabled={busy} data-testid="aud-new-session">
+              <Plus className="w-3.5 h-3.5" />{t("wms_aud_new_session")}
+            </Btn>
+          )}
+        </div>
+        {loading ? (
+          <div className="py-8 flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-muted-foreground" /></div>
+        ) : sessions.length === 0 ? (
+          <p className="text-xs text-muted-foreground py-6 text-center">{t("wms_aud_no_sessions")}</p>
+        ) : (
+          <div className="space-y-1 max-h-[560px] overflow-y-auto">
+            {sessions.map((s) => (
+              <button key={s.session_id} onClick={() => openSession(s.session_id)}
+                className={`w-full text-left px-3 py-2 rounded-md border text-xs transition-colors ${
+                  sel?.session_id === s.session_id ? "bg-primary/10 border-primary/40" : "bg-card border-border hover:bg-muted/40"
+                }`}>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-medium tabular-nums">{shortWhen(s.created_at)}</span>
+                  <Chip tone={s.status === "open" ? "warning" : "success"}>
+                    {t(s.status === "open" ? "wms_aud_session_open" : "wms_aud_session_closed")}
+                  </Chip>
+                </div>
+                <div className="text-muted-foreground mt-0.5">
+                  {s.created_by_name || "—"} · {t("wms_aud_m_sampled")}: {s.metrics?.boxes_sampled ?? 0}
+                </div>
+              </button>
+            ))}
+          </div>
+        )}
+      </Card>
+
+      {/* Detalle de la sesión */}
+      {!sel ? (
+        <Card><EmptyState title={t("wms_aud_select_session")} art="boxes" /></Card>
+      ) : (
+        <div className="space-y-4">
+          {/* Métricas (bloque Sampling Results) */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <StatCard label={t("wms_aud_m_sampled")} value={m.boxes_sampled ?? 0} />
+            <StatCard label={t("wms_aud_m_correct")} value={m.boxes_correct ?? 0} />
+            <StatCard label={t("wms_aud_m_discrepancy")} value={m.boxes_discrepancy ?? 0} />
+            <StatCard label={t("wms_aud_m_content_bad")} value={`${m.content_bad_pct ?? 0}%`} />
+            <StatCard label={t("wms_aud_system")} value={num(m.system_pieces) || "0"} />
+            <StatCard label={t("wms_aud_physical")} value={num(m.physical_pieces) || "0"} />
+            <StatCard label={t("wms_aud_ira")} value={pct(m.ira_pct)} />
+            <StatCard label={t("wms_aud_ila")} value={pct(m.ila_pct)} />
+          </div>
+
+          {/* Escanear caja + cerrar */}
+          <div className="flex items-center gap-2">
+            {editable && (
+              <>
+                <input value={boxDraft} onChange={(e) => setBoxDraft(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") addBox(); }}
+                  placeholder={t("wms_aud_scan_box")} className={`${cls.input} max-w-xs`}
+                  autoFocus data-testid="aud-box-input" />
+                <Btn onClick={addBox} disabled={busy || !boxDraft.trim()}><Plus className="w-4 h-4" />{t("wms_aud_add_box")}</Btn>
+              </>
+            )}
+            <span className="text-xs text-muted-foreground ml-auto">
+              {sel.status === "closed" ? <Chip tone="success">{t("wms_aud_session_closed")}</Chip> : null}
+            </span>
+            {editable && (
+              <Btn variant="primary" onClick={closeSession} data-testid="aud-close-session">
+                {t("wms_aud_close_session")}
+              </Btn>
+            )}
+          </div>
+
+          {/* Tabla de cajas */}
+          <Card>
+            {(sel.boxes || []).length === 0 ? (
+              <EmptyState title={t("wms_aud_no_boxes")} art="boxes" />
+            ) : (
+              <TableShell maxH="max-h-[460px]">
+                <thead className={tableCls.thead}>
+                  <tr>
+                    {["wms_aud_col_box", "wms_aud_col_location", "wms_aud_col_style", "wms_aud_col_color", "wms_aud_col_size",
+                      "wms_aud_system", "wms_aud_physical", "wms_aud_content_ok", "wms_aud_located_ok"].map((k) => (
+                      <th key={k} className={cls.th}>{t(k)}</th>
+                    ))}
+                    {editable && <th className={cls.th} />}
+                  </tr>
+                </thead>
+                <tbody>
+                  {sel.boxes.map((b) => {
+                    const delta = b.counted ? (b.counted_units - b.system_units) : null;
+                    return (
+                      <tr key={b.box_id} className={tableCls.row}>
+                        <td className="px-3 py-1.5 text-xs font-mono font-medium">{b.box_id}</td>
+                        <td className="px-3 py-1.5 text-xs">{b.location}</td>
+                        <td className="px-3 py-1.5 text-xs">{b.style}</td>
+                        <td className="px-3 py-1.5 text-xs">{b.color}</td>
+                        <td className="px-3 py-1.5 text-xs">{b.size}</td>
+                        <td className="px-3 py-1.5 text-xs text-right tabular-nums">{b.system_units}</td>
+                        <td className="px-3 py-1.5 text-xs text-right tabular-nums">
+                          {editable ? (
+                            <input type="number" min="0" defaultValue={b.counted_units ?? ""}
+                              key={`${b.box_id}-${b.counted_at || "new"}`}
+                              onKeyDown={(e) => { if (e.key === "Enter") setCount(b, { counted_units: e.target.value }); }}
+                              onBlur={(e) => { if (e.target.value !== "" && Number(e.target.value) !== b.counted_units) setCount(b, { counted_units: e.target.value }); }}
+                              className="w-20 px-2 py-1 bg-card border border-input rounded text-right" />
+                          ) : (
+                            <span className={delta ? "text-red-500 font-semibold" : ""}>{b.counted_units ?? "—"}</span>
+                          )}
+                        </td>
+                        <td className="px-3 py-1.5 text-center">
+                          <input type="checkbox" checked={b.content_ok !== false} disabled={!editable || !b.counted}
+                            onChange={(e) => setCount(b, { content_ok: e.target.checked })} />
+                        </td>
+                        <td className="px-3 py-1.5 text-center">
+                          <input type="checkbox" checked={b.located_ok !== false} disabled={!editable || !b.counted}
+                            onChange={(e) => setCount(b, { located_ok: e.target.checked })} />
+                        </td>
+                        {editable && (
+                          <td className="px-3 py-1.5 text-right">
+                            <button onClick={() => removeBox(b)} className="text-muted-foreground hover:text-red-500"><X className="w-3.5 h-3.5" /></button>
+                          </td>
+                        )}
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </TableShell>
+            )}
+          </Card>
+        </div>
+      )}
+    </div>
   );
 }
 

@@ -16,7 +16,8 @@ Definiciones (idénticas a get_cycle_count_report → inventory_kpis en wms.py):
 Regla dura: este módulo NUNCA escribe wms_inventory. Cualquier ajuste (Fase 2)
 pasa por el escritor único (_reconcile_line_boxes + _reproject_material_rows).
 """
-from datetime import date
+import uuid
+from datetime import date, datetime, timezone
 
 from deps import db
 
@@ -173,6 +174,24 @@ async def kpis_rollup(since: str, until: str, group: str = "day") -> dict:
         b["locations_processed"] += lc
         b["locations_without_issues"] += lp
 
+    # Sesiones de auditoría por caja (Fase 2): mismo bucket que los conteos. El
+    # muestreo aporta a IRA (piezas) y a ILA (cajas en su ubicación correcta).
+    sess = await db.wms_audit_sessions.find(
+        {"status": "closed", "$or": [
+            {"closed_at": {"$gte": since, "$lte": end}},
+            {"created_at": {"$gte": since, "$lte": end}},
+        ]}, {"_id": 0}).to_list(5000)
+    for s in sess:
+        eff = s.get("closed_at") or s.get("created_at")
+        if not (since <= _day(eff) <= until):
+            continue
+        m = session_metrics(s)
+        b = _get(_bucket_key(eff, group), "wms")
+        b["units_processed"] += m["system_pieces"]
+        b["abs_pieces"] += m["abs_discrepancy_pieces"]
+        b["locations_processed"] += m["boxes_sampled"]
+        b["locations_without_issues"] += m["boxes_located_ok"]
+
     # Histórico migrado (Fase 3): solo rellena fechas que el WMS NO calculó.
     hist = await db.wms_audit_kpi_history.find(
         {"date": {"$gte": since, "$lte": until}}, {"_id": 0}).to_list(5000)
@@ -253,3 +272,161 @@ async def movement_feed(kind: str, since: str = "", until: str = "",
         else:
             rows.append(_flatten_movement(m))
     return {"rows": rows, "total": total, "count": len(docs)}
+
+
+# ── Sesiones de auditoría por caja (Sampling Results) ─────────────────────────
+# Medición pura: Físico vs Sistema por caja. NO muta inventario (igual que la
+# hoja: el conteo mide, el ajuste es aparte). Alimenta kpis_rollup y la pestaña
+# Sampling del módulo.
+class AuditError(Exception):
+    def __init__(self, status, detail):
+        super().__init__(detail)
+        self.status, self.detail = status, detail
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _sid() -> str:
+    return "aud_" + uuid.uuid4().hex[:12]
+
+
+def session_metrics(session: dict) -> dict:
+    """Métricas de UNA sesión desde sus líneas de caja YA contadas."""
+    boxes = [b for b in (session.get("boxes") or []) if b.get("counted")]
+    n = len(boxes)
+    sys_p = sum(int(b.get("system_units") or 0) for b in boxes)
+    phy_p = sum(int(b.get("counted_units") or 0) for b in boxes)
+    abs_p = sum(abs(int(b.get("counted_units") or 0) - int(b.get("system_units") or 0)) for b in boxes)
+    content_bad = [b for b in boxes if b.get("content_ok") is False]
+    located_ok = [b for b in boxes if b.get("located_ok") is not False]   # default True
+    correct = [b for b in boxes
+               if int(b.get("counted_units") or 0) == int(b.get("system_units") or 0)
+               and b.get("content_ok") is not False]
+    return {
+        "boxes_sampled": n,
+        "boxes_correct": len(correct),
+        "boxes_discrepancy": n - len(correct),
+        "boxes_content_bad": len(content_bad),
+        "content_bad_pct": round(len(content_bad) / n * 100, 2) if n else 0.0,
+        "boxes_located_ok": len(located_ok),
+        "system_pieces": sys_p,
+        "physical_pieces": phy_p,
+        "net_discrepancy": phy_p - sys_p,
+        "abs_discrepancy_pieces": abs_p,
+        "ira_pct": round(max(0.0, (1 - abs_p / sys_p) * 100), 1) if sys_p > 0 else 100.0,
+        "ila_pct": round(len(located_ok) / n * 100, 1) if n else None,
+    }
+
+
+async def create_session(user: dict, note: str = "") -> dict:
+    doc = {
+        "session_id": _sid(), "status": "open", "created_at": _now(),
+        "created_by": user.get("user_id"),
+        "created_by_name": user.get("name") or user.get("email"),
+        "closed_at": None, "note": (note or "").strip(), "boxes": [],
+    }
+    await db.wms_audit_sessions.insert_one(dict(doc))
+    return {**doc, "metrics": session_metrics(doc)}
+
+
+async def list_sessions(limit: int = 50) -> dict:
+    docs = await db.wms_audit_sessions.find({}, {"_id": 0}).sort(
+        "created_at", -1).to_list(max(1, min(int(limit or 50), 500)))
+    return {"sessions": [{
+        "session_id": d["session_id"], "status": d.get("status"),
+        "created_at": d.get("created_at"), "closed_at": d.get("closed_at"),
+        "created_by_name": d.get("created_by_name"), "note": d.get("note"),
+        "metrics": session_metrics(d),
+    } for d in docs]}
+
+
+async def get_session(session_id: str):
+    d = await db.wms_audit_sessions.find_one({"session_id": session_id}, {"_id": 0})
+    if not d:
+        return None
+    return {**d, "metrics": session_metrics(d)}
+
+
+async def _require_open(session_id: str) -> dict:
+    s = await db.wms_audit_sessions.find_one({"session_id": session_id})
+    if not s:
+        raise AuditError(404, "Sesión de auditoría no encontrada.")
+    if s.get("status") != "open":
+        raise AuditError(400, "La sesión ya está cerrada.")
+    return s
+
+
+async def add_box(session_id: str, box_id: str) -> dict:
+    """Agrega una caja resolviendo identidad + unidades de SISTEMA (snapshot)
+    desde wms_boxes. Aún sin contar (counted=False)."""
+    await _require_open(session_id)
+    bid = (box_id or "").strip().upper()
+    if not bid:
+        raise AuditError(400, "Escanea un número de caja.")
+    box = await db.wms_boxes.find_one({"box_id": bid}, {"_id": 0})
+    if not box:
+        raise AuditError(404, f"La caja {bid} no existe en el sistema.")
+    dup = await db.wms_audit_sessions.find_one(
+        {"session_id": session_id, "boxes.box_id": bid}, {"_id": 1})
+    if dup:
+        raise AuditError(409, f"La caja {bid} ya está en esta sesión.")
+    line = {
+        "box_id": bid, "location": box.get("location") or "",
+        "style": box.get("style") or "", "color": box.get("color") or "",
+        "size": box.get("size") or "", "sku": box.get("sku") or "",
+        "customer": box.get("customer") or "",
+        "system_units": int(box.get("units") or 0),
+        "counted_units": None, "counted": False,
+        "content_ok": None, "located_ok": None,
+        "counted_by": None, "counted_at": None,
+    }
+    await db.wms_audit_sessions.update_one(
+        {"session_id": session_id}, {"$push": {"boxes": line}})
+    return await get_session(session_id)
+
+
+async def set_box_count(session_id: str, box_id: str, user: dict, counted_units,
+                        content_ok: bool = True, located_ok: bool = True) -> dict:
+    await _require_open(session_id)
+    bid = (box_id or "").strip().upper()
+    try:
+        cu = int(counted_units)
+    except (TypeError, ValueError):
+        raise AuditError(400, "Cantidad física inválida.")
+    if cu < 0:
+        raise AuditError(400, "La cantidad física no puede ser negativa.")
+    res = await db.wms_audit_sessions.update_one(
+        {"session_id": session_id, "boxes.box_id": bid},
+        {"$set": {
+            "boxes.$.counted_units": cu, "boxes.$.counted": True,
+            "boxes.$.content_ok": bool(content_ok),
+            "boxes.$.located_ok": bool(located_ok),
+            "boxes.$.counted_by": user.get("user_id"),
+            "boxes.$.counted_at": _now(),
+        }})
+    if not res.matched_count:
+        raise AuditError(404, f"La caja {bid} no está en esta sesión.")
+    return await get_session(session_id)
+
+
+async def remove_box(session_id: str, box_id: str) -> dict:
+    await _require_open(session_id)
+    await db.wms_audit_sessions.update_one(
+        {"session_id": session_id},
+        {"$pull": {"boxes": {"box_id": (box_id or "").strip().upper()}}})
+    return await get_session(session_id)
+
+
+async def close_session(session_id: str) -> dict:
+    await _require_open(session_id)
+    await db.wms_audit_sessions.update_one(
+        {"session_id": session_id},
+        {"$set": {"status": "closed", "closed_at": _now()}})
+    return await get_session(session_id)
+
+
+async def delete_session(session_id: str) -> dict:
+    res = await db.wms_audit_sessions.delete_one({"session_id": session_id})
+    return {"deleted": res.deleted_count}

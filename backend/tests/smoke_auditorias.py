@@ -93,6 +93,13 @@ def sembrar():
          "details": {"trigger": "transit", "origins": ["NA07-C20"], "destination": "CESAR-1",
                      "box_ids": ["BOX-7"], "units_batch": 48, "boxes_moved": 1}},
     ])
+    # Cajas para las sesiones de auditoría (Fase 2).
+    sdb.wms_boxes.insert_many([
+        {"box_id": "BOX-A", "units": 50, "location": "PS02-A03", "style": "5000",
+         "color": "BLACK", "size": "L", "sku": "5000-BLACK-L", "customer": "GTS"},
+        {"box_id": "BOX-B", "units": 30, "location": "PS02-A04", "style": "5000",
+         "color": "WHITE", "size": "M", "sku": "5000-WHITE-M", "customer": "GTS"},
+    ])
 
 
 async def run():
@@ -145,6 +152,51 @@ async def run():
         check("save sin motivos lanza ValueError", False)
     except ValueError:
         check("save sin motivos lanza ValueError", True)
+
+    # ── Sesiones de auditoría por caja (Fase 2) ──
+    from datetime import date as _date
+    U = {"user_id": "u", "name": "Auditor"}
+    s0 = await auditorias.create_session(U, "smoke")
+    sid = s0["session_id"]
+    check("sesión creada abierta", s0["status"] == "open")
+    await auditorias.add_box(sid, "box-a")  # minúsculas -> se normaliza a BOX-A
+    s1 = await auditorias.set_box_count(sid, "BOX-A", U, 48, content_ok=True, located_ok=True)
+    check("BOX-A snapshot sistema=50",
+          any(b["box_id"] == "BOX-A" and b["system_units"] == 50 for b in s1["boxes"]))
+    await auditorias.add_box(sid, "BOX-B")
+    s2 = await auditorias.set_box_count(sid, "BOX-B", U, 30, content_ok=False, located_ok=False)
+    m = s2["metrics"]
+    check("muestreadas = 2", m["boxes_sampled"] == 2)
+    check("sistema 80 / físico 78 / |Δ| 2 / neta -2",
+          m["system_pieces"] == 80 and m["physical_pieces"] == 78
+          and m["abs_discrepancy_pieces"] == 2 and m["net_discrepancy"] == -2, detalle=str(m))
+    check("IRA sesión = 97.5", m["ira_pct"] == 97.5, detalle=str(m["ira_pct"]))
+    check("contenido incorrecto 1 (50%)", m["boxes_content_bad"] == 1 and m["content_bad_pct"] == 50.0)
+    check("ILA sesión = 50.0 (1 de 2 en su sitio)", m["ila_pct"] == 50.0, detalle=str(m["ila_pct"]))
+    check("correctas 0 / discrepancia 2", m["boxes_correct"] == 0 and m["boxes_discrepancy"] == 2)
+    try:
+        await auditorias.add_box(sid, "BOX-A")
+        check("caja duplicada -> error", False)
+    except auditorias.AuditError as e:
+        check("caja duplicada -> 409", e.status == 409)
+    try:
+        await auditorias.add_box(sid, "BOX-ZZZ")
+        check("caja inexistente -> error", False)
+    except auditorias.AuditError as e:
+        check("caja inexistente -> 404", e.status == 404)
+    await auditorias.close_session(sid)
+    sc = await auditorias.get_session(sid)
+    check("sesión cerrada", sc["status"] == "closed")
+    try:
+        await auditorias.set_box_count(sid, "BOX-A", U, 10)
+        check("contar en cerrada -> error", False)
+    except auditorias.AuditError as e:
+        check("contar en sesión cerrada -> 400", e.status == 400)
+    today = _date.today().isoformat()
+    kk = await auditorias.kpis_rollup(today, today, "day")
+    tday = {r["key"]: r for r in kk["series"]}.get(today, {})
+    check("KPI de hoy incluye la sesión (IRA 97.5 / ILA 50.0)",
+          tday.get("ira_pct") == 97.5 and tday.get("ila_pct") == 50.0, detalle=str(tday))
 
     # ── Registro de acciones y módulo ──
     cat_ids = {a["id"] for a in wa.catalog()}
