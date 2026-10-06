@@ -300,6 +300,43 @@ def _columna(pag, spec):
     return renglones[-1] if spec.get("fila", "ultima") == "ultima" else renglones[0]
 
 
+def _tallas_en_pares(pag, spec, mapa_tallas):
+    """Tallas escritas como pares en un renglon: "XS: 5, S: 35, M: 55 Total: 301".
+
+    Es el otro formato comun y el que usa Culture Kings. No hay rejilla que
+    anclar: se busca el PRIMER renglon con dos o mas pares "TALLA: n" (uno solo
+    seria cualquier campo con dos puntos, como "Units: 301") y se suman.
+
+    `excluir` saca los totales: sin eso, "Total: 301" se contaria como una talla
+    mas y duplicaria la cantidad."""
+    fuera = {x.strip().upper() for x in (spec.get("excluir") or ["TOTAL", "UNITS"])}
+    # El \b inicial impide partir una palabra larga y quedarse con sus ultimos 4
+    # caracteres: sin el, "Units: 301" aporta "nits" como si fuera una talla.
+    patron = re.compile(r"\b([A-Za-z0-9]{1,4})\s*:\s*(\d+)")
+    for linea in pag.lineas:
+        pares = [(t, n) for t, n in patron.findall(linea) if t.upper() not in fuera]
+        if len(pares) < 2:
+            continue
+        sizes, total, renglones = {}, 0, []
+        for tok, n in pares:
+            destino = mapa_tallas.get(tok.upper())
+            if not destino:
+                continue
+            sizes[destino] = sizes.get(destino, 0) + int(n)
+            total += int(n)
+            renglones.append(f"{tok.upper()} - {n}")
+        if sizes:
+            return {"sizes": sizes, "total": total, "renglones": renglones}
+    return {"sizes": {}, "total": 0, "renglones": []}
+
+
+def _leer_tallas(pag, spec, mapa_tallas):
+    """Despacha al lector de tallas que pida la plantilla."""
+    if (spec or {}).get("tipo") == "pares":
+        return _tallas_en_pares(pag, spec, mapa_tallas)
+    return _rejilla(pag, spec or {}, mapa_tallas)
+
+
 PRIMITIVAS = {
     "fijo": _fijo,
     "derecha_de": _derecha_de,
@@ -353,7 +390,7 @@ def leer_pagina(page, plantilla, mapa_tallas):
         fn = PRIMITIVAS.get((spec or {}).get("tipo"))
         rec[campo] = fn(pag, spec) if fn else None
 
-    rejilla = _rejilla(pag, plantilla.get("tallas") or {}, mapa_tallas)
+    rejilla = _leer_tallas(pag, plantilla.get("tallas"), mapa_tallas)
     rec["sizes"] = rejilla["sizes"]
     rec["pack_lines"] = rejilla["renglones"]
     rec["qty_from_sizes"] = rejilla["total"]
