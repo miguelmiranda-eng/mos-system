@@ -53,6 +53,10 @@ const pillStyle = (s) => {
   return c ? { background: c.pill, color: c.text } : { background: '#e2e8f0', color: '#64748b' };
 };
 const MOVED_COLOR = '#ea580c'; // badge SE MUEVE FECHA (no es un status)
+// BULK PACK (órdenes hermanas = mismo cliente + customer PO; backend _attach_bulk).
+// Tono por grupo para reconocer a las hermanas en la semana.
+const BULK_TAB = '__bulk';
+const bulkHue = (po) => [...String(po)].reduce((h, ch) => (h * 31 + ch.charCodeAt(0)) % 360, 7);
 // Color de fila manual (relleno tipo Excel). Gana sobre el color del status;
 // "sin color" lo regresa. Las llaves = ROW_COLORS del backend.
 const ROW_COLORS = {
@@ -423,6 +427,7 @@ const ShippingScheduler = () => {
   const [findLoading, setFindLoading] = useState(false);
   const [flashId, setFlashId] = useState(null);
   const [statusModal, setStatusModal] = useState(null); // status abierto en "Órdenes por status" ('—' = sin status)
+  const [bulkSid, setBulkSid] = useState(null);         // fila cuyo BULK PACK está abierto
   const [findOpen, setFindOpen] = useState(false);
   const [addText, setAddText] = useState({});      // export_id → texto de captura
   const [showCrm, setShowCrm] = useState(() => {
@@ -666,6 +671,18 @@ const ShippingScheduler = () => {
         const addedNums = new Set(r.added.map((x) => x.order_number));
         setAvail((prev) => prev.filter((o) => !addedNums.has(o.order_number)));
         toast.success(t('sch_added', { n: r.added.length }));
+        // BULK PACK: hermanas del mismo PO que todavía no están programadas.
+        const addedNow = new Set(r.added.map((x) => x.order_number));
+        const missing = [...new Set(r.added.flatMap((x) => (x.bulk?.sisters || [])
+          .filter((sis) => !sis.exports.length && !addedNow.has(sis.order_number)).map((sis) => sis.order_number)))];
+        // Las hermanas ya en pantalla cambian su conteo: se recarga la semana.
+        if (r.added.some((x) => x.bulk)) loadWeek(true);
+        if (missing.length) {
+          toast.warning(t('sch_bulk_missing_toast', { list: missing.map((n) => `#${n}`).join(', ') }), {
+            duration: 12000,
+            action: { label: t('sch_bulk_add_missing'), onClick: () => addLines(exp, missing.join(' ')) },
+          });
+        }
       }
       if (r.duplicates.length) toast.info(t('sch_dups', { list: r.duplicates.join(', ') }));
       const also = Object.keys(r.also_in || {});
@@ -685,6 +702,7 @@ const ShippingScheduler = () => {
     try {
       await call(`${API}/${line.shipment_id}`, 'DELETE');
       setData((p) => ({ ...p, lines: p.lines.filter((l) => l.shipment_id !== line.shipment_id) }));
+      if (line.bulk) loadWeek(true); // el conteo de sus hermanas cambia
     } catch (e) { toast.error(e.message); }
   };
   const moveLine = (line, value) => {
@@ -915,6 +933,34 @@ const ShippingScheduler = () => {
       setData((p) => ({ ...p, lines: p.lines.map((l) => (set.has(l.shipment_id) ? { ...l, row_color: color } : l)) }));
     } catch (e) { toast.error(e.message); }
   };
+  // BULK PACK: motivos de "incompleto" (tooltip) y grupos de la semana (uno por PO y export).
+  const sisterWhere = (sis, exportId) => {
+    if (!sis.exports.length) return t('sch_bulk_unscheduled');
+    if (sis.exports.some((e) => e.export_id === exportId)) return t('sch_bulk_here');
+    return sis.exports.map((e) => {
+      const d = e.date ? parseIso(e.date) : null;
+      return `${e.export_no ? `EXP#${e.export_no}` : t('sch_block')}${d ? ` · ${pad(d.getDate())} ${MONTHS[L][d.getMonth()]}` : ''}`;
+    }).join(', ');
+  };
+  const bulkReasons = (l) => {
+    const b = l.bulk;
+    const head = t('sch_bulk_progress', { po: b.po, here: b.in_export, ready: b.ready, n: b.n });
+    if (b.complete) return `${head} · ${t('sch_bulk_complete')}`;
+    const why = b.sisters.filter((sis) => !sis.exports.some((e) => e.export_id === l.export_id)
+      || String(sis.production_status || '').toUpperCase() !== 'LISTO PARA ENVIO')
+      .map((sis) => `#${sis.order_number}: ${sisterWhere(sis, l.export_id)} · ${sis.production_status || '—'}`);
+    return [head, ...why].join('\n');
+  };
+  const bulkGroups = (() => {
+    const seen = new Map();
+    visualIds.forEach((id) => {
+      const l = lines.find((x) => x.shipment_id === id);
+      if (!l || !l.bulk) return;
+      const k = `${l.bulk.client}|${l.bulk.po}|${l.export_id}`;
+      if (!seen.has(k)) seen.set(k, l);
+    });
+    return [...seen.values()];
+  })();
   const moveSelectedPrompt = () => {
     const d = window.prompt(t('sch_prompt_date'), isoOf(addDays(weekStart, 7)));
     if (d && /^\d{4}-\d{2}-\d{2}$/.test(d.trim())) moveIds(selIds, { date: d.trim() });
@@ -1140,6 +1186,13 @@ const ShippingScheduler = () => {
                       <span className="inline-flex items-center gap-1 px-1 font-black text-slate-800 whitespace-nowrap">
                         {l.order_number}
                         {l.late && <span className="px-1 rounded bg-red-600 text-white text-[9px] no-underline" title={t('sch_late_hint', { d: l.ship_by || l.cancel_date || '' })}>LATE</span>}
+                        {l.bulk && (
+                          <button onClick={() => setBulkSid(l.shipment_id)} title={bulkReasons(l)}
+                            className="px-1 rounded text-white text-[9px] font-black whitespace-nowrap hover:opacity-80"
+                            style={{ background: l.bulk.complete ? '#047857' : '#d97706', boxShadow: `inset 3px 0 0 hsl(${bulkHue(l.bulk.po)} 70% 45%)` }}>
+                            BULK {l.bulk.in_export}/{l.bulk.n} {l.bulk.complete ? '✓' : '⚠'}
+                          </button>
+                        )}
                         {man && <span className="px-1 rounded bg-slate-500 text-white text-[9px]" title={t('sch_manual_hint')}>{t('sch_manual')}</span>}
                         {l.pl_url && <a href={l.pl_url} target="_blank" rel="noopener noreferrer" title={l.pl_number || t('sch_open_pl')} className="text-blue-600 hover:text-blue-800"><ExternalLink className="w-3 h-3" /></a>}
                       </span>
@@ -1400,6 +1453,13 @@ const ShippingScheduler = () => {
                   className="px-2 py-0.5 rounded-full text-[10px] font-black hover:ring-2 hover:ring-offset-1 hover:ring-slate-300 transition-all"
                   style={pillStyle(s)}>{s === '—' ? t('sch_status_none') : s} · {n}</button>
               ))}
+              {bulkGroups.length > 0 && (
+                <button onClick={() => setStatusModal(BULK_TAB)} title={t('sch_bulk_tab_hint')}
+                  className="px-2 py-0.5 rounded-full text-[10px] font-black text-white hover:ring-2 hover:ring-offset-1 hover:ring-slate-300"
+                  style={{ background: bulkGroups.every((l) => l.bulk.complete) ? '#047857' : '#d97706' }}>
+                  BULK · {bulkGroups.filter((l) => l.bulk.complete).length}/{bulkGroups.length} ✓
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -1499,10 +1559,10 @@ const ShippingScheduler = () => {
       {/* Órdenes por status: los chips de la semana abren esta lista; una
           pestaña por status, en el orden visual del programador. Clic en una
           orden → se cierra y salta a su renglón (resaltado). */}
-      {statusModal && statusCounts[statusModal] !== undefined && (() => {
+      {statusModal && (statusModal === BULK_TAB || statusCounts[statusModal] !== undefined) && (() => {
         const byId = Object.fromEntries(lines.map((l) => [l.shipment_id, l]));
         const expById = Object.fromEntries(exportsList.map((e) => [e.export_id, e]));
-        const rows = visualIds.map((id) => byId[id]).filter((l) => (l.status_effective || '—') === statusModal);
+        const rows = statusModal === BULK_TAB ? [] : visualIds.map((id) => byId[id]).filter((l) => (l.status_effective || '—') === statusModal);
         const goTo = (l) => { setStatusModal(null); setFlashId(l.shipment_id); };
         return (
           <div className="fixed inset-0 z-[90] flex items-center justify-center p-4">
@@ -1526,8 +1586,58 @@ const ShippingScheduler = () => {
                     </button>
                   );
                 })}
-                <span className="ml-auto text-[11px] font-black text-slate-600">{t('sch_status_total', { n: rows.length, p: fmtNum(sumPcs(rows)) })}</span>
+                {bulkGroups.length > 0 && (
+                  <button onClick={() => setStatusModal(BULK_TAB)}
+                    className={`px-2.5 py-1 rounded-full text-[10px] font-black text-white transition-all ${statusModal === BULK_TAB ? 'ring-2 ring-offset-1 ring-slate-800' : 'opacity-60 hover:opacity-100'}`}
+                    style={{ background: '#475569' }}>
+                    {t('sch_bulk_tab')} · {bulkGroups.filter((l) => l.bulk.complete).length}/{bulkGroups.length} ✓
+                  </button>
+                )}
+                <span className="ml-auto text-[11px] font-black text-slate-600">
+                  {statusModal === BULK_TAB
+                    ? t('sch_bulk_tab_total', { n: bulkGroups.length, ok: bulkGroups.filter((l) => l.bulk.complete).length })
+                    : t('sch_status_total', { n: rows.length, p: fmtNum(sumPcs(rows)) })}
+                </span>
               </div>
+              {statusModal === BULK_TAB ? (
+              <div className="flex-1 overflow-auto rounded-xl border border-slate-200">
+                <table className="w-full border-collapse text-[12px]">
+                  <thead className="sticky top-0 bg-slate-100">
+                    <tr className="text-[10px] font-black uppercase tracking-wider text-slate-700">
+                      <th className="px-2 py-1.5 text-left">CUSTOMER PO.</th>
+                      <th className="px-2 py-1.5 text-left">CUSTOMER</th>
+                      <th className="px-2 py-1.5 text-left">{t('sch_status_when')}</th>
+                      <th className="px-2 py-1.5 text-left">{t('sch_bulk_orders')}</th>
+                      <th className="px-2 py-1.5 text-center">{t('sch_bulk_here_col')}</th>
+                      <th className="px-2 py-1.5 text-center">{t('sch_bulk_ready_col')}</th>
+                      <th className="px-2 py-1.5 text-left">{t('sch_bulk_state')}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {bulkGroups.map((l) => {
+                      const b = l.bulk;
+                      const exp = expById[l.export_id];
+                      return (
+                        <tr key={`${b.po}|${l.export_id}`} data-st="none" onClick={() => { setStatusModal(null); setBulkSid(l.shipment_id); }}
+                          className="border-t border-slate-100 cursor-pointer hover:bg-blue-50">
+                          <td className="px-2 py-1.5 font-black text-slate-800" style={{ boxShadow: `inset 3px 0 0 hsl(${bulkHue(b.po)} 70% 45%)` }}>{b.po}</td>
+                          <td className="px-2 py-1.5 font-bold text-slate-700">{b.client}</td>
+                          <td className="px-2 py-1.5 text-slate-600 whitespace-nowrap">{exp ? exportLabel(exp) : l.ship_date}</td>
+                          <td className="px-2 py-1.5 text-slate-600">{b.sisters.map((x) => `#${x.order_number}`).join(' ')}</td>
+                          <td className="px-2 py-1.5 text-center font-black tabular-nums">{b.in_export}/{b.n}</td>
+                          <td className="px-2 py-1.5 text-center font-black tabular-nums">{b.ready}/{b.n}</td>
+                          <td className="px-2 py-1.5">
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-black text-white" style={{ background: b.complete ? '#047857' : '#d97706' }}>
+                              {b.complete ? t('sch_bulk_complete') : t('sch_bulk_incomplete')}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              ) : (
               <div className="flex-1 overflow-auto rounded-xl border border-slate-200">
                 <table className="w-full border-collapse text-[12px]">
                   <thead className="sticky top-0 bg-slate-100">
@@ -1567,6 +1677,98 @@ const ShippingScheduler = () => {
                   </tbody>
                 </table>
               </div>
+              )}
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* BULK PACK: hermanas del mismo PO; traer las que faltan a este export. */}
+      {bulkSid && (() => {
+        const l = lines.find((x) => x.shipment_id === bulkSid);
+        if (!l || !l.bulk) return null;
+        const b = l.bulk;
+        const exp = exportsList.find((e) => e.export_id === l.export_id);
+        // Hermana en otro export de ESTA semana: se puede mover; de otra semana sólo se informa.
+        const lineOf = (n) => lines.find((x) => x.order_number === n && x.export_id !== l.export_id);
+        const missing = b.sisters.filter((x) => !x.exports.length).map((x) => x.order_number);
+        const movable = b.sisters.map((x) => (x.exports.some((e) => e.export_id === l.export_id) ? null : lineOf(x.order_number)))
+          .filter(Boolean).map((x) => x.shipment_id);
+        const bringAll = async () => {
+          if (missing.length) await addLines(exp, missing.join(' '));
+          if (movable.length) await moveIds(movable, { exportId: l.export_id });
+        };
+        return (
+          <div className="fixed inset-0 z-[90] flex items-center justify-center p-4">
+            <div className="absolute inset-0 bg-slate-900/50" onClick={() => setBulkSid(null)} />
+            <div className="sch-sheet relative w-full max-w-4xl max-h-[85vh] flex flex-col rounded-2xl shadow-2xl p-5 gap-3">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h3 className="text-base font-black text-slate-800" style={{ boxShadow: `inset 4px 0 0 hsl(${bulkHue(b.po)} 70% 45%)`, paddingLeft: 8 }}>
+                    BULK PACK · PO {b.po} · {b.client}
+                  </h3>
+                  <p className="text-[11px] text-slate-500">{exp ? exportLabel(exp) : l.ship_date} · {t('sch_bulk_progress', { po: b.po, here: b.in_export, ready: b.ready, n: b.n })}</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="px-2.5 py-1 rounded-full text-[11px] font-black text-white" style={{ background: b.complete ? '#047857' : '#d97706' }}>
+                    {b.complete ? `✓ ${t('sch_bulk_complete')}` : `⚠ ${t('sch_bulk_incomplete')}`}
+                  </span>
+                  <button onClick={() => setBulkSid(null)} className="p-1 rounded-lg text-slate-400 hover:bg-slate-100"><X className="w-5 h-5" /></button>
+                </div>
+              </div>
+              <p className="text-[11px] text-slate-500">{t('sch_bulk_rule')}</p>
+              <div className="flex-1 overflow-auto rounded-xl border border-slate-200">
+                <table className="w-full border-collapse text-[12px]">
+                  <thead className="sticky top-0 bg-slate-100">
+                    <tr className="text-[10px] font-black uppercase tracking-wider text-slate-700">
+                      <th className="px-2 py-1.5 text-left">ORDER</th>
+                      <th className="px-2 py-1.5 text-left">DESIGN #</th>
+                      <th className="px-2 py-1.5 text-right">QTY</th>
+                      <th className="px-2 py-1.5 text-left">STATUS (MOS)</th>
+                      <th className="px-2 py-1.5 text-left">{t('sch_bulk_where')}</th>
+                      {!readOnly && <th className="px-2 py-1.5" />}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {b.sisters.map((x) => {
+                      const here = x.exports.some((e) => e.export_id === l.export_id);
+                      const other = !here && lineOf(x.order_number);
+                      return (
+                        <tr key={x.order_number} data-st="none" className="border-t border-slate-100">
+                          <td className="px-2 py-1.5 font-black text-slate-800">#{x.order_number}{x.order_number === l.order_number ? ' ◀' : ''}</td>
+                          <td className="px-2 py-1.5 text-slate-600">{x.design_num || '—'}</td>
+                          <td className="px-2 py-1.5 text-right tabular-nums">{fmtNum(x.quantity)}</td>
+                          <td className="px-2 py-1.5">
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-black uppercase" style={pillStyle(x.production_status)}>{x.production_status || '—'}</span>
+                          </td>
+                          <td className={`px-2 py-1.5 font-bold ${here ? 'text-emerald-700' : 'text-amber-700'}`}>{sisterWhere(x, l.export_id)}</td>
+                          {!readOnly && (
+                            <td className="px-2 py-1.5 text-right">
+                              {!x.exports.length && (
+                                <button onClick={() => addLines(exp, x.order_number)} className="px-2 py-0.5 rounded-md bg-blue-600 text-white text-[10px] font-black uppercase hover:bg-blue-700">
+                                  {t('sch_bulk_add_here')}
+                                </button>
+                              )}
+                              {other && (
+                                <button onClick={() => moveIds([other.shipment_id], { exportId: l.export_id })} className="px-2 py-0.5 rounded-md bg-violet-600 text-white text-[10px] font-black uppercase hover:bg-violet-700">
+                                  {t('sch_bulk_move_here')}
+                                </button>
+                              )}
+                            </td>
+                          )}
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              {!readOnly && (missing.length > 0 || movable.length > 0) && (
+                <div className="flex justify-end">
+                  <button onClick={bringAll} className="px-3 py-1.5 rounded-lg bg-blue-600 text-white text-[11px] font-black uppercase hover:bg-blue-700">
+                    {t('sch_bulk_bring_all', { n: missing.length + movable.length })}
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         );

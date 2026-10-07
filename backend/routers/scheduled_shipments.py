@@ -339,9 +339,79 @@ async def _rows(scheds, by_num=None, pl_by_num=None):
     # lista (se piden por número aunque la orden ya no exista — la bitácora manda).
     embarcado = await qty_embarcada_por_orden(db, [
         {"order_number": n, "order_id": by_num.get(n, {}).get("order_id")} for n in set(nums)])
-    return [_row(s, by_num.get(s.get("order_number")), (pl_by_num or {}).get(s.get("order_number")),
+    rows = [_row(s, by_num.get(s.get("order_number")), (pl_by_num or {}).get(s.get("order_number")),
                  qty_shipped=embarcado.get(s.get("order_number"), 0))
             for s in scheds]
+    await _attach_bulk(rows, by_num)
+    return rows
+
+
+# ── BULK PACK: órdenes hermanas del mismo PO ─────────────────────────────────
+# MOS no marca el bulk pack; se deduce (decisión 2026-10-07): toda orden viva
+# con el mismo cliente + customer PO es hermana (Printavo parte un PO en una
+# orden por diseño/color y viajan juntas). COMPLETO = todas las hermanas en el
+# MISMO export de la fila y todas en LISTO PARA ENVIO en MOS. Canceladas y
+# papelera no cuentan. Se calcula al leer: no hay nada que capturar.
+BULK_READY = "LISTO PARA ENVIO"
+
+
+def _bulk_key(order: dict | None):
+    if not order:
+        return None
+    c, po = str(order.get("client") or "").strip(), str(order.get("customer_po") or "").strip()
+    return (c, po) if c and po else None
+
+
+async def _attach_bulk(rows: list, by_num: dict) -> None:
+    keys = {}
+    for r in rows:
+        k = _bulk_key(by_num.get(r.get("order_number"))) if r.get("export_id") else None
+        if k:
+            keys[k] = by_num[r["order_number"]]
+    if not keys:
+        return
+    sisters = {}
+    async for o in db.orders.find(
+            {"$or": [{"client": o["client"], "customer_po": o["customer_po"]} for o in keys.values()],
+             "board": {"$ne": PAPELERA}},
+            {"_id": 0, "order_number": 1, "client": 1, "customer_po": 1, "production_status": 1,
+             "quantity": 1, "design_#": 1, "design_num": 1}):
+        if str(o.get("production_status") or "").strip().upper() == "CANCELLED":
+            continue
+        sisters.setdefault(_bulk_key(o), {})[o["order_number"]] = o
+    groups = {k: v for k, v in sisters.items() if len(v) > 1}
+    if not groups:
+        return
+    nums = [n for g in groups.values() for n in g]
+    where = {}  # order_number → {export_id}
+    async for l in db.scheduled_shipments.find(
+            {"order_number": {"$in": nums}, "export_id": {"$nin": [None, ""]}},
+            {"_id": 0, "order_number": 1, "export_id": 1}):
+        where.setdefault(l["order_number"], set()).add(l["export_id"])
+    exp_ids = {e for v in where.values() for e in v}
+    exps = {e["export_id"]: e async for e in db.shipping_exports.find(
+        {"export_id": {"$in": list(exp_ids)}}, {"_id": 0, "export_id": 1, "export_no": 1, "date": 1})}
+    for r in rows:
+        k = _bulk_key(by_num.get(r.get("order_number"))) if r.get("export_id") else None
+        g = groups.get(k)
+        if not g:
+            continue
+        sis = []
+        for n, o in sorted(g.items(), key=lambda kv: (len(kv[0]), kv[0])):
+            sis.append({
+                "order_number": n,
+                "production_status": o.get("production_status") or None,
+                "quantity": o.get("quantity"),
+                "design_num": o.get("design_#") or o.get("design_num"),
+                "exports": [{"export_id": e, "export_no": (exps.get(e) or {}).get("export_no"),
+                             "date": (exps.get(e) or {}).get("date")}
+                            for e in sorted(where.get(n, ()), key=lambda e: str((exps.get(e) or {}).get("date")))],
+            })
+        here = sum(1 for x in sis if r["export_id"] in {e["export_id"] for e in x["exports"]})
+        ready = sum(1 for x in sis if str(x["production_status"] or "").strip().upper() == BULK_READY)
+        r["bulk"] = {"po": k[1], "client": k[0], "n": len(sis), "sisters": sis,
+                     "in_export": here, "ready": ready,
+                     "complete": here == len(sis) and ready == len(sis)}
 
 
 async def _one_row(sched):
