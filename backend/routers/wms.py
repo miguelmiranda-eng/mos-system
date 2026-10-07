@@ -8217,6 +8217,19 @@ async def get_order_trace(order_number: str, request: Request):
         "tickets": tickets,
     }
 
+def _sum_size_map(d):
+    """Suma un mapa talla→qty soportando los DOS formatos de picked_sizes:
+    el SIMPLE (talla→número) y el NUEVO anidado
+    (talla→{"total": N, "details": {ubicación: qty}}, ver wms.py:7513).
+    Sin esto, int() sobre el dict anidado revienta — el 2026-10-07 tumbó
+    /pick-tickets/stats (2854 de 3474 tickets lo traían). Misma lógica que
+    _sum_sizes / _q, centralizada para que no se vuelva a olvidar un caso."""
+    total = 0
+    for v in (d or {}).values():
+        total += int(v.get("total") or 0) if isinstance(v, dict) else int(v or 0)
+    return total
+
+
 @router.get("/pick-tickets/stats")
 async def pick_ticket_stats(request: Request):
     """Dashboard stats for picker productivity."""
@@ -8241,8 +8254,8 @@ async def pick_ticket_stats(request: Request):
         else: op["assigned"] += 1
         sizes = t.get("sizes", {})
         picked = t.get("picked_sizes", {})
-        op["total_pieces"] += sum(int(v) for v in sizes.values())
-        op["picked_pieces"] += sum(int(v) for v in picked.values())
+        op["total_pieces"] += _sum_size_map(sizes)
+        op["picked_pieces"] += _sum_size_map(picked)
     return {
         "total_tickets": len(tickets),
         "completed": total_completed,
