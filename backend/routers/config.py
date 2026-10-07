@@ -2,6 +2,7 @@
 from fastapi import APIRouter, HTTPException, Request
 from deps import db, require_auth, require_admin, require_supersu, log_activity, OptionUpdate, DEFAULT_OPTIONS, BOARDS, get_dynamic_boards, save_boards
 from datetime import datetime, timezone
+import re
 import uuid
 
 router = APIRouter(prefix="/api/config")
@@ -40,8 +41,17 @@ async def create_board(request: Request):
     if not name:
         raise HTTPException(status_code=400, detail="Board name required")
     boards = await get_dynamic_boards()
-    if name in boards:
-        raise HTTPException(status_code=400, detail="Board already exists")
+    # Dedup INSENSIBLE a espacios (además del strip/upper): "MAQUINA 16" y
+    # "MAQUINA16" son el MISMO tablero para un humano, y el match exacto los
+    # dejaba coexistir — fue justo lo que duplicó MAQUINA16. La llave colapsa
+    # TODO el espacio; los tableros multi-palabra legítimos (READY TO SCHEDULED,
+    # FINAL BILL) conservan su nombre completo, solo la COMPARACIÓN lo ignora.
+    def _key(s):
+        return re.sub(r"\s+", "", str(s)).upper()
+    existing = {_key(b): b for b in boards}
+    if _key(name) in existing:
+        raise HTTPException(status_code=400,
+                            detail=f"El tablero ya existe (como '{existing[_key(name)]}').")
     boards.append(name)
     await save_boards(boards)
     # Un tablero MAQUINA<n> nuevo es una máquina nueva: el plan de capacidad
