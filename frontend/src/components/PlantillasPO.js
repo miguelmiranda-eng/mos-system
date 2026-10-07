@@ -202,8 +202,11 @@ export default function PlantillasPO() {
         const r = await fetch(`${API}/po-templates/${sel.template_id}/validar`, {
           method: "POST", credentials: "include", body: fd });
         const d = await leer(r, t('ppo_validar'));
+        // Un PDF que ya lee otro motor no valida: la plantilla nunca se usaría.
         toast[d.valida ? "success" : "warning"](
-          d.valida ? t('ppo_validada', { n: d.estilos }) : t('ppo_no_valida'));
+          d.valida ? t('ppo_validada', { n: d.estilos })
+            : d.ya_lo_lee ? t('ppo_validar_ya_lo_lee', { m: d.ya_lo_lee.motor })
+              : t('ppo_no_valida'));
         cargarLista();
         setSel((s) => ({ ...s, validada_con: d.valida ? file.name : null }));
       } else {
@@ -595,6 +598,13 @@ export default function PlantillasPO() {
                   <Power className="w-3.5 h-3.5" /> {sel.activa ? t('ppo_activa') : t('ppo_activar')}
                 </button>
               </div>
+
+              {draft?.ya_lo_lee && (
+                <div className="text-sm bg-destructive/10 border border-destructive/40 text-destructive rounded-lg px-3 py-2 flex items-start gap-2">
+                  <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                  <span>{t('ppo_ya_lo_lee', { m: draft.ya_lo_lee.motor, n: draft.ya_lo_lee.estilos })}</span>
+                </div>
+              )}
 
               {!draft && (
                 <div className="text-xs bg-secondary/40 border border-border rounded-lg px-3 py-2 text-muted-foreground">

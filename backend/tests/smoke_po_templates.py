@@ -222,6 +222,29 @@ def _salida():
     return malas
 
 
+def _motor_existente():
+    """La pantalla avisa si el PDF ya lo lee un motor escrito a mano, y una
+    plantilla validada con ese PDF no queda validada (no se puede activar).
+
+    Paso con SPEKTRUM: plantilla armada, validada y activada para PDFs que el
+    motor de Culture Kings ya leía; nunca se uso y nada lo dijo."""
+    from routers.po_templates import motor_existente
+    malas = []
+    with open(os.path.join(CORPUS, CASOS[0]), "rb") as fh:
+        ya = motor_existente(fh.read())
+    if (ya or {}).get("motor") != "Goodie":
+        malas.append(f"motor_existente: un PDF de Goodie dio {ya!r}")
+    spk = os.path.join(os.path.dirname(__file__), "fixtures", "po_spk", "po_sheets_09_24_26.pdf")
+    if os.path.exists(spk):                           # datos del cliente: fuera del repo
+        with open(spk, "rb") as fh:
+            ya = motor_existente(fh.read())
+        if ya != {"motor": "Culture Kings", "estilos": 27}:
+            malas.append(f"motor_existente: la hoja de Spektrum dio {ya!r}")
+    if motor_existente(b"%PDF-1.4 no es un pdf de verdad") is not None:
+        malas.append("motor_existente: un PDF roto debe dar None (no tumbar la pantalla)")
+    return malas
+
+
 def _debajo_alineado_derecha():
     """`debajo_de` con un valor que ARRANCA antes que su encabezado.
 
@@ -285,6 +308,7 @@ def main():
     difs += _ruteo()
     difs += _salida()
     difs += _debajo_alineado_derecha()
+    difs += _motor_existente()
 
     print("=" * 60)
     if difs:

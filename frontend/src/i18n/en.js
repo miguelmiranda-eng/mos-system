@@ -1161,6 +1161,8 @@ const en = {
   ppo_sin_guardar: "unsaved",
   ppo_descartar: "This template has unsaved changes. Discard them?",
   ppo_regla_otra: "Saved rule ({tipo})",
+  ppo_ya_lo_lee: "This PDF is already read by the {m} engine ({n} style(s)). That engine runs first, so a template for this customer would never be used. Templates are for customers no engine recognizes.",
+  ppo_validar_ya_lo_lee: "Not validated: that PDF is already read by the {m} engine. This template would never be used for that customer.",
   ppo_sin_pdf: "This template has {n} saved field(s). The PDF is not stored with it: upload one from the customer to see what each rule reads.",
   ppo_h_titulo: "Customer fingerprint",
   ppo_h_ayuda: "Text that only this customer's PDFs carry. Without at least one under “Must contain” the template cannot be activated: it would try to read anyone's PDF. Changing it deactivates the template and it must be validated again.",

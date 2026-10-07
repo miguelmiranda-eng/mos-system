@@ -35,8 +35,28 @@ from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 
 from deps import db, log_activity, logger, require_admin, require_admin_level
 from routers.import_router import SIZES_MAP
-from printavo_export import QUOTE_POR_OMISION, build_quote_input
+from starlette.concurrency import run_in_threadpool
+
+from printavo_export import QUOTE_POR_OMISION, build_quote_input, parse_pdf, parse_culturekings_pdf
 from services.po_templates import leer_pdf, huella_definida
+
+
+def motor_existente(data: bytes):
+    """¿Algún motor escrito a mano ya lee este PDF? -> {"motor", "estilos"} o None.
+
+    El lector va Goodie -> Culture Kings -> plantillas: si uno de los dos
+    primeros reconoce el PDF, una plantilla para ese cliente NUNCA se usaría.
+    Paso el 2026-10-06: se armó, validó y activó una plantilla SPEKTRUM para PDFs
+    que el motor de Culture Kings ya leía, y nada en la pantalla lo dijo. Mismo
+    orden que parse_po_bytes; si un motor truena se toma como que no lo lee."""
+    for nombre, fn in (("Goodie", parse_pdf), ("Culture Kings", parse_culturekings_pdf)):
+        try:
+            recs = fn(data)
+        except Exception:                             # noqa: BLE001
+            recs = []
+        if recs:
+            return {"motor": nombre, "estilos": len(recs)}
+    return None
 
 router = APIRouter(prefix="/api/po-templates")
 
@@ -111,7 +131,9 @@ async def crear_borrador(request: Request, file: UploadFile = File(...)):
     corte = (datetime.now(timezone.utc) - timedelta(days=DIAS_BORRADOR)).isoformat()
     await db.po_template_drafts.delete_many({"created_at": {"$lt": corte}})
 
-    return {"draft_id": draft_id, "filename": file.filename, "paginas": paginas}
+    # Se avisa ANTES de mapear: si un motor ya lo lee, mapearlo es tiempo perdido.
+    return {"draft_id": draft_id, "filename": file.filename, "paginas": paginas,
+            "ya_lo_lee": await run_in_threadpool(motor_existente, data)}
 
 
 @router.post("/borrador/{draft_id}/probar")
@@ -253,14 +275,19 @@ async def validar(request: Request, tid: str, file: UploadFile = File(...)):
         raise HTTPException(404, "No existe")
     if not (file.filename or "").lower().endswith(".pdf"):
         raise HTTPException(400, "El archivo debe ser un PDF")
-    res = _correr(plantilla, await file.read())
-    ok = res["estilos"] > 0
+    data = await file.read()
+    res = _correr(plantilla, data)
+    # Un PDF que ya lee otro motor no valida nada: la plantilla nunca llegaria a
+    # usarse con ese cliente. Sin validar no se puede activar.
+    ya = await run_in_threadpool(motor_existente, data)
+    ok = res["estilos"] > 0 and not ya
     await db.po_templates.update_one(
         {"template_id": tid},
         {"$set": {"validada_con": file.filename if ok else None, "updated_at": _ahora()}})
     await log_activity(user, "po_template_validate",
-                       {"template_id": tid, "archivo": file.filename, "estilos": res["estilos"]})
-    return {**res, "valida": ok}
+                       {"template_id": tid, "archivo": file.filename, "estilos": res["estilos"],
+                        "ya_lo_lee": (ya or {}).get("motor")})
+    return {**res, "valida": ok, "ya_lo_lee": ya}
 
 
 @router.post("/{tid}/activar")
