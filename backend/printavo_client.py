@@ -216,10 +216,12 @@ async def create_quote(quote_input: dict) -> dict:
     return (data.get("quoteCreate")) or {}
 
 
-# Mockups del invoice: en Printavo cada grupo de lineas tiene sus impresiones
-# (imprints) y cada impresion sus mockups — es la imagen que se ve en el invoice
-# debajo de las lineas del grupo. Una llamada por orden, bajo demanda (la ficha
-# del work order); complejidad 25 x 10 x 10, lejos del limite de 25000.
+# Mockups del invoice. En Printavo una imagen puede colgar de una LINEA
+# (lineItem.mockups: se ve debajo de esa linea) o de una impresion del grupo
+# (imprints.mockups). En la 3470 el arte cuelga de la linea "FRONT PRINT / BACK
+# PRINT / NECK LABEL / FINISHING" y de otra linea cuelga el PO escaneado; la
+# primera version solo miraba imprints y en la 3338/3736 no encontro nada.
+# Una llamada por orden, bajo demanda; complejidad 25x(30x5 + 10x10) = 6250.
 INVOICE_MOCKUPS_QUERY = """
 query InvoiceMockups($id: ID!) {
   invoice(id: $id) {
@@ -227,6 +229,14 @@ query InvoiceMockups($id: ID!) {
     lineItemGroups(first: 25) {
       nodes {
         position
+        lineItems(first: 30) {
+          nodes {
+            description
+            mockups(first: 5) {
+              nodes { id fullImageUrl thumbnailUrl mimeType }
+            }
+          }
+        }
         imprints(first: 10) {
           nodes {
             id
@@ -242,20 +252,40 @@ query InvoiceMockups($id: ID!) {
 """
 
 
+def _es_linea_de_impresion(desc: str) -> bool:
+    """'FRONT PRINT\\nBACK PRINT\\nNECK LABEL\\nFINISHING', 'PRINTED NECK LABEL'...
+    Es la linea de la que cuelga el ARTE; el PO escaneado cuelga de otra."""
+    return "PRINT" in (desc or "").upper()
+
+
 async def fetch_invoice_mockups(invoice_id: str) -> list:
-    """Mockups de un invoice en el orden en que se ven en Printavo:
-    [{id, url, thumbnail, mime, group}]. [] si el invoice no tiene ninguno."""
+    """El ARTE de un invoice: [{id, url, thumbnail, mime, group, origen}].
+
+    Prioridad: (1) mockups de las lineas de impresion ("...PRINT..."); (2) si no
+    hay, los de las impresiones (imprints) del grupo. NO se toman los mockups de
+    las demas lineas: ahi suele ir el PO escaneado, que no es el mock."""
     data = await _graphql(INVOICE_MOCKUPS_QUERY, {"id": str(invoice_id)})
     inv = data.get("invoice") or {}
-    out = []
+
+    def item(m, g, origen):
+        url = m.get("fullImageUrl") or m.get("thumbnailUrl")
+        return {"id": m.get("id"), "url": url, "thumbnail": m.get("thumbnailUrl"),
+                "mime": m.get("mimeType") or "", "group": g.get("position"), "origen": origen} if url else None
+
+    de_lineas, de_imprints = [], []
     for g in ((inv.get("lineItemGroups") or {}).get("nodes") or []):
+        for li in ((g.get("lineItems") or {}).get("nodes") or []):
+            if _es_linea_de_impresion(li.get("description")):
+                for m in ((li.get("mockups") or {}).get("nodes") or []):
+                    x = item(m, g, "linea")
+                    if x:
+                        de_lineas.append(x)
         for imp in ((g.get("imprints") or {}).get("nodes") or []):
             for m in ((imp.get("mockups") or {}).get("nodes") or []):
-                url = m.get("fullImageUrl") or m.get("thumbnailUrl")
-                if url:
-                    out.append({"id": m.get("id"), "url": url, "thumbnail": m.get("thumbnailUrl"),
-                                "mime": m.get("mimeType") or "", "group": g.get("position")})
-    return out
+                x = item(m, g, "imprint")
+                if x:
+                    de_imprints.append(x)
+    return de_lineas or de_imprints
 
 
 async def fetch_recent_invoices(first: int = 25) -> list:

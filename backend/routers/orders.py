@@ -1769,11 +1769,20 @@ async def upload_attachment(order_id: str, request: Request):
         backend_url = os.environ.get("BACKEND_PUBLIC_URL", "")
         file_url = f"{backend_url}/api/uploads/{storage_key}"
         # Update order's generic attachments/images list
-        await db.orders.update_one({"order_id": order_id}, {"$push": {"images": {"filename": filename, "url": file_url, "uploaded_at": datetime.now(timezone.utc).isoformat()}}})
+        entry = {"filename": filename, "url": file_url, "uploaded_at": datetime.now(timezone.utc).isoformat()}
+        # `kind: "mock"` = subido desde el recuadro del mock de la ficha. `images`
+        # guarda TODOS los adjuntos (fotos de QC, comentarios...) y la galeria de
+        # mocks solo debe mostrar mocks: sin la marca no hay como separarlos.
+        if body.get("kind") in ("mock",):
+            entry["kind"] = body["kind"]
+        await db.orders.update_one({"order_id": order_id}, {"$push": {"images": entry}})
         await log_activity(user, "upload_attachment", {"order_id": order_id, "filename": filename, "type": content_type})
         return {"url": file_url, "filename": filename, "storage_key": storage_key, "content_type": content_type}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
+
+
+MOCKS_VERSION = 2   # subirla hace que la ficha vuelva a buscar sola (ver abajo)
 
 
 @router.post("/{order_id}/images/printavo")
@@ -1836,7 +1845,11 @@ async def traer_mocks_printavo(order_id: str, request: Request):
             nuevas.append({"filename": filename, "url": f"{backend_url}/api/uploads/{storage_key}",
                            "uploaded_at": datetime.now(timezone.utc).isoformat(),
                            "source": "printavo", "printavo_mockup_id": m["id"]})
-    upd = {"$set": {"printavo_mocks_at": datetime.now(timezone.utc).isoformat()}}
+    # printavo_mocks_v: version de la busqueda. La v1 solo miraba imprints y no
+    # encontraba el arte que cuelga de la linea FRONT PRINT; con la version la
+    # ficha vuelve a buscar sola en las ordenes que se revisaron con la v1.
+    upd = {"$set": {"printavo_mocks_at": datetime.now(timezone.utc).isoformat(),
+                    "printavo_mocks_v": MOCKS_VERSION}}
     if nuevas:
         upd["$push"] = {"images": {"$each": nuevas}}
     await db.orders.update_one({"order_id": order_id}, upd)

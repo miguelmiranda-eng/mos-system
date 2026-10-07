@@ -16,6 +16,10 @@ import { API } from '../lib/constants';
  * fetch aparte y quedan para una iteración siguiente.
  */
 
+// Igual que MOCKS_VERSION en routers/orders.py: si la orden se revisó con una
+// versión anterior de la búsqueda de mocks en Printavo, la ficha la repite sola.
+const MOCKS_VERSION = 2;
+
 const STAGES = [
   ['SCHEDULING', 'Programación'], ['BLANKS', 'Blanks'], ['SCREENS', 'Screens'],
   ['LABEL', 'Neck'], ['PRODUCTION', 'Producción'], ['PACKING', 'Empaque'], ['SHIPPED', 'Enviada'],
@@ -260,8 +264,11 @@ export default function WorkOrderModal({ order, isOpen, onClose, isDark = false,
     if (u.startsWith('/api/')) return `${API}${u.slice(4)}`;
     return u;
   };
+  // SOLO mocks: los traídos de Printavo y los subidos desde este recuadro. Filtrar
+  // por extensión no basta: la 3338 mostraba 16 fotos de QC y comentarios (hoja
+  // viajera, cajas, etiquetas de cuello) que también viven en `images`.
   const soloImagenes = (lista) => (Array.isArray(lista) ? lista : [])
-    .filter((m) => /\.(png|jpe?g|gif|webp|bmp|img)$/i.test(m.filename || m.url || ''));
+    .filter((m) => m.source === 'printavo' || m.kind === 'mock');
 
   // Trae los mockups del invoice de Printavo (POST /orders/{id}/images/printavo).
   // `auto`: la llamada que hace la ficha sola al abrir; no avisa si no hay nada.
@@ -299,7 +306,8 @@ export default function WorkOrderModal({ order, isOpen, onClose, isDark = false,
         setMocks(imgs);
         // Aunque ya haya imágenes subidas a mano: la 3470 tenía una 'image.jpg'
         // y por eso nunca se buscó su mock en Printavo. El endpoint no repite.
-        if (full.printavo_invoice_id && !full.printavo_mocks_at) traerDePrintavo(true);
+        // Versionado: la búsqueda v1 no miraba las líneas (donde está el arte).
+        if (full.printavo_invoice_id && (full.printavo_mocks_v || 0) < MOCKS_VERSION) traerDePrintavo(true);
       })
       .catch(() => {});
     return () => { alive = false; };
@@ -321,11 +329,11 @@ export default function WorkOrderModal({ order, isOpen, onClose, isDark = false,
         const res = await fetch(`${API}/orders/${order.order_id}/images`, { // eslint-disable-line no-await-in-loop
           method: 'POST', credentials: 'include',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ image_data: data, filename: file.name }),
+          body: JSON.stringify({ image_data: data, filename: file.name, kind: 'mock' }),
         });
         if (res.ok) {
           const d = await res.json(); // eslint-disable-line no-await-in-loop
-          setMocks((m) => [...m, { filename: d.filename, url: d.url }]);
+          setMocks((m) => [...m, { filename: d.filename, url: d.url, kind: 'mock' }]);
         } else {
           toast.error(`No se pudo subir ${file.name}`);
         }

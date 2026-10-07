@@ -47,16 +47,33 @@ def check(nombre, cond, detalle=""):
         print(f"   FAIL  {nombre}  {detalle}")
 
 
-# Respuesta con la forma de la doc de la API v2 (invoice 3470: dos grupos; el
-# primero trae el PO escaneado como PDF, el segundo el arte).
+def _m(mid, url, mime):
+    return {"id": mid, "fullImageUrl": url, "thumbnailUrl": url, "mimeType": mime}
+
+
+def _li(desc, *mockups):
+    return {"description": desc, "mockups": {"nodes": list(mockups)}}
+
+
+# Forma de la 3470 (API v2): el PO escaneado cuelga de una LINEA cualquiera y el
+# arte de la linea "FRONT PRINT / BACK PRINT / ..."; un imprint con otra imagen.
 RESPUESTA = {"invoice": {"id": "24800000", "lineItemGroups": {"nodes": [
-    {"position": 1, "imprints": {"nodes": [{"id": "i1", "mockups": {"nodes": [
-        {"id": "m_po", "fullImageUrl": "https://cdn/po.pdf", "thumbnailUrl": "https://cdn/po_t.png",
-         "mimeType": "application/pdf"}]}}]}},
-    {"position": 2, "imprints": {"nodes": [{"id": "i2", "mockups": {"nodes": [
-        {"id": "m_arte", "fullImageUrl": "https://cdn/arte.png", "thumbnailUrl": "https://cdn/arte_t.png",
-         "mimeType": "image/png"}]}}]}},
-    {"position": 3, "imprints": {"nodes": []}},
+    {"position": 1,
+     "lineItems": {"nodes": [_li("HANNIBAL TEE\n...\nSM - 40\n2XL - 120", _m("m_po", "https://cdn/po.png", "image/png"))]},
+     "imprints": {"nodes": [{"id": "i1", "mockups": {"nodes": [_m("m_imp", "https://cdn/imp.png", "image/png")]}}]}},
+    {"position": 2,
+     "lineItems": {"nodes": [
+         _li("GTS PP KEEP SAMPLE\nMD-1"),
+         _li("FRONT PRINT\nBACK PRINT\nNECK LABEL\nFINISHING",
+             _m("m_arte", "https://cdn/arte.png", "image/png"),
+             _m("m_arte_pdf", "https://cdn/arte.pdf", "application/pdf"))]},
+     "imprints": {"nodes": []}},
+]}}}
+
+# Otra orden: sin mockups en las lineas de impresion, solo en el imprint.
+RESPUESTA_SOLO_IMPRINT = {"invoice": {"id": "2", "lineItemGroups": {"nodes": [
+    {"position": 1, "lineItems": {"nodes": [_li("FRONT PRINT")]},
+     "imprints": {"nodes": [{"id": "i9", "mockups": {"nodes": [_m("m_i9", "https://cdn/i9.png", "image/png")]}}]}},
 ]}}}
 
 
@@ -116,7 +133,7 @@ class Req:
 
 
 async def main():
-    print("\n1) fetch_invoice_mockups lee grupo -> imprints -> mockups")
+    print("\n1) fetch_invoice_mockups: el arte de la linea de impresion, no el PO")
     llamadas = []
 
     async def gql(q, v):
@@ -124,9 +141,18 @@ async def main():
         return copy.deepcopy(RESPUESTA)
     pc._graphql = gql
     ms = await pc.fetch_invoice_mockups("24800000")
-    check("2 mockups en el orden del invoice", [m["id"] for m in ms] == ["m_po", "m_arte"], f"{ms}")
-    check("con su mime y grupo", ms[1]["mime"] == "image/png" and ms[1]["group"] == 2, f"{ms[1]}")
+    ids = [m["id"] for m in ms]
+    check("toma los de la linea FRONT PRINT", ids == ["m_arte", "m_arte_pdf"], f"{ids}")
+    check("NO el PO escaneado que cuelga de otra linea", "m_po" not in ids, f"{ids}")
+    check("ni el imprint cuando la linea de impresion ya trae arte", "m_imp" not in ids, f"{ids}")
     check("una sola llamada a Printavo, por id", llamadas == [{"id": "24800000"}], f"{llamadas}")
+
+    async def gql2(q, v):
+        return copy.deepcopy(RESPUESTA_SOLO_IMPRINT)
+    pc._graphql = gql2
+    ms2 = await pc.fetch_invoice_mockups("2")
+    check("sin arte en las lineas -> cae a los imprints", [m["id"] for m in ms2] == ["m_i9"], f"{ms2}")
+    pc._graphql = gql
 
     print("\n2-4) endpoint: guarda el arte, salta el PDF, no repite")
     tmp = Path(tempfile.mkdtemp())
@@ -147,13 +173,14 @@ async def main():
     r = await ro.traer_mocks_printavo("ord_1", Req())
     orden = ro.db.orders.docs[0]
     check("trae 1 (el arte)", r["traidas"] == 1 and r["en_printavo"] == 2, f"{r}")
-    check("el PDF del PO se salta, con motivo", any("application/pdf" in x for x in r["omitidas"]), f"{r['omitidas']}")
-    check("ni siquiera se descarga el PDF", "https://cdn/po.pdf" not in Cliente.bajadas, f"{Cliente.bajadas}")
+    check("un PDF se salta, con motivo", any("application/pdf" in x for x in r["omitidas"]), f"{r['omitidas']}")
+    check("ni siquiera se descarga el PDF", "https://cdn/arte.pdf" not in Cliente.bajadas, f"{Cliente.bajadas}")
     img = (orden.get("images") or [{}])[0]
     check("queda en order.images con printavo_mockup_id", img.get("printavo_mockup_id") == "m_arte", f"{img}")
     check("el archivo esta en disco", any(tmp.iterdir()), f"{list(tmp.iterdir())}")
     check("y registrado en file_uploads", len(ro.db.file_uploads.docs) == 1)
-    check("marca printavo_mocks_at (la ficha no vuelve a buscar sola)", bool(orden.get("printavo_mocks_at")))
+    check("marca printavo_mocks_at y la version (la ficha no vuelve a buscar sola)",
+          bool(orden.get("printavo_mocks_at")) and orden.get("printavo_mocks_v") == ro.MOCKS_VERSION, f"{orden}")
     check("devuelve las imagenes para pintarlas", len(r["images"]) == 1, f"{r['images']}")
 
     r2 = await ro.traer_mocks_printavo("ord_1", Req())
