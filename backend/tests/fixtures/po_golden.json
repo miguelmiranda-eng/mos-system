@@ -23,7 +23,7 @@
      "MD - 134",
      "LG - 134"
     ],
-    "pack_raw": "XS - 66\nSM - 66\nMD - 132\nLG - 132\nM - 1",
+    "pack_raw": "XS - 66\nSM - 66\nMD - 132\nLG - 132",
     "photo_approval": false,
     "po_discrepancy": false,
     "po_number": "21880",
@@ -43,7 +43,7 @@
     "status": "ORIGINAL",
     "store_po": "322481",
     "store_po_notes": "322481",
-    "tops_needed": "",
+    "tops_needed": "PP SAMPLE: 1 M",
     "unit_price": 0.9
    }
   ]
@@ -947,7 +947,7 @@
     "status": "ORIGINAL",
     "store_po": "PWA",
     "store_po_notes": null,
-    "tops_needed": "",
+    "tops_needed": "PP SAMPLE: 2 M\nTOP SAMPLE: 5 M\nCONTRACTUAL SAMPLE: 2 M, 1 L\nGTS KEEP SAMPLE: 2 L",
     "unit_price": 1.35
    },
    {
@@ -1040,7 +1040,7 @@
     "status": "ORIGINAL",
     "store_po": "PWA",
     "store_po_notes": null,
-    "tops_needed": "",
+    "tops_needed": "PP SAMPLE: 2 M\nTOP SAMPLE: 5 M\nCONTRACTUAL SAMPLE: 3 S, 3 M, 3 L, 3 XL\nGTS KEEP SAMPLE: 2 L",
     "unit_price": 1.35
    }
   ]
@@ -1134,7 +1134,7 @@
     "status": "ORIGINAL",
     "store_po": "PWA",
     "store_po_notes": null,
-    "tops_needed": "",
+    "tops_needed": "PP SAMPLE: 3 M\nTOP SAMPLE: 5 M\nCONTRACTUAL SAMPLE: 2 M, 1 L\nGTS KEEP SAMPLE: 2 L",
     "unit_price": 1.35
    },
    {
@@ -1227,7 +1227,7 @@
     "status": "ORIGINAL",
     "store_po": "PWA",
     "store_po_notes": null,
-    "tops_needed": "",
+    "tops_needed": "PP SAMPLE: 3 M\nTOP SAMPLE: 5 M\nCONTRACTUAL SAMPLE: 3 S, 3 M, 3 L, 3 XL\nGTS KEEP SAMPLE: 2 L",
     "unit_price": 1.35
    }
   ]
@@ -8734,7 +8734,7 @@
      "LG - 937",
      "XL - 937"
     ],
-    "pack_raw": "SM - 936\nMD -936\nLG - 936\nXL - 936\nSM - 1",
+    "pack_raw": "SM - 936\nMD -936\nLG - 936\nXL - 936",
     "photo_approval": false,
     "po_discrepancy": false,
     "po_number": "23067",
@@ -8754,7 +8754,7 @@
     "status": "ORIGINAL",
     "store_po": "326544",
     "store_po_notes": "326544",
-    "tops_needed": "",
+    "tops_needed": "TOP SAMPLE: 1 SM",
     "unit_price": 1.35
    }
   ]
@@ -8783,7 +8783,7 @@
      "LG - 793",
      "XL - 793"
     ],
-    "pack_raw": "SM - 1296\nMD -1296\nLG - 792\nXL - 792\nSM - 1\nMD - 1\nLG - 1",
+    "pack_raw": "SM - 1296\nMD -1296\nLG - 792\nXL - 792",
     "photo_approval": false,
     "po_discrepancy": false,
     "po_number": "23072",
@@ -8803,7 +8803,7 @@
     "status": "ORIGINAL",
     "store_po": "326543",
     "store_po_notes": "326543",
-    "tops_needed": "",
+    "tops_needed": "TOP SAMPLE: 1 SM, 1 MD, 1 LG",
     "unit_price": 0.95
    }
   ]
@@ -11061,7 +11061,7 @@
      "XL - 64",
      "2XL - 62"
     ],
-    "pack_raw": "MD- 60\nLG- 60\nXL- 60\nXXL - 60\nMD - 3",
+    "pack_raw": "MD- 60\nLG- 60\nXL- 60\nXXL - 60",
     "photo_approval": false,
     "po_discrepancy": false,
     "po_number": "23204",
@@ -11081,7 +11081,7 @@
     "status": "ORIGINAL",
     "store_po": "327051",
     "store_po_notes": "327051",
-    "tops_needed": "",
+    "tops_needed": "PP SAMPLE: 3 MD",
     "unit_price": 1.15
    }
   ]

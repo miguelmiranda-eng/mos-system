@@ -243,7 +243,11 @@ def _pack_raw_from_text(text: str) -> str:
     if not m:
         return ""
     raw = m.group(1).strip("\n")
-    # Filtrar solo lineas con formato de talla ("SM - 60", "MD- 60", "XXL 96", etc.)
+    # Solo lineas con formato de talla ("SM - 60", "MD- 60", "XXL 96", etc.), y el
+    # bloque TERMINA en el primer renglon que no lo es. Antes se saltaba ese
+    # renglon y seguia: tras el PACK muchos tickets traen "PP SAMPLE:" o "TOP
+    # SAMPLE" con SUS tallas ("MD - 2"), y esas muestras se colaban al packing de
+    # la quote (quote #3751, PO 23314; en el corpus, 6 paginas de 5 POs).
     out = []
     for ln in raw.split("\n"):
         s = ln.strip()
@@ -251,7 +255,43 @@ def _pack_raw_from_text(text: str) -> str:
             continue
         if re.match(r"^[A-Z0-9]{1,4}\s*[-]?\s*\d+\s*$", s):
             out.append(s)
+        elif out:
+            break
     return "\n".join(out)
+
+
+# Bloques de muestras que algunos tickets traen tras el PACK / la rejilla, con el
+# mismo formato de talla. Un renglon que es SOLO el rotulo abre un bloque:
+#   Spencers: "PP SAMPLE:\nMD - 2"   o   "TOP SAMPLE\nSM - 1\nMD - 1 ..."
+#   Kohls:    "PP SAMPLE:\nM - 2\nTOP SAMPLE:\nM - 5\nCONTRACTUAL SAMPLE:\nM - 2\nL - 1\n
+#              GTS KEEP SAMPLE\nL - 2"
+# El "SAMPLE Y" del encabezado y "APPROVAL METHOD: PHYSICAL SAMPLE" no son
+# renglones de solo-rotulo, asi que no abren bloque.
+_SAMPLE_HDR_LINE_RE = re.compile(r"^([A-Z][A-Z ]*?SAMPLES?)\s*:?$")
+_SAMPLE_SIZE_LINE_RE = re.compile(r"^([A-Z0-9]{1,4})\s*-?\s*(\d+)$")
+
+
+def _sample_block_lines(text: str) -> str:
+    """Las muestras que pide el PO, una linea por tipo y con su nombre:
+    'PP SAMPLE: 2 M' / 'TOP SAMPLE: 5 M' / 'CONTRACTUAL SAMPLE: 2 M, 1 L'.
+
+    Van a la linea TOPS NEEDED de la quote: son la muestra que pide el cliente,
+    no parte del empaque. Se conserva el NOMBRE de cada tipo porque Kohls pide
+    cuatro distintos y quedarse con uno solo (el primer intento) perdia el resto."""
+    tipos, actual = [], None
+    for ln in (text or "").split("\n"):
+        s = ln.strip()
+        h = _SAMPLE_HDR_LINE_RE.match(s)
+        if h:
+            actual = [h.group(1).strip(), []]
+            tipos.append(actual)
+            continue
+        t = _SAMPLE_SIZE_LINE_RE.match(s)
+        if actual is not None and t:
+            actual[1].append(f"{t.group(2)} {t.group(1)}")
+        else:
+            actual = None
+    return "\n".join(f"{nombre}: {', '.join(tallas)}" for nombre, tallas in tipos if tallas)
 
 
 # Tolerancia vertical para decidir que una palabra pertenece al renglon marcado
@@ -418,6 +458,11 @@ def _parse_goodie_page(page):
         l.strip() for l in (_tn.group(1).splitlines() if _tn else [])
         if _TOPS_LINE_RE.match(l.strip())
     )
+    # Sin bloque TOPS NEEDED, la muestra puede venir como "PP SAMPLE:" / "TOP
+    # SAMPLE" tras el PACK. Antes ese dato solo aparecia (por error) dentro del
+    # packing; ahora va a la linea de muestras de la quote.
+    if not tops_needed:
+        tops_needed = _sample_block_lines(text)
 
     qty_declared = int(m.group("qty").replace(",", ""))
 
