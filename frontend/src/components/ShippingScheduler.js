@@ -7,6 +7,7 @@ import {
 import * as XLSX from "xlsx";
 import { toast } from "sonner";
 import { useLang } from "../contexts/LanguageContext";
+import { STATUS_COLORS as MOS_COLORS } from "../lib/constants";
 
 // Programador de envíos con la estructura de la hoja "shipping miranda"
 // (una pestaña por semana): semana Lunes→Viernes con FECHAS REALES; cada día
@@ -36,19 +37,22 @@ const PRIORITY_LABEL = { 1: '1RA', 2: '2DA', 3: '3RA', 4: '4TA' };
 // fuerza fondo/color de inputs, selects y zebra de tablas con !important, y
 // las clases de Tailwind perdían contra eso.
 // Orden de avance: surtido → label → setup → impresión → empaque → QC → envío.
-const STATUS_COLORS = {
-  'READY TO SHIP': { row: '#bbf7d0', pill: '#047857' },
-  'QC READY': { row: '#d9f99d', pill: '#4d7c0f' },
-  'PACKAGED READY': { row: '#ccfbf1', pill: '#0d9488' },
-  'PRINTED': { row: '#e0f2fe', pill: '#0284c7' },
-  'PRINTING': { row: '#dbeafe', pill: '#1d4ed8' },
-  'IN SETUP': { row: '#fef3c7', pill: '#d97706' },
-  'NECK READY': { row: '#ede9fe', pill: '#7c3aed' },
-  'SURTIDO A PISO': { row: '#f1f5f9', pill: '#475569' },
-  'PRIORITY': { row: '#fae8ff', pill: '#a21caf' },
-  'SE MUEVE FECHA': { row: '#ffedd5', pill: '#ea580c' },
-  'CANCELLED': { row: '#fee2e2', pill: '#dc2626' },
+// STATUS = production status de MOS (espejo, sólo lectura): mismos colores que
+// el CRM (lib/constants STATUS_COLORS). La fila lleva el mismo tono aclarado.
+const tint = (hex, k = 0.8) => {
+  const n = parseInt(hex.slice(1), 16);
+  const mix = (c) => Math.round(c + (255 - c) * k);
+  return `rgb(${mix(n >> 16)}, ${mix((n >> 8) & 255)}, ${mix(n & 255)})`;
 };
+const statusColor = (s) => {
+  const c = s && MOS_COLORS[s];
+  return c ? { pill: c.bg, text: c.text, row: tint(c.bg) } : null;
+};
+const pillStyle = (s) => {
+  const c = statusColor(s);
+  return c ? { background: c.pill, color: c.text } : { background: '#e2e8f0', color: '#64748b' };
+};
+const MOVED_COLOR = '#ea580c'; // badge SE MUEVE FECHA (no es un status)
 // Color de fila manual (relleno tipo Excel). Gana sobre el color del status;
 // "sin color" lo regresa. Las llaves = ROW_COLORS del backend.
 const ROW_COLORS = {
@@ -60,11 +64,9 @@ const SCOPED_CSS = `
 #${ROOT_ID} .sch-sheet { background:#fff !important; color:#1e293b !important; }
 #${ROOT_ID} .sch-sheet thead tr, #${ROOT_ID} .sch-sheet thead th { background:#d9ead3 !important; color:#1e293b !important; }
 #${ROOT_ID} .sch-sheet tbody tr[data-st] { background-color:#fff !important; }
-${Object.entries(STATUS_COLORS).map(([k, c]) => `#${ROOT_ID} .sch-sheet tbody tr[data-st="${k}"] { background-color:${c.row} !important; }
-#${ROOT_ID} select.sch-pill[data-st="${k}"] { background-color:${c.pill} !important; color:#fff !important; }`).join(' ')}
+${Object.keys(MOS_COLORS).map((k) => `#${ROOT_ID} .sch-sheet tbody tr[data-st="${k}"] { background-color:${statusColor(k).row} !important; }`).join(' ')}
 #${ROOT_ID} .sch-sheet tbody tr[data-st="CANCELLED"] td { color:#94a3b8 !important; text-decoration:line-through; }
 ${Object.entries(ROW_COLORS).map(([k, c]) => `#${ROOT_ID} .sch-sheet tbody tr[data-st][data-rc="${k}"] { background-color:${c} !important; }`).join(' ')}
-#${ROOT_ID} select.sch-pill { background-color:#e2e8f0 !important; color:#475569 !important; border-radius:9999px; }
 #${ROOT_ID} input.sch-cell, #${ROOT_ID} select.sch-cell { background-color:transparent !important; color:inherit !important; }
 #${ROOT_ID} input.sch-cell:hover:not(:disabled) { background-color:rgba(255,255,255,.75) !important; }
 #${ROOT_ID} input.sch-cell:focus { background-color:#fff !important; color:#0f172a !important; }
@@ -817,7 +819,6 @@ const ShippingScheduler = () => {
     lines.forEach((l) => { const k = l.status_effective || '—'; c[k] = (c[k] || 0) + 1; });
     return c;
   }, [lines]);
-  const statuses = data?.statuses || Object.keys(STATUS_COLORS);
   const suggest = data?.suggest || {};
   // ── Navegador Año → Mes → Semana ───────────────────────────────────────────
   // Semanas de un mes = las que tienen algún día hábil (lun–vie) en él; la
@@ -1152,22 +1153,16 @@ const ShippingScheduler = () => {
                       title={l.quantity != null ? t('sch_ordered_qty', { n: fmtNum(l.qty_ordered ?? l.quantity) }) : undefined}
                       onSave={(v) => updateLine(l, { pcs: v })} /></td>
                     <td className="border-r border-slate-200 px-1">
-                      {/* STATUS: por default el automático de MOS; elegir una
-                          opción lo fija a mano, "Automático" lo regresa. */}
+                      {/* STATUS = production status de la orden en MOS (sólo
+                          lectura); se cambia en la orden, no aquí. */}
                       <div className="flex items-center gap-1">
-                        <select value={l.status || ''} onChange={(e) => updateLine(l, { status: e.target.value || null })}
-                          disabled={readOnly} data-st={l.status_effective || ''}
-                          title={l.status ? t('sch_status_manual_hint', { auto: l.status_auto || '—' }) : t('sch_status_auto_hint')}
-                          className="sch-pill flex-1 min-w-0 px-2 py-0.5 text-[10px] font-black uppercase outline-none">
-                          {/* AUTO siempre disponible: deja la fila en automático
-                              aunque hoy MOS no tenga equivalencia (se llenará
-                              sola cuando la orden avance a un status ligado). */}
-                          <option value="">{`AUTO · ${l.status_auto || t('sch_status_auto_none')}`}</option>
-                          {statuses.map((s) => <option key={s} value={s}>{s}</option>)}
-                        </select>
-                        {l.status && <span className="text-[10px] font-black text-slate-500" title={t('sch_status_manual_hint', { auto: l.status_auto || '—' })}>✎</span>}
+                        <span title={t('sch_status_mos_hint')}
+                          className="flex-1 min-w-0 truncate px-2 py-0.5 rounded-full text-[10px] font-black uppercase text-center"
+                          style={pillStyle(l.status_effective)}>
+                          {l.status_effective || '—'}
+                        </span>
                         {l.cancel_moved && (
-                          <span className="px-1 rounded text-[9px] font-black text-white whitespace-nowrap" style={{ background: STATUS_COLORS['SE MUEVE FECHA'].pill }}
+                          <span className="px-1 rounded text-[9px] font-black text-white whitespace-nowrap" style={{ background: MOVED_COLOR }}
                             title={t('sch_cancel_moved_hint', { from: l.cancel_date_at_schedule || '—', to: l.cancel_date || '—' })}>
                             SE MUEVE FECHA
                           </span>
@@ -1326,7 +1321,7 @@ const ShippingScheduler = () => {
                         </span>
                         {h.status_effective && (
                           <span className="px-1.5 py-0.5 rounded-full text-[9px] font-black text-white whitespace-nowrap"
-                            style={{ background: (STATUS_COLORS[h.status_effective] || {}).pill || '#64748b' }}>{h.status_effective}</span>
+                            style={pillStyle(h.status_effective)}>{h.status_effective}</span>
                         )}
                       </button>
                     );
@@ -1403,7 +1398,7 @@ const ShippingScheduler = () => {
               {Object.entries(statusCounts).map(([s, n]) => (
                 <button key={s} onClick={() => setStatusModal(s)} title={t('sch_status_open')}
                   className="px-2 py-0.5 rounded-full text-[10px] font-black hover:ring-2 hover:ring-offset-1 hover:ring-slate-300 transition-all"
-                  style={{ background: (STATUS_COLORS[s] || {}).pill || '#e2e8f0', color: STATUS_COLORS[s] ? '#fff' : '#64748b' }}>{s} · {n}</button>
+                  style={pillStyle(s)}>{s === '—' ? t('sch_status_none') : s} · {n}</button>
               ))}
             </div>
           )}
@@ -1526,7 +1521,7 @@ const ShippingScheduler = () => {
                   return (
                     <button key={s} onClick={() => setStatusModal(s)}
                       className={`px-2.5 py-1 rounded-full text-[10px] font-black transition-all ${on ? 'ring-2 ring-offset-1 ring-slate-800' : 'opacity-60 hover:opacity-100'}`}
-                      style={{ background: (STATUS_COLORS[s] || {}).pill || '#e2e8f0', color: STATUS_COLORS[s] ? '#fff' : '#64748b' }}>
+                      style={pillStyle(s)}>
                       {s === '—' ? t('sch_status_none') : s} · {n}
                     </button>
                   );
@@ -1557,7 +1552,6 @@ const ShippingScheduler = () => {
                           <td className="px-2 py-1.5 font-black text-slate-800 whitespace-nowrap">
                             {l.order_number}
                             {l.late && <span className="ml-1 px-1 rounded bg-red-600 text-white text-[9px]">LATE</span>}
-                            {l.status && <span className="ml-1 text-[10px] text-slate-500" title={t('sch_status_manual_hint', { auto: l.status_auto || '—' })}>✎</span>}
                           </td>
                           <td className="px-2 py-1.5 font-bold text-slate-700">{l.client || '—'}</td>
                           <td className="px-2 py-1.5 text-slate-600">{l.branding || '—'}</td>

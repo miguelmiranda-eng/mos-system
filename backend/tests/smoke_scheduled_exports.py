@@ -92,7 +92,7 @@ def sembrar():
         # gemela en papelera: el join no debe traerla
         {**base, "order_id": "o5", "order_number": "3380", "board": "PAPELERA DE RECICLAJE"},
     ])
-    # 3446 ya tiene piezas impresas → PRINTING; 3353 no → IN SETUP.
+    # Piezas impresas: ya NO cambian el STATUS (antes separaban IN SETUP/PRINTING).
     sdb.production_logs.insert_one({"log_id": "pl1", "order_id": "o3", "order_number": "3446",
                                     "quantity_produced": 500, "machine": "MAQUINA1"})
     sdb.users.insert_one({"user_id": "u_sup", "email": "sup@test.local", "name": "Programador",
@@ -104,8 +104,7 @@ async def main():
     from httpx import ASGITransport, AsyncClient
     from server import app
 
-    global STATUSES_HOJA, jr_fecha
-    from routers.scheduled_shipments import STATUSES as STATUSES_HOJA
+    global jr_fecha
     from services.shipping_journal import fecha as jr_fecha
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://smoke") as c:
@@ -119,7 +118,8 @@ async def main():
         check("semana se normaliza a lunes", d.get("week_start") == LUNES.isoformat(), d.get("week_start"))
         check("sin exports ni líneas", d["exports"] == [] and d["lines"] == [])
         check("siguiente EXPORT# = 1 en base vacía", d["next_export_no"] == 1, d["next_export_no"])
-        check("catálogo de status viaja", "READY TO SHIP" in d["statuses"])
+        check("catálogo de status = production status de MOS (no el de la hoja)",
+              "LISTO PARA ENVIO" in d["statuses"] and "READY TO SHIP" not in d["statuses"], d["statuses"])
         check("sugerencias de destino incluyen defaults", "ST ANDREWS" in d["suggest"]["delivery_to"])
 
         print("\n== Exports ==")
@@ -159,23 +159,32 @@ async def main():
         r = await c.post(f"{API}/lines", json={"export_id": e1["export_id"], "order_numbers": "3352"})
         check("misma orden en el mismo export → duplicates", r.json()["duplicates"] == ["3352"], r.json())
 
-        print("\n== STATUS automático (equivalencia con MOS) ==")
-        check("catálogo = desplegable de la hoja (11)", len(STATUSES_HOJA) == 11)
-        check("LISTO PARA ENVIO → QC READY", l1["status_auto"] == "QC READY" and l1["status_effective"] == "QC READY", l1["status_auto"])
-        check("EN PRODUCCION sin piezas → IN SETUP", l2["status_auto"] == "IN SETUP", l2["status_auto"])
+        print("\n== STATUS = espejo del production status de MOS (sólo lectura) ==")
+        check("LISTO PARA ENVIO se muestra tal cual", l1["status_effective"] == "LISTO PARA ENVIO"
+              and l1["status_auto"] == "LISTO PARA ENVIO", l1["status_effective"])
+        check("EN PRODUCCION tal cual (sin IN SETUP/PRINTING)", l2["status_effective"] == "EN PRODUCCION", l2["status_effective"])
         e3 = (await c.post(f"{API}/exports", json={"date": JUEVES})).json()
         r = await c.post(f"{API}/lines", json={"export_id": e3["export_id"], "order_numbers": "3446 2491 2980 2981"})
-        auto = {x["order_number"]: x["status_auto"] for x in r.json()["added"]}
-        check("EN PRODUCCION con piezas impresas → PRINTING", auto.get("3446") == "PRINTING", auto)
-        check("blank CONTADO/PICKED sin status de producción → SURTIDO A PISO", auto.get("2491") == "SURTIDO A PISO", auto)
-        check("LABEL LISTO → NECK READY", auto.get("2980") == "NECK READY", auto)
-        check("status de MOS sin equivalencia gana al blank → vacío", auto.get("2981") is None, auto)
+        st = {x["order_number"]: x["status_effective"] for x in r.json()["added"]}
+        check("piezas impresas ya no lo cambian: EN PRODUCCION", st.get("3446") == "EN PRODUCCION", st)
+        check("sin production status → vacío (el blank CONTADO ya no cuenta)", st.get("2491") is None, st)
+        check("LABEL LISTO y EN PROCESO DE EMPAQUE tal cual",
+              st.get("2980") == "LABEL LISTO" and st.get("2981") == "EN PROCESO DE EMPAQUE", st)
         r = await c.put(f"{API}/{l1['shipment_id']}", json={"status": "READY TO SHIP"})
-        x = r.json()
-        check("override manual: READY TO SHIP se muestra, el auto se conserva",
-              x["status_effective"] == "READY TO SHIP" and x["status_auto"] == "QC READY", x)
-        r = await c.put(f"{API}/{l1['shipment_id']}", json={"status": None})
-        check("quitar override regresa al automático", r.json()["status_effective"] == "QC READY", r.json()["status_effective"])
+        check("cambiar STATUS desde el programador → 400 (se cambia en la orden)",
+              r.status_code == 400 and "production status" in r.text, r.text[:200])
+        sdb.scheduled_shipments.update_one({"shipment_id": l1["shipment_id"]}, {"$set": {"status": "READY TO SHIP"}})
+        sdb.orders.update_one({"order_id": "o1"}, {"$set": {"production_status": "NECESITA QC"}})
+        r = await c.get(f"{API}/week", params={"start": MARTES})
+        x = next(y for y in r.json()["lines"] if y["shipment_id"] == l1["shipment_id"])
+        check("status manual viejo se ignora y sigue en vivo a MOS", x["status_effective"] == "NECESITA QC", x["status_effective"])
+        sdb.orders.update_one({"order_id": "o1"}, {"$set": {"production_status": "LISTO PARA ENVIO"}})
+        sdb.scheduled_shipments.update_one({"shipment_id": l1["shipment_id"]}, {"$unset": {"status": ""}})
+        sdb.config_options.update_one({"config_id": "main"}, {"$set": {"production_statuses": ["EN ESPERA", "EDI"]}}, upsert=True)
+        r = await c.get(f"{API}/week", params={"start": MARTES})
+        check("el catálogo sigue la configuración de MOS", r.json()["statuses"] == ["EN ESPERA", "EDI"], r.json()["statuses"])
+        sdb.config_options.delete_many({"config_id": "main"})
+        r = await c.put(f"{API}/{l1['shipment_id']}", json={"pcs": 280})
         check("sin cambio de cancel date → sin SE MUEVE FECHA", r.json()["cancel_moved"] is False)
         sdb.orders.update_one({"order_id": "o1"}, {"$set": {"cancel_date": (LUNES + timedelta(days=45)).isoformat()}})
         r = await c.get(f"{API}/week", params={"start": MARTES})
@@ -185,13 +194,11 @@ async def main():
 
         r = await c.put(f"{API}/{l1['shipment_id']}", json={
             "shipping_no": "306", "delivery_to": "ST ANDREWS", "carrier": "UPS GROUND", "ship_from": "ST ANDREWS",
-            "status": "ready to ship", "priority": 2, "ship_notes": "Se va hoy", "pcs": "1,152"})
+            "priority": 2, "ship_notes": "Se va hoy", "pcs": "1,152"})
         x = r.json()
-        check("edita campos de la línea (status normalizado, pcs con coma)",
-              r.status_code == 200 and x["status"] == "READY TO SHIP" and x["pcs"] == 1152 and x["priority"] == 2
+        check("edita campos de la línea (pcs con coma)",
+              r.status_code == 200 and x["pcs"] == 1152 and x["priority"] == 2
               and x["ship_notes"] == "Se va hoy", r.text[:300])
-        r = await c.put(f"{API}/{l1['shipment_id']}", json={"status": "INVENTADO"})
-        check("status fuera de catálogo → 400", r.status_code == 400, r.status_code)
         r = await c.put(f"{API}/{l1['shipment_id']}", json={"priority": 9})
         check("prioridad fuera de 1..4 → 400", r.status_code == 400, r.status_code)
         r = await c.put(f"{API}/{l1['shipment_id']}", json={"manual_fields": {"client": "X"}})
@@ -321,7 +328,7 @@ async def main():
         eid = eM["export_id"]
         add = (await c.post(f"{API}/lines", json={"export_id": eid, "order_numbers": "3352 3353"})).json()["added"]
         s52, s53 = add[0]["shipment_id"], add[1]["shipment_id"]
-        await c.put(f"{API}/{s52}", json={"status": "READY TO SHIP", "pcs": 250})
+        await c.put(f"{API}/{s52}", json={"priority": 1, "pcs": 250})
         viernes = (LUNES + timedelta(days=4)).isoformat()
         sdb.shipping_exports.delete_many({"date": viernes})
         await c.put(f"{API}/{s53}", json={"move_to_date": viernes})
@@ -330,7 +337,7 @@ async def main():
         check("bitácora registra cada acción (más reciente primero)",
               [x["action"] for x in m] == ["lines_delete", "lines_move", "lines_update", "lines_add", "export_create"],
               [x["action"] for x in m])
-        check("resumen legible del cambio", "STATUS AUTO → READY TO SHIP" in m[2]["summary"] and "PCS 280 → 250" in m[2]["summary"],
+        check("resumen legible del cambio", "PRIORIDAD — → 1ª" in m[2]["summary"] and "PCS 280 → 250" in m[2]["summary"],
               m[2]["summary"])
         check("filtro por orden", {x["action"] for x in await movs(q="3353")} == {"lines_add", "lines_move"},
               [x["action"] for x in await movs(q="3353")])
@@ -341,7 +348,7 @@ async def main():
         r = await revertir(m[0]["movement_id"])
         back = sdb.scheduled_shipments.find_one({"shipment_id": s52})
         check("revertir borrado regresa la orden con sus datos", r.status_code == 200 and back
-              and back["status"] == "READY TO SHIP" and back["pcs"] == 250 and back["export_id"] == eid, r.text[:200])
+              and back["priority"] == 1 and back["pcs"] == 250 and back["export_id"] == eid, r.text[:200])
         r = await revertir(m[0]["movement_id"])
         check("no se revierte dos veces", r.status_code == 409 and "Ya se revirtió" in str(r.json()), r.text[:200])
         m2 = await movs()
@@ -352,7 +359,7 @@ async def main():
 
         r = await revertir(m[2]["movement_id"])
         x = sdb.scheduled_shipments.find_one({"shipment_id": s52})
-        check("revertir edición regresa STATUS y PCS", r.status_code == 200 and x["status"] is None and x["pcs"] == 280, x)
+        check("revertir edición regresa PRIORIDAD y PCS", r.status_code == 200 and x.get("priority") is None and x["pcs"] == 280, x)
 
         nuevo = sdb.shipping_exports.find_one({"date": viernes})
         r = await revertir(m[1]["movement_id"])

@@ -2958,6 +2958,7 @@ const es = {
   sch_qty_hint: "Cantidad de la orden / unidades ya embarcadas según el WMS",
   sch_status_auto_hint: "Automático: sale del status de la orden en MOS. Elige una opción para fijarlo a mano.",
   sch_status_auto_none: "sin equivalencia en MOS",
+  sch_status_mos_hint: "Production status de la orden en MOS (sólo lectura: se cambia en la orden)",
   // Color de fila (relleno tipo Excel)
   sch_row_color: "Color",
   sch_color_amarillo: "Amarillo", sch_color_verde: "Verde", sch_color_azul: "Azul", sch_color_rojo: "Rojo",

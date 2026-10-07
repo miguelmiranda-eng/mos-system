@@ -3144,6 +3144,7 @@ const en = {
   sch_qty_hint: "Order quantity / units already shipped per the WMS",
   sch_status_auto_hint: "Automatic: taken from the order's MOS status. Pick an option to set it by hand.",
   sch_status_auto_none: "no MOS match",
+  sch_status_mos_hint: "Order production status in MOS (read-only: change it on the order)",
   // Row color (Excel-like fill)
   sch_row_color: "Color",
   sch_color_amarillo: "Yellow", sch_color_verde: "Green", sch_color_azul: "Blue", sch_color_rojo: "Red",

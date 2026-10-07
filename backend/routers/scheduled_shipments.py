@@ -51,7 +51,7 @@ from datetime import datetime, timezone, date, timedelta
 
 from fastapi import APIRouter, Request, HTTPException
 
-from deps import db, require_auth, require_supersu, log_activity, require_api_customer
+from deps import db, require_auth, require_supersu, log_activity, require_api_customer, DEFAULT_OPTIONS
 from services.qty_embarcada import qty_embarcada, qty_embarcada_por_orden, entero_o_none
 from services import shipping_journal as jr
 from services import export_packing as pk
@@ -64,10 +64,6 @@ router = APIRouter(prefix="/api/scheduled-shipments", tags=["scheduled-shipments
 
 PAPELERA = "PAPELERA DE RECICLAJE"
 
-# Catálogos de la hoja (validación de lo que se escribe). STATUSES = el
-# desplegable de la pestaña "21 SEP - 25 SEP", en su mismo orden.
-STATUSES = ["READY TO SHIP", "IN SETUP", "SURTIDO A PISO", "NECK READY", "PRINTED", "PACKAGED READY",
-            "QC READY", "CANCELLED", "SE MUEVE FECHA", "PRINTING", "PRIORITY"]
 # Color de fila manual (como el relleno de Excel); gana sobre el color del
 # status. Los tonos viven en el frontend (ROW_COLORS de ShippingScheduler.js).
 ROW_COLORS = ["AMARILLO", "VERDE", "AZUL", "ROJO", "NARANJA", "MORADO", "GRIS"]
@@ -80,39 +76,22 @@ def _row_color(v):
     return c
 
 
-# STATUS automático = equivalencia con MOS definida por Envíos (2026-09-25).
-# READY TO SHIP y PRIORITY son SÓLO manuales. EN PRODUCCION se parte por piezas
-# impresas (production_logs): sin piezas = IN SETUP, con piezas = PRINTING.
-# Status de MOS sin equivalencia → sin status automático (se elige a mano).
-AUTO_FROM_PRODUCTION = {
-    "CANCELLED": "CANCELLED",
-    "LISTO PARA ENVIO": "QC READY",
-    "NECESITA QC": "PACKAGED READY",
-    "NECESITA EMPACAR": "PRINTED",
-    "LABEL LISTO": "NECK READY",
-}
-BLANK_COUNTED = ("CONTADO", "CONTADO/PICKED")     # → SURTIDO A PISO
-# Status de MOS posteriores a la impresión sin equivalencia: ahí el blank
-# contado ya no describe la orden (mostraría SURTIDO A PISO a una orden en
-# empaque), así que quedan sin status automático.
-PAST_FLOOR = {"EN PROCESO DE EMPAQUE", "CORRECIÓN DE QC", "CORRECCION DE QC",
-              "LISTO PARA FULFILLMENT", "LISTO PARA INVENTARIO"}
+# STATUS = production status de la orden en MOS, en vivo y de SÓLO LECTURA
+# (decisión 2026-10-07: espejo, mismos nombres y colores que el CRM). Antes la
+# hoja tenía 11 estados propios (READY TO SHIP, IN SETUP, PRINTING…) traducidos
+# desde MOS más un override manual; ya no. El `status` manual que traían las
+# líneas de export se ignora al leer (no se borra); el formato anterior (API
+# de clientes, líneas sin export) conserva su campo como siempre.
+async def _production_statuses() -> list:
+    cfg = await db.config_options.find_one({"config_id": "main"}, {"_id": 0, "production_statuses": 1}) or {}
+    return cfg.get("production_statuses") or DEFAULT_OPTIONS["production_statuses"]
 
 
-def _auto_status(order: dict | None) -> str | None:
-    """STATUS que corresponde a la orden según MOS (None = sin equivalencia)."""
-    if not order:
-        return None
-    ps = str(order.get("production_status") or "").strip().upper()
-    if ps == "EN PRODUCCION":
-        return "PRINTING" if (order.get("_printed") or 0) > 0 else "IN SETUP"
-    if ps in AUTO_FROM_PRODUCTION:
-        return AUTO_FROM_PRODUCTION[ps]
-    if ps in PAST_FLOOR:
-        return None
-    if str(order.get("blank_status") or "").strip().upper() in BLANK_COUNTED:
-        return "SURTIDO A PISO"
-    return None
+def _mos_status(order: dict | None) -> str | None:
+    ps = str((order or {}).get("production_status") or "").strip()
+    return ps or None
+
+
 CUSTOMS_LIGHTS = ["VERDE", "ROJO"]
 PRIORITIES = [1, 2, 3, 4]
 DEFAULT_CUTOFF = "15:00"
@@ -273,10 +252,11 @@ def _row(sched: dict, order: dict | None, pl_seed: dict | None = None,
         "position": sched.get("position"),
         # LATE: la fecha de salida cae después del límite de la orden.
         "late": bool(ship_d and dl and ship_d > dl),
-        # STATUS: `status` es lo elegido a mano (override); si está vacío manda
-        # el automático de MOS. `status_effective` es lo que se muestra.
-        "status_auto": _auto_status(order),
-        "status_effective": sched.get("status") or _auto_status(order),
+        # STATUS: espejo del production status de MOS (sólo lectura). Las
+        # líneas del formato anterior (sin export) conservan su status propio.
+        "status_auto": _mos_status(order),
+        "status_effective": _mos_status(order) if sched.get("export_id")
+                            else (sched.get("status") or _mos_status(order)),
         # SE MUEVE FECHA: el cancel date cambió desde que se programó.
         "cancel_date_at_schedule": sched.get("cancel_date_at_schedule"),
         "cancel_moved": bool(
@@ -331,19 +311,6 @@ async def _orders_for(nums):
         {"order_number": {"$in": nums}, "board": {"$ne": PAPELERA}}, _ORDER_PROJ,
     ).to_list(5000)
     by_num = {o["order_number"]: o for o in orders if o.get("order_number")}
-    # Piezas impresas (production_logs) sólo de las que están EN PRODUCCION:
-    # es lo que separa IN SETUP de PRINTING en el STATUS automático.
-    en_prod = [o["order_id"] for o in orders
-               if o.get("order_id") and str(o.get("production_status") or "").strip().upper() == "EN PRODUCCION"]
-    if en_prod:
-        printed = await db.production_logs.aggregate([
-            {"$match": {"order_id": {"$in": en_prod}}},
-            {"$group": {"_id": "$order_id", "n": {"$sum": "$quantity_produced"}}},
-        ]).to_list(5000)
-        n_by_oid = {r["_id"]: r.get("n") or 0 for r in printed}
-        for o in orders:
-            if o.get("order_id") in n_by_oid:
-                o["_printed"] = n_by_oid[o["order_id"]]
     # PL desde los comentarios packing_link_seed (por order_id), el más fresco por orden.
     oids = [o.get("order_id") for o in orders if o.get("order_id")]
     pl_by_num = {}
@@ -647,7 +614,7 @@ async def get_week(request: Request, start: str | None = None):
         "exports": exp_out,
         "lines": lines,
         "next_export_no": ((top[0]["export_no"] if top else 0) or 0) + 1,
-        "statuses": STATUSES,
+        "statuses": await _production_statuses(),
         "customs_lights": CUSTOMS_LIGHTS,
         "suggest": suggest,
     }
@@ -1177,11 +1144,12 @@ async def update_scheduled(shipment_id: str, request: Request):
         if k in body:
             allowed[k] = _txt(body[k], n)
     if "status" in body:
+        if sched0.get("export_id"):
+            raise HTTPException(status_code=400, detail=(
+                "El STATUS del programador es el production status de la orden en MOS; "
+                "cámbialo en la orden."))
         st = _txt(body["status"])
-        st = st.upper() if st else None
-        if st and sched0.get("export_id") and st not in STATUSES:
-            raise HTTPException(status_code=400, detail=f"status inválido; opciones: {STATUSES}")
-        allowed["status"] = st
+        allowed["status"] = st.upper() if st else None
     if "pcs" in body:
         allowed["pcs"] = _int_or_none(body["pcs"], "pcs")
     if "row_color" in body:
