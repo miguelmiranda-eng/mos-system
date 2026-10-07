@@ -8,11 +8,14 @@ Comprueba:
      mano, con su printavo_mockup_id;
   3. un PDF (el PO escaneado que a veces se pega como mockup) se salta;
   4. es idempotente: la segunda vez no repite;
-  5. orden sin invoice de Printavo -> 400 claro; Printavo caido -> 502 claro.
+  5. errores SIEMPRE 4xx con motivo: el proxy de Easypanel tapa los 502 del
+     backend con su pagina sin CORS ("Failed to fetch" en la 3470);
+  0. el query cabe en el limite de complejidad de Printavo (25000).
 
 Corre: backend/venv/Scripts/python.exe backend/tests/smoke_mocks_printavo.py
 """
 import asyncio
+import re
 import copy
 import os
 import sys
@@ -159,7 +162,57 @@ class Req:
     pass
 
 
+def complejidad_printavo(query: str) -> int:
+    """Complejidad del query tal como la calcula Printavo.
+
+    Formula MEDIDA, no supuesta: con ella el query que Printavo rechazo da
+    exactamente su numero (28129). Una conexion con first:N cuesta
+    2 + N x (costo de cada nodo); `nodes` no suma; cada campo simple vale 1."""
+    q = re.sub(r"query\s+\w+\([^)]*\)", "", query)
+    toks = re.findall(r"[A-Za-z_]\w*|\([^)]*\)|\{|\}", q)
+    pos = 0
+
+    def seleccion():
+        nonlocal pos
+        total = 0
+        while pos < len(toks) and toks[pos] != "}":
+            nombre = toks[pos]
+            pos += 1
+            first = None
+            if pos < len(toks) and toks[pos].startswith("("):
+                m = re.search(r"first:\s*(\d+)", toks[pos])
+                first = int(m.group(1)) if m else None
+                pos += 1
+            if pos < len(toks) and toks[pos] == "{":
+                pos += 1
+                hijos = seleccion()
+                pos += 1
+                total += hijos if nombre == "nodes" else (2 + first * hijos if first else 1 + hijos)
+            else:
+                total += 1
+        return total
+
+    pos += 1
+    return seleccion()
+
+
+# El query que Printavo RECHAZO el 2026-10-07 (log del backend): calibra la formula.
+QUERY_RECHAZADO = """
+query InvoiceMockups($id: ID!) {
+  invoice(id: $id) { id lineItemGroups(first: 25) { nodes { position
+    lineItems(first: 30) { nodes { description mockups(first: 5) { nodes { id fullImageUrl thumbnailUrl mimeType } } } }
+    imprints(first: 10) { nodes { id mockups(first: 10) { nodes { id fullImageUrl thumbnailUrl mimeType } } } } } } } }
+"""
+
+
 async def main():
+    print("\n0) el query cabe en el limite de complejidad de Printavo")
+    check("la formula reproduce el numero real de Printavo (28129)",
+          complejidad_printavo(QUERY_RECHAZADO) == 28129, f"{complejidad_printavo(QUERY_RECHAZADO)}")
+    c = complejidad_printavo(pc.INVOICE_MOCKUPS_QUERY)
+    check(f"INVOICE_MOCKUPS_QUERY = {c}, con margen bajo el limite ({pc.PRINTAVO_MAX_COMPLEJIDAD})",
+          c <= pc.PRINTAVO_MAX_COMPLEJIDAD * 0.6, f"{c}")
+
     print("\n1) fetch_invoice_mockups: el arte de la linea de impresion, no el PO")
     llamadas = []
 
@@ -229,7 +282,7 @@ async def main():
         await ro.traer_mocks_printavo("ord_3", Req())
         check("Printavo caido debia fallar", False)
     except HTTPException as e:
-        check("Printavo caido -> 502 con el motivo", e.status_code == 502 and "403" in e.detail, e.detail)
+        check("Printavo caido -> 400 con el motivo (un 502 lo tapa el proxy)", e.status_code == 400 and "403" in e.detail, e.detail)
 
     print("\n5b) archivo de arte de 300 MB (la 3470: 502 del proxy) -> miniatura")
     async def gql_huge(q, v):
@@ -261,8 +314,8 @@ async def main():
         await ro.traer_mocks_printavo("ord_4", Req())
         check("Printavo lento debia cortarse", False)
     except HTTPException as e:
-        check("Printavo lento -> 504 con mensaje, sin esperar a que corte el proxy",
-              e.status_code == 504 and "tardó" in e.detail and _t.monotonic() - t0 < 2,
+        check("Printavo lento -> 400 con mensaje, sin esperar a que corte el proxy",
+              e.status_code == 400 and "tardó" in e.detail and _t.monotonic() - t0 < 2,
               f"{e.status_code} {e.detail} {_t.monotonic() - t0:.1f}s")
     ro.MOCKS_T_PRINTAVO = 20
 
@@ -273,8 +326,8 @@ async def main():
         await ro.traer_mocks_printavo("ord_5", Req())
         check("un fallo al guardar debia reportarse", False)
     except HTTPException as e:
-        check("fallo inesperado -> 500 CON el motivo (no 'Failed to fetch')",
-              e.status_code == 500 and "No se pudieron guardar" in e.detail, f"{e.status_code} {e.detail}")
+        check("fallo inesperado -> 400 CON el motivo (no 'Failed to fetch')",
+              e.status_code == 400 and "No se pudieron guardar" in e.detail, f"{e.status_code} {e.detail}")
     ro.UPLOADS_DIR = tmp
 
     ro.MOCKS_T_TOTAL = 0                              # sin presupuesto para descargar

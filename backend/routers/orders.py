@@ -1809,10 +1809,14 @@ async def traer_mocks_printavo(order_id: str, request: Request):
         raise HTTPException(status_code=400, detail="Esta orden no viene de Printavo: no hay invoice del cual traer el mock")
     if not printavo_client.is_configured():
         raise HTTPException(status_code=400, detail="Credenciales de Printavo no configuradas")
-    # PRESUPUESTO DE TIEMPO. Sin el, Printavo (3 intentos x 30 s + las esperas de
-    # un 429) y las descargas pasaban del minuto, el proxy cortaba la conexion y
-    # el navegador solo decia "Failed to fetch" (paso con la 3470). Se responde
-    # SIEMPRE antes de que corte el proxy, con un motivo legible.
+    # CODIGOS DE ERROR: SIEMPRE 4xx. El proxy de Easypanel SUSTITUYE los 502 del
+    # backend por su propia pagina (sin CORS): medido en la 3470 — el log dice
+    # "POST …/images/printavo 502" con el motivo exacto, y el navegador recibio
+    # la pagina del proxy y solo mostro "Failed to fetch". No se comprobo si hace
+    # lo mismo con 500/504, asi que ningun error de aqui usa 5xx.
+    #
+    # Presupuesto de tiempo: Printavo (3 intentos x 30 s + las esperas de un 429)
+    # y las descargas podian pasar del minuto; se acota para responder siempre.
     inicio = time.monotonic()
     logger.info(f"[mocks] {order_id}: consultando Printavo (invoice {inv})")
     try:
@@ -1821,20 +1825,20 @@ async def traer_mocks_printavo(order_id: str, request: Request):
                     + ", ".join(f"{m['id']}[{m['mime'] or '?'}|{m.get('origen')}]" for m in mockups))
     except asyncio.TimeoutError:
         logger.error(f"[mocks] Printavo {inv}: sin respuesta en {MOCKS_T_PRINTAVO} s")
-        raise HTTPException(status_code=504, detail=f"Printavo tardó más de {MOCKS_T_PRINTAVO} s en responder; intenta de nuevo en un momento")
+        raise HTTPException(status_code=400, detail=f"Printavo tardó más de {MOCKS_T_PRINTAVO} s en responder; intenta de nuevo en un momento")
     except Exception as e:
         logger.error(f"[mocks] Printavo {inv}: {e}")
-        raise HTTPException(status_code=502, detail=f"Printavo no respondió: {str(e)[:300]}")
+        raise HTTPException(status_code=400, detail=f"Printavo rechazó la consulta: {str(e)[:300]}")
 
     try:
         return await _guardar_mocks(user, order_id, order, inv, mockups, inicio, httpx)
     except HTTPException:
         raise
     except Exception as e:
-        # Un error inesperado sale con su motivo; si no, el proxy lo convierte en
-        # una respuesta sin CORS y el navegador lo reporta como "Failed to fetch".
+        # Un error inesperado sale con su motivo y en 4xx (ver arriba: un 5xx lo
+        # taparia el proxy y el navegador solo diria "Failed to fetch").
         logger.exception(f"[mocks] fallo guardando los mocks de {order_id}")
-        raise HTTPException(status_code=500, detail=f"No se pudieron guardar los mocks: {str(e)[:300]}")
+        raise HTTPException(status_code=400, detail=f"No se pudieron guardar los mocks: {str(e)[:300]}")
 
 
 # Tope de lo que se baja por mockup. En Printavo el "mockup" a veces es el

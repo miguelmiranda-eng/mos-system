@@ -221,26 +221,35 @@ async def create_quote(quote_input: dict) -> dict:
 # (imprints.mockups). En la 3470 el arte cuelga de la linea "FRONT PRINT / BACK
 # PRINT / NECK LABEL / FINISHING" y de otra linea cuelga el PO escaneado; la
 # primera version solo miraba imprints y en la 3338/3736 no encontro nada.
-# Una llamada por orden, bajo demanda; complejidad 25x(30x5 + 10x10) = 6250.
+# Una llamada por orden, bajo demanda.
+#
+# COMPLEJIDAD: Printavo rechaza todo query de mas de 25000 ("Query has complexity
+# of 28129, which exceeds max complexity of 25000" — la version con
+# lineItemGroups 25 / lineItems 30 / mockups 5 / imprints 10 / mockups 10, que
+# rompio "Traer de Printavo" en todas las ordenes). Formula medida contra ese
+# 28129 exacto: una conexion con first:N cuesta 2 + N x (costo de cada nodo),
+# `nodes` no suma y cada campo simple vale 1. Con estos tamanos: 9104 (36%).
+# tests/smoke_mocks_printavo.py lo recalcula: agrandar un `first` sin pensarlo
+# truena el smoke antes del deploy.
 INVOICE_MOCKUPS_QUERY = """
 query InvoiceMockups($id: ID!) {
   invoice(id: $id) {
     id
-    lineItemGroups(first: 25) {
+    lineItemGroups(first: 20) {
       nodes {
         position
-        lineItems(first: 30) {
+        lineItems(first: 25) {
           nodes {
             description
-            mockups(first: 5) {
+            mockups(first: 3) {
               nodes { id fullImageUrl thumbnailUrl mimeType }
             }
           }
         }
-        imprints(first: 10) {
+        imprints(first: 5) {
           nodes {
             id
-            mockups(first: 10) {
+            mockups(first: 3) {
               nodes { id fullImageUrl thumbnailUrl mimeType }
             }
           }
@@ -250,6 +259,7 @@ query InvoiceMockups($id: ID!) {
   }
 }
 """
+PRINTAVO_MAX_COMPLEJIDAD = 25000
 
 
 def _es_linea_de_impresion(desc: str) -> bool:
