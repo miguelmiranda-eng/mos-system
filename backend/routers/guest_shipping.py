@@ -1,7 +1,7 @@
 """Invitado shipping: vista de Envíos programados para un proveedor externo.
 
-El proveedor (rol `shipping_guest`) ve las órdenes programadas desde hace
-GUEST_WINDOW_DAYS días en adelante y sólo puede llenar SHIPPING FROM y CARRIER.
+El proveedor (rol `shipping_guest`) ve TODAS las órdenes programadas (todo el
+historial, decisión 2026-10-07) y sólo puede llenar SHIPPING FROM y CARRIER.
 
 Seguridad (decisión 2026-10-07):
   - deps.get_current_user le NIEGA al rol cualquier ruta fuera de
@@ -13,10 +13,10 @@ Seguridad (decisión 2026-10-07):
   - Cada cambio queda en la bitácora de Movimientos con el nombre del invitado.
   - supersu también puede usarlos (para revisar lo que ve el proveedor).
 
-  GET "/lines"          → exports + líneas de la ventana
+  GET "/lines"          → exports + líneas (todo el historial)
   PUT "/lines/{id}"     → {ship_from?, carrier?}
 """
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Request, HTTPException
 
@@ -26,7 +26,6 @@ from routers.scheduled_shipments import _rows, _export_out, _derive_shipping_no,
 
 router = APIRouter(prefix="/api/guest-shipping", tags=["guest-shipping"])
 
-GUEST_WINDOW_DAYS = 14
 GUEST_EDITABLE = {"ship_from": "SHIPPING FROM", "carrier": "CARRIER"}
 LINE_FIELDS = ("shipment_id", "export_id", "ship_date", "position", "order_number", "client", "branding",
                "customer_po", "design_num", "pcs", "status_effective", "priority", "ship_notes",
@@ -42,10 +41,6 @@ async def _require_guest(request: Request) -> dict:
     return user
 
 
-def _since() -> str:
-    return (datetime.now(timezone.utc).date() - timedelta(days=GUEST_WINDOW_DAYS)).isoformat()
-
-
 def _line_out(r: dict) -> dict:
     return {k: r.get(k) for k in LINE_FIELDS}
 
@@ -53,9 +48,8 @@ def _line_out(r: dict) -> dict:
 @router.get("/lines")
 async def guest_lines(request: Request):
     await _require_guest(request)
-    since = _since()
     exports = await db.shipping_exports.find(
-        {"date": {"$gte": since}}, {"_id": 0},
+        {}, {"_id": 0},
     ).sort([("date", 1), ("position", 1), ("created_at", 1)]).to_list(1000)
     ids = [e["export_id"] for e in exports]
     scheds = await db.scheduled_shipments.find(
@@ -65,7 +59,6 @@ async def guest_lines(request: Request):
     exp_out = [_export_out(e) for e in exports]
     await _derive_shipping_no(exports, exp_out)
     return {
-        "since": since,
         "exports": [{k: e.get(k) for k in EXPORT_FIELDS} for e in exp_out],
         "lines": [_line_out(r) for r in rows],
     }
@@ -81,8 +74,6 @@ async def guest_update_line(shipment_id: str, request: Request):
     before = await db.scheduled_shipments.find_one({"shipment_id": shipment_id}, {"_id": 0})
     if not before or not before.get("export_id"):
         raise HTTPException(status_code=404, detail="Orden programada no encontrada")
-    if str(before.get("ship_date") or "") < _since():
-        raise HTTPException(status_code=403, detail="Esa orden ya está fuera de la ventana del invitado")
     upd = {k: _txt(body[k], 120) for k in GUEST_EDITABLE if k in body}
     cambios = [f"{GUEST_EDITABLE[k]} {jr.val(before.get(k))} → {jr.val(v)}"
                for k, v in upd.items() if (before.get(k) or None) != v]

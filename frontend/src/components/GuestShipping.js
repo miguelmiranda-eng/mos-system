@@ -4,8 +4,8 @@ import { toast } from "sonner";
 import { useLang } from "../contexts/LanguageContext";
 import { STATUS_COLORS as MOS_COLORS } from "../lib/constants";
 
-// Vista del INVITADO SHIPPING (rol shipping_guest): un proveedor externo ve las
-// órdenes programadas desde hace 14 días y sólo llena SHIPPING FROM y CARRIER.
+// Vista del INVITADO SHIPPING (rol shipping_guest): un proveedor externo ve todas
+// las órdenes programadas (todo el historial) y sólo llena SHIPPING FROM y CARRIER.
 // La seguridad vive en el backend (deps.GUEST_SURFACE: default-deny a todo lo
 // demás; routers/guest_shipping.py). Esta pantalla es lo único que App le
 // muestra a ese rol.
@@ -119,6 +119,16 @@ const GuestShipping = ({ user, onLogout }) => {
     return `${DAYS[L][(d.getDay() + 6) % 7]} · ${pad(d.getDate())} ${MONTHS[L][d.getMonth()]} ${d.getFullYear()}`;
   };
   const pending = (data?.lines || []).filter((l) => !l.ship_from || !l.carrier).length;
+  // Todo el historial: al cargar se salta al primer día de hoy en adelante.
+  const [jumped, setJumped] = useState(false);
+  useEffect(() => {
+    if (jumped || !byDay.length) return;
+    const now = new Date();
+    const today = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+    const target = byDay.find((d) => d.date >= today) || byDay[byDay.length - 1];
+    document.getElementById(`gs-day-${target.date}`)?.scrollIntoView({ block: 'start' });
+    setJumped(true);
+  }, [byDay, jumped]);
 
   return (
     <main id={ROOT_ID} className="min-h-screen w-full">
@@ -129,7 +139,7 @@ const GuestShipping = ({ user, onLogout }) => {
           <div className="w-10 h-10 rounded-xl bg-blue-600 text-white flex items-center justify-center"><Truck className="w-5 h-5" /></div>
           <div className="min-w-0">
             <h1 className="text-lg font-black text-slate-800 leading-tight">{t('gs_title')}</h1>
-            <p className="text-[11px] text-slate-500">{t('gs_subtitle', { since: data?.since || '…' })}</p>
+            <p className="text-[11px] text-slate-500">{t('gs_subtitle')}</p>
           </div>
           <span className={`px-2.5 py-1 rounded-full text-[11px] font-black ${pending ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800'}`}>
             {pending ? t('gs_pending', { n: pending }) : t('gs_all_done')}
@@ -155,7 +165,7 @@ const GuestShipping = ({ user, onLogout }) => {
         ) : byDay.length === 0 ? (
           <p className="py-16 text-center text-[12px] font-black uppercase text-slate-400">{t('gs_empty')}</p>
         ) : byDay.map((day) => (
-          <section key={day.date} className="space-y-2">
+          <section key={day.date} id={`gs-day-${day.date}`} className="space-y-2 scroll-mt-20">
             <div className="px-4 py-2 rounded-xl bg-slate-800 text-white text-sm font-black tracking-widest">{dayLabel(day.date)}</div>
             {day.exports.map((e) => (
               <div key={e.export_id} className="gs-sheet rounded-xl border border-slate-300 overflow-hidden shadow-sm">

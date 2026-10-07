@@ -5,10 +5,10 @@ Contrato:
     visitante SIN sesión (rutas públicas preexistentes), salvo deps.GUEST_SURFACE.
     Fuera de eso responde 403 (o 405/422 de validación, que ocurren antes y no
     exponen datos).
-  - GET /api/guest-shipping/lines: sólo la ventana (hoy-14 en adelante) y sólo
-    las columnas de la fila (sin pl_url, notas internas, bulk, qty embarcada).
+  - GET /api/guest-shipping/lines: TODO el historial, sólo las columnas de la
+    fila (sin pl_url, notas internas, bulk, qty embarcada).
   - PUT /api/guest-shipping/lines/{id}: sólo ship_from y carrier; cualquier otro
-    campo → 400; fuera de la ventana → 403; queda en la bitácora.
+    campo → 400; también en envíos viejos; queda en la bitácora.
   - Un usuario interno normal no puede usar la vista del invitado (403).
 
 SEGURIDAD: base DESECHABLE, se niega contra producción, se borra al terminar.
@@ -144,7 +144,8 @@ async def main():
         print("\n== Su vista ==")
         d = (await g.get(f"{API}/lines")).json()
         nums = [x["order_number"] for x in d["lines"]]
-        check("sólo la ventana (hoy-14 en adelante)", nums == ["3301", "3302"], nums)
+        check("todo el historial (incluye el envío de hace 30 días)", nums == ["3000", "3301", "3302"], nums)
+        d["lines"] = [l for l in d["lines"] if l["order_number"] != "3000"]
         x = d["lines"][0]
         check("sin enlaces, notas internas, bulk ni qty embarcada",
               not ({"pl_url", "pl_number", "notes", "bulk", "qty_shipped", "qty_ordered"} & set(x)), sorted(x))
@@ -163,7 +164,7 @@ async def main():
         check("cualquier otro campo → 400 (y no guarda nada)", r.status_code == 400
               and sdb.scheduled_shipments.find_one({"shipment_id": "s1"})["carrier"] == "UPS GROUND", r.status_code)
         r = await g.put(f"{API}/lines/sOld", json={"carrier": "X"})
-        check("fuera de la ventana → 403", r.status_code == 403, r.status_code)
+        check("también edita envíos viejos", r.status_code == 200 and r.json()["carrier"] == "X", r.text[:200])
         r = await g.put(f"{API}/lines/nope", json={"carrier": "X"})
         check("línea inexistente → 404", r.status_code == 404, r.status_code)
         mv = sdb.shipping_movements.find_one({"user_id": "u_guest"})

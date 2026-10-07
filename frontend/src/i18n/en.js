@@ -3146,7 +3146,7 @@ const en = {
   sch_status_auto_none: "no MOS match",
   // Shipping guest (external vendor; components/GuestShipping.js)
   gs_title: "Scheduled shipments · Guest",
-  gs_subtitle: "Orders scheduled since {since}. Fill in SHIPPING FROM and CARRIER.",
+  gs_subtitle: "All scheduled orders. Fill in SHIPPING FROM and CARRIER.",
   gs_help: "Type SHIPPING FROM and CARRIER in the yellow boxes; it saves when you leave the box or press Enter. That is the only thing you can change in this view.",
   gs_pending: "{n} to fill in",
   gs_all_done: "All filled in",

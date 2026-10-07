@@ -2960,7 +2960,7 @@ const es = {
   sch_status_auto_none: "sin equivalencia en MOS",
   // Invitado shipping (proveedor externo; components/GuestShipping.js)
   gs_title: "Envíos programados · Invitado",
-  gs_subtitle: "Órdenes programadas desde el {since}. Llena SHIPPING FROM y CARRIER.",
+  gs_subtitle: "Todas las órdenes programadas. Llena SHIPPING FROM y CARRIER.",
   gs_help: "Escribe SHIPPING FROM y CARRIER en las casillas amarillas; se guarda al salir de la casilla o con Enter. Es lo único que se puede cambiar en esta vista.",
   gs_pending: "{n} por llenar",
   gs_all_done: "Todo lleno",
