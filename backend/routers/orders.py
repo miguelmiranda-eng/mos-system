@@ -1814,8 +1814,11 @@ async def traer_mocks_printavo(order_id: str, request: Request):
     # el navegador solo decia "Failed to fetch" (paso con la 3470). Se responde
     # SIEMPRE antes de que corte el proxy, con un motivo legible.
     inicio = time.monotonic()
+    logger.info(f"[mocks] {order_id}: consultando Printavo (invoice {inv})")
     try:
         mockups = await asyncio.wait_for(printavo_client.fetch_invoice_mockups(inv), timeout=MOCKS_T_PRINTAVO)
+        logger.info(f"[mocks] {order_id}: {len(mockups)} mockup(s) en Printavo: "
+                    + ", ".join(f"{m['id']}[{m['mime'] or '?'}|{m.get('origen')}]" for m in mockups))
     except asyncio.TimeoutError:
         logger.error(f"[mocks] Printavo {inv}: sin respuesta en {MOCKS_T_PRINTAVO} s")
         raise HTTPException(status_code=504, detail=f"Printavo tardó más de {MOCKS_T_PRINTAVO} s en responder; intenta de nuevo en un momento")
@@ -1834,6 +1837,36 @@ async def traer_mocks_printavo(order_id: str, request: Request):
         raise HTTPException(status_code=500, detail=f"No se pudieron guardar los mocks: {str(e)[:300]}")
 
 
+# Tope de lo que se baja por mockup. En Printavo el "mockup" a veces es el
+# ARCHIVO DE ARTE original (cientos de MB): bajarlo entero a memoria tumbaba el
+# proceso y el proxy respondia 502 sin CORS ("Failed to fetch") — la 3470, la
+# unica de las probadas que llegaba a descargar. Pasado el tope se usa la miniatura.
+MOCKS_MAX_BYTES = 10 * 1024 * 1024
+
+
+class _NoSirve(Exception):
+    """El archivo existe pero no se guarda tal cual (muy pesado o no es imagen)."""
+
+
+async def _bajar_limitado(client, url, mime_printavo=""):
+    """(bytes, content_type) leyendo POR PARTES y cortando al pasar el tope."""
+    async with client.stream("GET", url) as r:
+        r.raise_for_status()
+        ctype = (r.headers.get("content-type") or mime_printavo or "").split(";")[0].strip()
+        if not ctype.startswith("image/"):
+            raise _NoSirve(ctype or "sin tipo")
+        largo = int(r.headers.get("content-length") or 0)
+        if largo > MOCKS_MAX_BYTES:
+            raise _NoSirve(f"pesa {largo // (1024 * 1024)} MB")
+        partes, total = [], 0
+        async for trozo in r.aiter_bytes():
+            total += len(trozo)
+            if total > MOCKS_MAX_BYTES:
+                raise _NoSirve(f"pesa más de {MOCKS_MAX_BYTES // (1024 * 1024)} MB")
+            partes.append(trozo)
+        return b"".join(partes), ctype
+
+
 async def _guardar_mocks(user, order_id, order, inv, mockups, inicio, httpx):
     ya = {img.get("printavo_mockup_id") for img in (order.get("images") or []) if img.get("printavo_mockup_id")}
     nuevas, omitidas = [], []
@@ -1850,22 +1883,35 @@ async def _guardar_mocks(user, order_id, order, inv, mockups, inicio, httpx):
             if restante < 3:
                 omitidas.append(f"{m['id']} (sin tiempo: vuelve a dar Traer)")
                 continue
-            try:
-                r = await asyncio.wait_for(client.get(m["url"]), timeout=min(15, restante))
-                r.raise_for_status()
-            except Exception as e:
-                logger.warning(f"[mocks] no se pudo bajar el mockup {m['id']} de {inv}: {e}")
-                omitidas.append(f"{m['id']} (no se pudo descargar)")
+            # La imagen completa si es una imagen razonable; si no (archivo de arte
+            # pesado, o no es imagen), la MINIATURA de Printavo, que basta para ver
+            # el mock. Nunca se carga en memoria un archivo de cientos de MB.
+            contenido, ctype, motivo = None, "", ""
+            for url in dict.fromkeys(u for u in (m["url"], m.get("thumbnail")) if u):
+                restante = limite - time.monotonic()
+                if restante < 3:
+                    motivo = "sin tiempo: vuelve a dar Traer"
+                    break
+                logger.info(f"[mocks] {order_id}: bajando mockup {m['id']} ({url[:80]})")
+                try:
+                    contenido, ctype = await asyncio.wait_for(
+                        _bajar_limitado(client, url, m["mime"]), timeout=min(15, restante))
+                    break
+                except _NoSirve as e:
+                    motivo = str(e)
+                    logger.info(f"[mocks] {order_id}: mockup {m['id']} no sirve ({e}); se intenta la miniatura")
+                except Exception as e:                # noqa: BLE001
+                    motivo = "no se pudo descargar"
+                    logger.warning(f"[mocks] no se pudo bajar el mockup {m['id']} de {inv}: {e}")
+            if contenido is None:
+                omitidas.append(f"{m['id']} ({motivo or 'no se pudo descargar'})")
                 continue
-            ctype = (r.headers.get("content-type") or m["mime"] or "").split(";")[0].strip()
-            if not ctype.startswith("image/"):
-                omitidas.append(f"{m['id']} ({ctype or 'sin tipo'})")
-                continue
+            logger.info(f"[mocks] {order_id}: mockup {m['id']} OK ({ctype}, {len(contenido) // 1024} KB)")
             ext = {"image/jpeg": "jpg", "image/png": "png", "image/gif": "gif", "image/webp": "webp"}.get(ctype, "img")
             filename = f"printavo_mock_{n}.{ext}"
             storage_key = f"{order_id}_{uuid.uuid4().hex[:8]}_{filename}"
             with open(UPLOADS_DIR / storage_key, "wb") as f:
-                f.write(r.content)
+                f.write(contenido)
             await db.file_uploads.insert_one({
                 "storage_key": storage_key, "content_type": ctype, "order_id": order_id,
                 "filename": filename, "uploaded_at": datetime.now(timezone.utc).isoformat(),

@@ -101,14 +101,37 @@ class DB:
         self.file_uploads = Col()
 
 
+# "huge.png" simula el ARCHIVO DE ARTE de la 3470: 300 MB que, bajados enteros a
+# memoria, tumbaban el proceso (502 del proxy). Se sirve en trozos y se cuenta
+# cuanto se llego a leer, para comprobar que el tope corta a tiempo.
+LEIDO = {"huge": 0}
+
+
 class Resp:
     def __init__(self, url):
         self.url = url
-        self.content = b"\x89PNG fake" if url.endswith(".png") else b"%PDF fake"
-        self.headers = {"content-type": "image/png" if url.endswith(".png") else "application/pdf"}
+        self.huge = "huge" in url
+        es_png = url.endswith(".png")
+        self.headers = {"content-type": "image/png" if es_png else "application/pdf"}
+        if self.huge:
+            self.headers["content-length"] = "0"       # sin largo declarado: hay que contar
 
     def raise_for_status(self):
         pass
+
+    async def aiter_bytes(self):
+        if self.huge:
+            for _ in range(300):                      # 300 x 1 MB
+                LEIDO["huge"] += 1
+                yield b"x" * (1024 * 1024)
+        else:
+            yield b"\x89PNG fake" if self.url.endswith(".png") else b"%PDF fake"
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *a):
+        return False
 
 
 class Cliente:
@@ -124,6 +147,10 @@ class Cliente:
         return False
 
     async def get(self, url):
+        Cliente.bajadas.append(url)
+        return Resp(url)
+
+    def stream(self, method, url):
         Cliente.bajadas.append(url)
         return Resp(url)
 
@@ -203,6 +230,22 @@ async def main():
         check("Printavo caido debia fallar", False)
     except HTTPException as e:
         check("Printavo caido -> 502 con el motivo", e.status_code == 502 and "403" in e.detail, e.detail)
+
+    print("\n5b) archivo de arte de 300 MB (la 3470: 502 del proxy) -> miniatura")
+    async def gql_huge(q, v):
+        return {"invoice": {"id": "9", "lineItemGroups": {"nodes": [{"position": 1, "imprints": {"nodes": []},
+                "lineItems": {"nodes": [_li("FRONT PRINT", {"id": "m_huge", "mimeType": "",
+                                                            "fullImageUrl": "https://cdn/huge.png",
+                                                            "thumbnailUrl": "https://cdn/miniatura.png"})]}}]}}}
+    pc._graphql = gql_huge
+    ro.db = DB([{"order_id": "ord_7", "printavo_invoice_id": "9", "images": []}])
+    LEIDO["huge"] = 0
+    r7 = await ro.traer_mocks_printavo("ord_7", Req())
+    check("se guarda la miniatura en vez del archivo pesado",
+          r7["traidas"] == 1 and "https://cdn/miniatura.png" in Cliente.bajadas, f"{r7}")
+    check("y se deja de leer el pesado al pasar el tope (no 300 MB en memoria)",
+          LEIDO["huge"] <= ro.MOCKS_MAX_BYTES // (1024 * 1024) + 1, f"leidos {LEIDO['huge']} MB")
+    pc._graphql = gql
 
     print("\n6) nunca se queda colgado (la 3470 dio 'Failed to fetch')")
     import time as _t
