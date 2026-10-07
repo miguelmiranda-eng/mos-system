@@ -1783,6 +1783,9 @@ async def upload_attachment(order_id: str, request: Request):
 
 
 MOCKS_VERSION = 2   # subirla hace que la ficha vuelva a buscar sola (ver abajo)
+# Presupuesto de tiempo (s): debajo de lo que aguanta el proxy antes de cortar.
+MOCKS_T_PRINTAVO = 20
+MOCKS_T_TOTAL = 25
 
 
 @router.post("/{order_id}/images/printavo")
@@ -1806,24 +1809,49 @@ async def traer_mocks_printavo(order_id: str, request: Request):
         raise HTTPException(status_code=400, detail="Esta orden no viene de Printavo: no hay invoice del cual traer el mock")
     if not printavo_client.is_configured():
         raise HTTPException(status_code=400, detail="Credenciales de Printavo no configuradas")
+    # PRESUPUESTO DE TIEMPO. Sin el, Printavo (3 intentos x 30 s + las esperas de
+    # un 429) y las descargas pasaban del minuto, el proxy cortaba la conexion y
+    # el navegador solo decia "Failed to fetch" (paso con la 3470). Se responde
+    # SIEMPRE antes de que corte el proxy, con un motivo legible.
+    inicio = time.monotonic()
     try:
-        mockups = await printavo_client.fetch_invoice_mockups(inv)
+        mockups = await asyncio.wait_for(printavo_client.fetch_invoice_mockups(inv), timeout=MOCKS_T_PRINTAVO)
+    except asyncio.TimeoutError:
+        logger.error(f"[mocks] Printavo {inv}: sin respuesta en {MOCKS_T_PRINTAVO} s")
+        raise HTTPException(status_code=504, detail=f"Printavo tardó más de {MOCKS_T_PRINTAVO} s en responder; intenta de nuevo en un momento")
     except Exception as e:
         logger.error(f"[mocks] Printavo {inv}: {e}")
-        raise HTTPException(status_code=502, detail=f"Printavo no respondió: {str(e)[:200]}")
+        raise HTTPException(status_code=502, detail=f"Printavo no respondió: {str(e)[:300]}")
 
+    try:
+        return await _guardar_mocks(user, order_id, order, inv, mockups, inicio, httpx)
+    except HTTPException:
+        raise
+    except Exception as e:
+        # Un error inesperado sale con su motivo; si no, el proxy lo convierte en
+        # una respuesta sin CORS y el navegador lo reporta como "Failed to fetch".
+        logger.exception(f"[mocks] fallo guardando los mocks de {order_id}")
+        raise HTTPException(status_code=500, detail=f"No se pudieron guardar los mocks: {str(e)[:300]}")
+
+
+async def _guardar_mocks(user, order_id, order, inv, mockups, inicio, httpx):
     ya = {img.get("printavo_mockup_id") for img in (order.get("images") or []) if img.get("printavo_mockup_id")}
     nuevas, omitidas = [], []
     backend_url = os.environ.get("BACKEND_PUBLIC_URL", "")
-    async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+    limite = inicio + MOCKS_T_TOTAL                   # todo, incluido Printavo
+    async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
         for n, m in enumerate(mockups, 1):
             if m["id"] in ya:
                 continue
             if m["mime"] and not m["mime"].startswith("image/"):
                 omitidas.append(f"{m['id']} ({m['mime']})")
                 continue
+            restante = limite - time.monotonic()
+            if restante < 3:
+                omitidas.append(f"{m['id']} (sin tiempo: vuelve a dar Traer)")
+                continue
             try:
-                r = await client.get(m["url"])
+                r = await asyncio.wait_for(client.get(m["url"]), timeout=min(15, restante))
                 r.raise_for_status()
             except Exception as e:
                 logger.warning(f"[mocks] no se pudo bajar el mockup {m['id']} de {inv}: {e}")

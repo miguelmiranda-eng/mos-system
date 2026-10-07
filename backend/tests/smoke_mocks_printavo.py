@@ -204,6 +204,43 @@ async def main():
     except HTTPException as e:
         check("Printavo caido -> 502 con el motivo", e.status_code == 502 and "403" in e.detail, e.detail)
 
+    print("\n6) nunca se queda colgado (la 3470 dio 'Failed to fetch')")
+    import time as _t
+    ro.MOCKS_T_PRINTAVO = 0.3
+
+    async def lento(q, v):
+        await asyncio.sleep(5)
+        return copy.deepcopy(RESPUESTA)
+    pc._graphql = lento
+    ro.db = DB([{"order_id": "ord_4", "printavo_invoice_id": "1", "images": []}])
+    t0 = _t.monotonic()
+    try:
+        await ro.traer_mocks_printavo("ord_4", Req())
+        check("Printavo lento debia cortarse", False)
+    except HTTPException as e:
+        check("Printavo lento -> 504 con mensaje, sin esperar a que corte el proxy",
+              e.status_code == 504 and "tardó" in e.detail and _t.monotonic() - t0 < 2,
+              f"{e.status_code} {e.detail} {_t.monotonic() - t0:.1f}s")
+    ro.MOCKS_T_PRINTAVO = 20
+
+    pc._graphql = gql
+    ro.db = DB([{"order_id": "ord_5", "printavo_invoice_id": "1", "images": []}])
+    ro.UPLOADS_DIR = Path(tmp) / "no" / "existe"     # escribir truena
+    try:
+        await ro.traer_mocks_printavo("ord_5", Req())
+        check("un fallo al guardar debia reportarse", False)
+    except HTTPException as e:
+        check("fallo inesperado -> 500 CON el motivo (no 'Failed to fetch')",
+              e.status_code == 500 and "No se pudieron guardar" in e.detail, f"{e.status_code} {e.detail}")
+    ro.UPLOADS_DIR = tmp
+
+    ro.MOCKS_T_TOTAL = 0                              # sin presupuesto para descargar
+    ro.db = DB([{"order_id": "ord_6", "printavo_invoice_id": "1", "images": []}])
+    r6 = await ro.traer_mocks_printavo("ord_6", Req())
+    check("sin tiempo para descargar -> responde igual y dice cuales faltaron",
+          r6["traidas"] == 0 and any("sin tiempo" in x for x in r6["omitidas"]), f"{r6}")
+    ro.MOCKS_T_TOTAL = 25
+
     print(f"\n{'=' * 60}\n   {ok} PASS / {fail} FAIL\n{'=' * 60}")
     return 1 if fail else 0
 
