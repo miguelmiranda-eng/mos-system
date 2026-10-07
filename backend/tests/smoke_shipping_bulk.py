@@ -119,6 +119,24 @@ async def main():
         L = {l["order_number"]: l for l in (await c.get(f"{API}/week?start=2026-10-05")).json()["lines"]}
         check("PO 23239 completo al estar las 3 aquí y listas", L["3740"]["bulk"]["complete"] is True, L["3740"]["bulk"])
         check("PO 23300 completo al mover la hermana", L["3750"]["bulk"]["complete"] is True, L["3750"]["bulk"])
+
+        print("\n== ENVIADO al sembrar el packing (sólo en el programador) ==")
+        sdb.orders.update_one({"order_number": "3741"}, {"$set": {"production_status": "EN PRODUCCION"}})
+        L = {l["order_number"]: l for l in (await c.get(f"{API}/week?start=2026-10-05")).json()["lines"]}
+        check("antes de sembrar: espejo de MOS (EN PRODUCCION) y el bulk no está listo",
+              L["3741"]["status_effective"] == "EN PRODUCCION" and L["3740"]["bulk"]["complete"] is False, L["3741"]["status_effective"])
+        r = await c.post("/api/orders/seed-packing-link", json={
+            "order_numbers": ["3741"], "label": "PLGTS 10-26-0091", "url": "https://docs.google.com/spreadsheets/d/x/edit"})
+        check("siembra OK", r.status_code == 200 and r.json()["seeded_count"] == 1, r.text[:200])
+        L = {l["order_number"]: l for l in (await c.get(f"{API}/week?start=2026-10-05")).json()["lines"]}
+        check("con packing sembrado el programador la muestra ENVIADO", L["3741"]["status_effective"] == "ENVIADO", L["3741"])
+        check("…y conserva lo que dice MOS en status_auto", L["3741"]["status_auto"] == "EN PRODUCCION")
+        check("la orden en MOS NO cambia de production status",
+              sdb.orders.find_one({"order_number": "3741"})["production_status"] == "EN PRODUCCION")
+        check("en el bulk la hermana enviada cuenta como lista → completo",
+              L["3740"]["bulk"]["ready"] == 3 and L["3740"]["bulk"]["complete"] is True, L["3740"]["bulk"])
+        sis = {x["order_number"]: x for x in L["3740"]["bulk"]["sisters"]}
+        check("la hermana trae shipped=True", sis["3741"]["shipped"] is True and sis["3740"]["shipped"] is False)
     raw.drop_database(SMOKE_DB)
     print(f"\n{ok} PASS · {fail} FAIL")
     sys.exit(1 if fail else 0)

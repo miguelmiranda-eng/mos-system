@@ -3144,6 +3144,19 @@ const en = {
   sch_qty_hint: "Order quantity / units already shipped per the WMS",
   sch_status_auto_hint: "Automatic: taken from the order's MOS status. Pick an option to set it by hand.",
   sch_status_auto_none: "no MOS match",
+  // Shipping guest (external vendor; components/GuestShipping.js)
+  gs_title: "Scheduled shipments · Guest",
+  gs_subtitle: "Orders scheduled since {since}. Fill in SHIPPING FROM and CARRIER.",
+  gs_help: "Type SHIPPING FROM and CARRIER in the yellow boxes; it saves when you leave the box or press Enter. That is the only thing you can change in this view.",
+  gs_pending: "{n} to fill in",
+  gs_all_done: "All filled in",
+  gs_saved: "Order #{order} saved",
+  gs_save_err: "Could not save",
+  gs_load_err: "Could not load the shipments",
+  gs_empty: "No scheduled orders",
+  gs_logout: "Log out",
+  users_role_shipping_guest: "Shipping guest (vendor)",
+  users_badge_shipping_guest: "SHIPPING GUEST",
   // BULK PACK (sisters = same client + customer PO)
   sch_bulk_progress: "PO {po}: {here}/{n} in this shipment · {ready}/{n} ready",
   sch_bulk_complete: "Complete",
@@ -3164,6 +3177,7 @@ const en = {
   sch_bulk_here_col: "In shipment",
   sch_bulk_ready_col: "Ready",
   sch_bulk_state: "State",
+  sch_status_shipped_hint: "SHIPPED: this order's packing was already seeded. In MOS it is still {mos}.",
   sch_status_mos_hint: "Order production status in MOS (read-only: change it on the order)",
   // Row color (Excel-like fill)
   sch_row_color: "Color",

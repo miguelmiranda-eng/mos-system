@@ -44,8 +44,11 @@ const tint = (hex, k = 0.8) => {
   const mix = (c) => Math.round(c + (255 - c) * k);
   return `rgb(${mix(n >> 16)}, ${mix((n >> 8) & 255)}, ${mix(n & 255)})`;
 };
+// ENVIADO no es un status de MOS: lo pone el programador cuando la orden ya
+// tiene packing sembrado (backend SHIPPED_STATUS). Verde.
+const LOCAL_COLORS = { ENVIADO: { bg: '#16a34a', text: '#FFFFFF' } };
 const statusColor = (s) => {
-  const c = s && MOS_COLORS[s];
+  const c = s && (LOCAL_COLORS[s] || MOS_COLORS[s]);
   return c ? { pill: c.bg, text: c.text, row: tint(c.bg) } : null;
 };
 const pillStyle = (s) => {
@@ -68,7 +71,7 @@ const SCOPED_CSS = `
 #${ROOT_ID} .sch-sheet { background:#fff !important; color:#1e293b !important; }
 #${ROOT_ID} .sch-sheet thead tr, #${ROOT_ID} .sch-sheet thead th { background:#d9ead3 !important; color:#1e293b !important; }
 #${ROOT_ID} .sch-sheet tbody tr[data-st] { background-color:#fff !important; }
-${Object.keys(MOS_COLORS).map((k) => `#${ROOT_ID} .sch-sheet tbody tr[data-st="${k}"] { background-color:${statusColor(k).row} !important; }`).join(' ')}
+${[...Object.keys(MOS_COLORS), ...Object.keys(LOCAL_COLORS)].map((k) => `#${ROOT_ID} .sch-sheet tbody tr[data-st="${k}"] { background-color:${statusColor(k).row} !important; }`).join(' ')}
 #${ROOT_ID} .sch-sheet tbody tr[data-st="CANCELLED"] td { color:#94a3b8 !important; text-decoration:line-through; }
 ${Object.entries(ROW_COLORS).map(([k, c]) => `#${ROOT_ID} .sch-sheet tbody tr[data-st][data-rc="${k}"] { background-color:${c} !important; }`).join(' ')}
 #${ROOT_ID} input.sch-cell, #${ROOT_ID} select.sch-cell { background-color:transparent !important; color:inherit !important; }
@@ -1209,7 +1212,8 @@ const ShippingScheduler = () => {
                       {/* STATUS = production status de la orden en MOS (sólo
                           lectura); se cambia en la orden, no aquí. */}
                       <div className="flex items-center gap-1">
-                        <span title={t('sch_status_mos_hint')}
+                        <span title={l.status_effective === 'ENVIADO'
+                          ? t('sch_status_shipped_hint', { mos: l.status_auto || '—' }) : t('sch_status_mos_hint')}
                           className="flex-1 min-w-0 truncate px-2 py-0.5 rounded-full text-[10px] font-black uppercase text-center"
                           style={pillStyle(l.status_effective)}>
                           {l.status_effective || '—'}
@@ -1739,7 +1743,10 @@ const ShippingScheduler = () => {
                           <td className="px-2 py-1.5 text-slate-600">{x.design_num || '—'}</td>
                           <td className="px-2 py-1.5 text-right tabular-nums">{fmtNum(x.quantity)}</td>
                           <td className="px-2 py-1.5">
-                            <span className="px-2 py-0.5 rounded-full text-[10px] font-black uppercase" style={pillStyle(x.production_status)}>{x.production_status || '—'}</span>
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-black uppercase" style={pillStyle(x.shipped ? 'ENVIADO' : x.production_status)}
+                              title={x.shipped ? t('sch_status_shipped_hint', { mos: x.production_status || '—' }) : undefined}>
+                              {x.shipped ? 'ENVIADO' : (x.production_status || '—')}
+                            </span>
                           </td>
                           <td className={`px-2 py-1.5 font-bold ${here ? 'text-emerald-700' : 'text-amber-700'}`}>{sisterWhere(x, l.export_id)}</td>
                           {!readOnly && (

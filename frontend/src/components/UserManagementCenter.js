@@ -483,6 +483,7 @@ const UserManagementCenter = () => {
                         <SelectItem value="user">{t('users_role_standard')}</SelectItem>
                         <SelectItem value="ceo">{t('users_role_ceo_exec')}</SelectItem>
                         <SelectItem value="customer">{t('users_role_customer')}</SelectItem>
+                        <SelectItem value="shipping_guest">{t('users_role_shipping_guest')}</SelectItem>
                       </SelectContent>
                     </Select>
                   ) : (
@@ -558,6 +559,7 @@ const UserManagementCenter = () => {
                         <SelectItem value="user">{t('users_role_standard')}</SelectItem>
                         <SelectItem value="ceo">{t('users_role_ceo_exec')}</SelectItem>
                         <SelectItem value="customer">{t('users_role_customer')}</SelectItem>
+                        <SelectItem value="shipping_guest">{t('users_role_shipping_guest')}</SelectItem>
                       </SelectContent>
                     </Select>
                   ) : (
@@ -639,6 +641,7 @@ const UserManagementCenter = () => {
                        {u.role === 'picker' && <span className="text-[9px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-black tracking-widest">PICKER</span>}
                        {u.role === 'supersu' && <span className="text-[9px] px-2 py-0.5 rounded-full bg-rose-500/10 text-rose-400 border border-rose-500/20 font-black tracking-widest">{t('users_badge_supersu')}</span>}
                        {(u.role === 'qc' || u.role === 'inspector_qc') && <span className="text-[9px] px-2 py-0.5 rounded-full bg-sky-500/10 text-sky-400 border border-sky-500/20 font-black tracking-widest">INSPECTOR QC</span>}
+                       {u.role === 'shipping_guest' && <span className="text-[9px] px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-500 border border-amber-500/20 font-black tracking-widest">{t('users_badge_shipping_guest')}</span>}
                        {u.role === 'customer' && <span className="text-[9px] px-2 py-0.5 rounded-full bg-purple-500/10 text-purple-400 border border-purple-500/20 font-black tracking-widest">{t('users_badge_customer')}: {u.associated_customer}</span>}
                     </h3>
                     <p className="text-xs text-muted-foreground font-mono truncate">{u.email}</p>

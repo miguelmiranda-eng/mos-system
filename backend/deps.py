@@ -580,6 +580,14 @@ async def get_current_user(request: Request) -> Optional[Dict]:
                 {"$set": {"role": "supersu"}},
             )
             user["role"] = "supersu"
+    # Invitado shipping (proveedor externo): DEFAULT-DENY. Casi todo el sistema
+    # sólo pide sesión (require_auth), así que esconder pantallas no basta: aquí,
+    # el único punto por donde pasa toda sesión, se le niega cualquier ruta fuera
+    # de su superficie (GUEST_SURFACE), aunque la escriba a mano.
+    if user and user.get("role") == SHIPPING_GUEST_ROLE and not guest_surface_permitida(
+            request.method.upper(), request.url.path):
+        raise HTTPException(status_code=403, detail=(
+            "Tu usuario de invitado sólo puede usar la vista de envíos programados."))
     return user
 
 async def require_auth(request: Request) -> Dict:
@@ -659,6 +667,23 @@ API_SURFACE_PERMITIDA = (
     ("PUT",    re.compile(r"^/api/scheduled-shipments/[^/]+$")),
     ("DELETE", re.compile(r"^/api/scheduled-shipments/[^/]+$")),
 )
+
+
+# ── Invitado shipping: superficie PERMITIDA (default-deny) ──────────────────
+# Rol para un proveedor externo que llena SHIPPING FROM y CARRIER en Envíos
+# programados (routers/guest_shipping.py). get_current_user le niega todo lo
+# que no esté aquí. Agregar una ruta = ampliar lo que ve alguien de fuera.
+SHIPPING_GUEST_ROLE = "shipping_guest"
+GUEST_SURFACE = (
+    ("GET",  re.compile(r"^/api/auth/me$")),
+    ("POST", re.compile(r"^/api/auth/logout$")),
+    ("GET",  re.compile(r"^/api/guest-shipping/lines$")),
+    ("PUT",  re.compile(r"^/api/guest-shipping/lines/[^/]+$")),
+)
+
+
+def guest_surface_permitida(metodo: str, ruta: str) -> bool:
+    return any(m == metodo and rx.match(ruta) for m, rx in GUEST_SURFACE)
 
 
 def api_surface_permitida(metodo: str, ruta: str) -> bool:

@@ -87,6 +87,11 @@ async def _production_statuses() -> list:
     return cfg.get("production_statuses") or DEFAULT_OPTIONS["production_statuses"]
 
 
+# Status propio del programador: la orden ya tiene packing sembrado
+# (POST /api/orders/seed-packing-link es lo único que escribe packing_link).
+SHIPPED_STATUS = "ENVIADO"
+
+
 def _mos_status(order: dict | None) -> str | None:
     ps = str((order or {}).get("production_status") or "").strip()
     return ps or None
@@ -252,10 +257,13 @@ def _row(sched: dict, order: dict | None, pl_seed: dict | None = None,
         "position": sched.get("position"),
         # LATE: la fecha de salida cae después del límite de la orden.
         "late": bool(ship_d and dl and ship_d > dl),
-        # STATUS: espejo del production status de MOS (sólo lectura). Las
-        # líneas del formato anterior (sin export) conservan su status propio.
+        # STATUS: espejo del production status de MOS (sólo lectura), salvo
+        # ENVIADO: si ya se sembró el packing de la orden, el programador la
+        # muestra ENVIADO (decisión 2026-10-07: SÓLO aquí; la orden en MOS no
+        # se toca ni dispara automatizaciones). `status_auto` = lo que dice MOS.
+        # Las líneas del formato anterior (sin export) conservan su status propio.
         "status_auto": _mos_status(order),
-        "status_effective": _mos_status(order) if sched.get("export_id")
+        "status_effective": (SHIPPED_STATUS if pl_url else _mos_status(order)) if sched.get("export_id")
                             else (sched.get("status") or _mos_status(order)),
         # SE MUEVE FECHA: el cancel date cambió desde que se programó.
         "cancel_date_at_schedule": sched.get("cancel_date_at_schedule"),
@@ -375,7 +383,7 @@ async def _attach_bulk(rows: list, by_num: dict) -> None:
             {"$or": [{"client": o["client"], "customer_po": o["customer_po"]} for o in keys.values()],
              "board": {"$ne": PAPELERA}},
             {"_id": 0, "order_number": 1, "client": 1, "customer_po": 1, "production_status": 1,
-             "quantity": 1, "design_#": 1, "design_num": 1}):
+             "quantity": 1, "design_#": 1, "design_num": 1, "packing_link": 1}):
         if str(o.get("production_status") or "").strip().upper() == "CANCELLED":
             continue
         sisters.setdefault(_bulk_key(o), {})[o["order_number"]] = o
@@ -401,6 +409,7 @@ async def _attach_bulk(rows: list, by_num: dict) -> None:
             sis.append({
                 "order_number": n,
                 "production_status": o.get("production_status") or None,
+                "shipped": bool(o.get("packing_link")),
                 "quantity": o.get("quantity"),
                 "design_num": o.get("design_#") or o.get("design_num"),
                 "exports": [{"export_id": e, "export_no": (exps.get(e) or {}).get("export_no"),
@@ -408,7 +417,9 @@ async def _attach_bulk(rows: list, by_num: dict) -> None:
                             for e in sorted(where.get(n, ()), key=lambda e: str((exps.get(e) or {}).get("date")))],
             })
         here = sum(1 for x in sis if r["export_id"] in {e["export_id"] for e in x["exports"]})
-        ready = sum(1 for x in sis if str(x["production_status"] or "").strip().upper() == BULK_READY)
+        # Lista = LISTO PARA ENVIO en MOS o ya ENVIADA (packing sembrado).
+        ready = sum(1 for x in sis if x["shipped"]
+                    or str(x["production_status"] or "").strip().upper() == BULK_READY)
         r["bulk"] = {"po": k[1], "client": k[0], "n": len(sis), "sisters": sis,
                      "in_export": here, "ready": ready,
                      "complete": here == len(sis) and ready == len(sis)}

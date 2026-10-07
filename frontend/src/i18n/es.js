@@ -2958,6 +2958,19 @@ const es = {
   sch_qty_hint: "Cantidad de la orden / unidades ya embarcadas según el WMS",
   sch_status_auto_hint: "Automático: sale del status de la orden en MOS. Elige una opción para fijarlo a mano.",
   sch_status_auto_none: "sin equivalencia en MOS",
+  // Invitado shipping (proveedor externo; components/GuestShipping.js)
+  gs_title: "Envíos programados · Invitado",
+  gs_subtitle: "Órdenes programadas desde el {since}. Llena SHIPPING FROM y CARRIER.",
+  gs_help: "Escribe SHIPPING FROM y CARRIER en las casillas amarillas; se guarda al salir de la casilla o con Enter. Es lo único que se puede cambiar en esta vista.",
+  gs_pending: "{n} por llenar",
+  gs_all_done: "Todo lleno",
+  gs_saved: "Orden #{order} guardada",
+  gs_save_err: "No se pudo guardar",
+  gs_load_err: "No se pudieron cargar los envíos",
+  gs_empty: "No hay órdenes programadas",
+  gs_logout: "Salir",
+  users_role_shipping_guest: "Invitado shipping (proveedor)",
+  users_badge_shipping_guest: "INVITADO SHIPPING",
   // BULK PACK (hermanas = mismo cliente + customer PO)
   sch_bulk_progress: "PO {po}: {here}/{n} en este envío · {ready}/{n} listas",
   sch_bulk_complete: "Completo",
@@ -2978,6 +2991,7 @@ const es = {
   sch_bulk_here_col: "En el envío",
   sch_bulk_ready_col: "Listas",
   sch_bulk_state: "Estado",
+  sch_status_shipped_hint: "ENVIADO: ya se sembró el packing de esta orden. En MOS sigue como {mos}.",
   sch_status_mos_hint: "Production status de la orden en MOS (sólo lectura: se cambia en la orden)",
   // Color de fila (relleno tipo Excel)
   sch_row_color: "Color",

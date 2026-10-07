@@ -275,6 +275,7 @@ from routers.po_templates import router as po_templates_router
 from routers.automation_scheduler import router as automation_sla_router, start_automation_scheduler
 from routers.blanks_sweep_scheduler import router as blanks_sweep_router, start_blanks_sweep_scheduler
 from routers.scheduled_shipments import router as scheduled_shipments_router
+from routers.guest_shipping import router as guest_shipping_router
 from routers.printavo_export import router as printavo_export_router
 from routers.paint import router as paint_router
 from routers.samples import router as samples_router
@@ -310,6 +311,7 @@ app.include_router(shipping_router)
 app.include_router(packing_router)
 app.include_router(router_packing_list)   # GET /api/packing-list (Tarea 1.2)
 app.include_router(scheduled_shipments_router)
+app.include_router(guest_shipping_router)   # invitado shipping (deps.GUEST_SURFACE)
 app.include_router(report_scheduler_router)
 app.include_router(printavo_scheduler_router)
 app.include_router(gmail_intake_router)

@@ -703,6 +703,7 @@ const PaintModule = lazy(() => import("./components/PaintModule"));
 const SamplesModule = lazy(() => import("./components/SamplesModule"));
 const SmartAgenda = lazy(() => import("./components/SmartAgenda"));
 const ShippingModule = lazy(() => import("./components/ShippingModule"));
+const GuestShipping = lazy(() => import("./components/GuestShipping"));
 const PackingListTool = lazy(() => import("./components/PackingList"));
 const ScheduledReports = lazy(() => import("./components/ScheduledReports"));
 const PrintavoSync = lazy(() => import("./components/PrintavoSync"));
@@ -788,10 +789,21 @@ const ResetPasswordPage = () => {
 
 function AppRouter() {
   const location = useLocation();
-  
+  const { user, logout } = useAuth();
+
   // Check URL fragment for session_id - CRITICAL: detect during render, NOT in useEffect
   if (location.hash?.includes('session_id=')) {
     return <AuthCallback />;
+  }
+
+  // Invitado shipping (proveedor externo): sólo su vista, en cualquier ruta.
+  // La seguridad real está en el backend (deps.GUEST_SURFACE, default-deny).
+  if (user?.role === 'shipping_guest') {
+    return (
+      <Suspense fallback={<div className="min-h-screen flex items-center justify-center bg-background"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>}>
+        <GuestShipping user={user} onLogout={logout} />
+      </Suspense>
+    );
   }
 
   return (
