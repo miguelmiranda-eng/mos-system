@@ -33,8 +33,10 @@ DEFAULTS = {
     "minute": 0,
     "recipients": [],      # list of email addresses
     "preset": "today",     # report date range
-    "format": "pdf",
+    "format": "excel",
     "subject": "Reporte Diario de Producción",
+    "quotes_report": True,   # adjuntar el 2o reporte: quotes de Printavo pendientes de MOS
+    "quotes_days": 30,       # ventana de quotes (creados en los últimos N días)
     "last_sent_date": None,  # YYYY-MM-DD (Tijuana) of the last successful send
 }
 
@@ -48,7 +50,8 @@ async def _get_config():
 
 
 # ── Email with attachment ───────────────────────────────────────────────────────
-async def _send_report_email(recipients, subject, html, filename, content_b64):
+async def _send_report_email(recipients, subject, html, attachments):
+    """attachments = [{filename, content_b64}, ...] — soporta uno o varios adjuntos."""
     if not resend.api_key:
         raise RuntimeError("RESEND_API_KEY no configurado")
     params = {
@@ -56,29 +59,42 @@ async def _send_report_email(recipients, subject, html, filename, content_b64):
         "to": recipients,
         "subject": subject,
         "html": html,
-        "attachments": [{"filename": filename, "content": content_b64}],
+        "attachments": [{"filename": a["filename"], "content": a["content_b64"]} for a in attachments],
     }
     return await asyncio.to_thread(resend.Emails.send, params)
 
 
-def _report_html(report_date, intro):
+def _report_html(report_date, intro, n_attach=1):
+    extra = " y el de quotes pendientes de MOS" if n_attach > 1 else ""
     return f"""
     <div style="font-family:Arial,sans-serif;color:#0F172A">
       <h2 style="color:#0091D5">Reporte Diario de Producción</h2>
       <p>Fecha: <strong>{report_date}</strong></p>
       <p>{intro}</p>
-      <p>Se adjunta el reporte ejecutivo en PDF.</p>
+      <p>Se adjunta el reporte de producción en Excel{extra}.</p>
       <p style="color:#64748B;font-size:12px">MOS System · Prosper Manufacturing</p>
     </div>"""
 
 
 async def _generate_and_send(cfg, report_date, recipients, intro, subject_suffix=""):
-    fmt = cfg.get("format", "pdf")
+    fmt = cfg.get("format", "excel")
     result = await build_production_report(fmt=fmt, preset=cfg.get("preset", "today"), filters={})
+    attachments = [{"filename": result["filename"], "content_b64": result["data"]}]
+    # 2o reporte: quotes de Printavo (status Quote) que aún no están en MOS.
+    # Comparte correo/destinatarios. Si falla (WAF, token), NO tumba el reporte
+    # de producción: se registra el error y se manda lo demás.
+    if cfg.get("quotes_report", True):
+        try:
+            from services.quotes_report import build_pending_quotes_report
+            q = await build_pending_quotes_report(days=int(cfg.get("quotes_days", 30)))
+            if q:
+                attachments.append({"filename": q["filename"], "content_b64": q["data"]})
+        except Exception as e:
+            logger.error(f"[report-scheduler] quotes report failed: {e}")
     subject = f"{cfg.get('subject', 'Reporte Diario de Producción')} — {report_date}{subject_suffix}"
-    html = _report_html(report_date, intro)
-    await _send_report_email(recipients, subject, html, result["filename"], result["data"])
-    logger.info(f"[report-scheduler] Sent report for {report_date} to {recipients}")
+    html = _report_html(report_date, intro, n_attach=len(attachments))
+    await _send_report_email(recipients, subject, html, attachments)
+    logger.info(f"[report-scheduler] Sent {len(attachments)} attachment(s) for {report_date} to {recipients}")
     return result["filename"]
 
 
@@ -171,6 +187,12 @@ async def update_report_schedule(request: Request):
         allowed["preset"] = body["preset"]
     if "subject" in body:
         allowed["subject"] = str(body["subject"])[:200]
+    if "format" in body and body["format"] in ("excel", "pdf"):
+        allowed["format"] = body["format"]
+    if "quotes_report" in body:
+        allowed["quotes_report"] = bool(body["quotes_report"])
+    if "quotes_days" in body:
+        allowed["quotes_days"] = max(1, min(365, int(body["quotes_days"])))
     await db.report_schedules.update_one({"config_id": CONFIG_ID}, {"$set": allowed}, upsert=True)
     await log_activity(user, "update_report_schedule", allowed)
     return await _get_config()

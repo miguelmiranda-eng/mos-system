@@ -17,7 +17,9 @@ const DEFAULT_CONFIG = {
   minute: 0,
   recipients: [],
   preset: "today",
-  format: "pdf",
+  format: "excel",
+  quotes_report: true,
+  quotes_days: 30,
   subject: "Reporte Diario de Producción",
   last_sent_date: null,
 };
@@ -89,6 +91,9 @@ export default function ScheduledReports() {
           recipients: config.recipients,
           preset: config.preset,
           subject: config.subject,
+          format: config.format,
+          quotes_report: config.quotes_report,
+          quotes_days: config.quotes_days,
         }),
       });
       if (res.ok) {
@@ -315,7 +320,47 @@ export default function ScheduledReports() {
               className="w-full bg-secondary/50 border border-border p-2.5 rounded-lg text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
             />
           </div>
-          <p className="text-xs text-muted-foreground/70">{t("rs_format_note")}</p>
+          {/* Formato del reporte */}
+          <div>
+            <label className="text-xs text-muted-foreground mb-2 block">{t("rs_format")}</label>
+            <div className="flex gap-2">
+              {["excel", "pdf"].map((f) => (
+                <button
+                  key={f}
+                  onClick={() => patch({ format: f })}
+                  className={`px-4 py-2 rounded-lg text-sm font-semibold border transition-all ${config.format === f ? "bg-primary text-white border-primary shadow-[0_2px_12px_rgba(255,193,7,0.3)]" : "bg-secondary/50 text-muted-foreground border-border hover:text-foreground hover:border-primary/40"}`}
+                >
+                  {f === "excel" ? t("rs_format_excel") : t("rs_format_pdf")}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* 2o reporte: quotes de Printavo pendientes de MOS */}
+          <div className="flex items-start justify-between gap-4 pt-3 border-t border-border/60">
+            <div className="min-w-0">
+              <div className="text-sm font-semibold text-foreground">{t("rs_quotes_title")}</div>
+              <p className="text-xs text-muted-foreground mt-0.5">{t("rs_quotes_hint")}</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => patch({ quotes_report: !config.quotes_report })}
+              className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full transition-colors ${config.quotes_report ? "bg-green-500" : "bg-secondary"}`}
+              aria-pressed={config.quotes_report}
+            >
+              <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${config.quotes_report ? "translate-x-6" : "translate-x-1"}`} />
+            </button>
+          </div>
+          {config.quotes_report && (
+            <div className="max-w-xs">
+              <label className="text-xs text-muted-foreground mb-1 block">{t("rs_quotes_days")}</label>
+              <input
+                type="number" min="1" max="365" value={config.quotes_days}
+                onChange={(e) => patch({ quotes_days: Math.max(1, Math.min(365, parseInt(e.target.value || "30", 10))) })}
+                className="w-full bg-secondary/50 border border-border p-2.5 rounded-lg text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+              />
+            </div>
+          )}
         </section>
 
         {/* Manual send */}

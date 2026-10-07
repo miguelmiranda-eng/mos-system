@@ -1200,6 +1200,7 @@ async def build_production_report(fmt="excel", preset=None, filters=None):
     by_po = {}
     by_machine = {}
     by_client = {}
+    by_shift = {}
     for l in logs:
         oid = l.get("order_id")
         if oid:
@@ -1212,6 +1213,10 @@ async def build_production_report(fmt="excel", preset=None, filters=None):
         c = l.get("client", "Sin Cliente")
         by_client[c] = by_client.get(c, 0) + l.get("quantity_produced", 0)
 
+        # Desglose por TURNO: el campo `shift` lo captura el operador en cada log.
+        s = (l.get("shift") or "").strip() or "SIN TURNO"
+        by_shift[s] = by_shift.get(s, 0) + l.get("quantity_produced", 0)
+
     # Misma meta que el tablero: la capturada por el gerente para los días del
     # periodo. Sin meta, el reporte imprime "—" en vez de un porcentaje inventado.
     goal_total, _ = _sum_goals(await _goals_for_days(
@@ -1223,7 +1228,8 @@ async def build_production_report(fmt="excel", preset=None, filters=None):
         "efficiency": round(total_produced / goal_total * 100, 1) if goal_total > 0 else None,
         "by_po": sorted(list(by_po.values()), key=lambda x: x["produced"], reverse=True),
         "by_machine": sorted([{"machine": k, "produced": v} for k, v in by_machine.items()], key=lambda x: x["produced"], reverse=True),
-        "by_client": sorted([{"client": k, "produced": v} for k, v in by_client.items()], key=lambda x: x["produced"], reverse=True)
+        "by_client": sorted([{"client": k, "produced": v} for k, v in by_client.items()], key=lambda x: x["produced"], reverse=True),
+        "by_shift": sorted([{"shift": k, "produced": v} for k, v in by_shift.items()], key=lambda x: x["produced"], reverse=True),
     }
 
     # Generate a unique timestamped filename
@@ -1319,6 +1325,20 @@ async def _generate_excel_report(logs, summary, filters):
         ws_res.write(row, 3, target, num_fmt)
         ws_res.write(row, 4, produced, num_fmt)
         ws_res.write(row, 5, progress, wb.add_format({'border': 1, 'num_format': '0.0%', 'align': 'center'}))
+
+    # Tabla PRODUCCIÓN POR TURNO (a la derecha del detalle por orden).
+    ws_res.set_column('G:G', 18)
+    ws_res.set_column('H:I', 14)
+    ws_res.write(8, 6, "PRODUCCIÓN POR TURNO", wb.add_format({'bold': True, 'size': 14, 'bottom': 2}))
+    for i, h in enumerate(['Turno', 'Producido', '% del total']):
+        ws_res.write(9, 6 + i, h, header_fmt)
+    _tot = summary.get('total_produced', 0) or 0
+    for row, s in enumerate(summary.get("by_shift", []), 10):
+        prod = s.get("produced", 0)
+        ws_res.write(row, 6, s.get("shift", ""), cell_fmt)
+        ws_res.write(row, 7, prod, num_fmt)
+        ws_res.write(row, 8, (prod / _tot) if _tot else 0,
+                     wb.add_format({'border': 1, 'num_format': '0.0%', 'align': 'center'}))
 
     # Add Charts
     if summary.get("by_machine"):

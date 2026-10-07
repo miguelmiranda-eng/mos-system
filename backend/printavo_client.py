@@ -269,6 +269,53 @@ async def fetch_invoices_page(first: int = 25, after: str = None) -> dict:
     }
 
 
+# Lista PAGINADA de QUOTES (cotizaciones) — el 2o reporte programado. El sync
+# de MOS nunca toca los quotes (solo invoices "Scheduled"), asi que esto es lo
+# unico que ve ese pipeline. Mismos campos que INVOICES_QUERY (quote e invoice
+# comparten forma en Printavo). WAF/rate-limit: se pagina por ~25, nunca una
+# llamada por quote; _graphql reintenta ante 429.
+QUOTES_PAGE_QUERY = """
+query QuotesPage($first: Int!, $after: String) {
+  quotes(first: $first, after: $after, sortOn: VISUAL_ID, sortDescending: true) {
+    pageInfo { hasNextPage endCursor }
+    nodes {
+      id
+      visualId
+      nickname
+      createdAt
+      customerDueAt
+      dueAt
+      total
+      url
+      status { name }
+      contact { fullName customer { companyName } }
+      lineItemGroups(first: 5) {
+        nodes {
+          lineItems(first: 20) {
+            nodes { items sizes { count size } }
+          }
+        }
+      }
+    }
+  }
+}
+"""
+
+
+async def fetch_quotes_page(first: int = 25, after: str = None) -> dict:
+    """Una pagina de quotes (cotizaciones), ordenada por VISUAL_ID descendente
+    (≈ mas recientes primero). Devuelve {"nodes", "has_next", "end_cursor"}."""
+    first = max(1, min(int(first or 25), 30))  # tope de complejidad de Printavo
+    data = await _graphql(QUOTES_PAGE_QUERY, {"first": first, "after": after})
+    conn = data.get("quotes") or {}
+    page = conn.get("pageInfo") or {}
+    return {
+        "nodes": conn.get("nodes") or [],
+        "has_next": bool(page.get("hasNextPage")),
+        "end_cursor": page.get("endCursor"),
+    }
+
+
 # ── Final Bill sync ──────────────────────────────────────────────────────────
 # When an invoice reaches the "Final Bill" status, MOS copies the invoice's
 # billed total and total item count onto the matching order (see
