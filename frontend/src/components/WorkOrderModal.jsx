@@ -251,6 +251,15 @@ export default function WorkOrderModal({ order, isOpen, onClose, isDark = false,
   const [trayendo, setTrayendo] = useState(false);
   // `images` de la orden guarda TODOS sus adjuntos (también PDFs y Excels de los
   // comentarios); la galería de mocks muestra solo imágenes.
+  // La URL guardada es RELATIVA ('/api/uploads/…': en producción
+  // BACKEND_PUBLIC_URL está vacío) y resolvería contra el dominio del frontend,
+  // donde no existe -> imagen rota. Mismo patrón que SampleEvidenceModal/QC.
+  const imgUrl = (m) => {
+    const u = m?.url || '';
+    if (u.startsWith('http')) return u;
+    if (u.startsWith('/api/')) return `${API}${u.slice(4)}`;
+    return u;
+  };
   const soloImagenes = (lista) => (Array.isArray(lista) ? lista : [])
     .filter((m) => /\.(png|jpe?g|gif|webp|bmp|img)$/i.test(m.filename || m.url || ''));
 
@@ -288,7 +297,9 @@ export default function WorkOrderModal({ order, isOpen, onClose, isDark = false,
         if (!alive || !full) return;
         const imgs = soloImagenes(full.images);
         setMocks(imgs);
-        if (!imgs.length && full.printavo_invoice_id && !full.printavo_mocks_at) traerDePrintavo(true);
+        // Aunque ya haya imágenes subidas a mano: la 3470 tenía una 'image.jpg'
+        // y por eso nunca se buscó su mock en Printavo. El endpoint no repite.
+        if (full.printavo_invoice_id && !full.printavo_mocks_at) traerDePrintavo(true);
       })
       .catch(() => {});
     return () => { alive = false; };
@@ -450,8 +461,8 @@ export default function WorkOrderModal({ order, isOpen, onClose, isDark = false,
                 {mocks.length > 0 ? (
                   <div className="grid grid-cols-3 gap-2 mb-3">
                     {mocks.map((m, i) => (
-                      <a key={m.url || i} href={m.url} target="_blank" rel="noreferrer" className={`block aspect-square rounded-lg overflow-hidden border ${isDark ? 'border-white/10' : 'border-gray-200'}`}>
-                        <img src={m.url} alt={m.filename || 'mock'} className="w-full h-full object-cover" />
+                      <a key={m.url || i} href={imgUrl(m)} target="_blank" rel="noreferrer" className={`block aspect-square rounded-lg overflow-hidden border ${isDark ? 'border-white/10' : 'border-gray-200'}`}>
+                        <img src={imgUrl(m)} alt={m.filename || 'mock'} className="w-full h-full object-cover" />
                       </a>
                     ))}
                   </div>

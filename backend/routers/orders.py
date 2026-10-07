@@ -1840,7 +1840,9 @@ async def traer_mocks_printavo(order_id: str, request: Request):
     if nuevas:
         upd["$push"] = {"images": {"$each": nuevas}}
     await db.orders.update_one({"order_id": order_id}, upd)
+    # `en_printavo` distingue "el invoice no tiene mocks" (0) de "ya estaban aqui".
     await log_activity(user, "printavo_mocks", {"order_id": order_id, "invoice": inv,
+                                                 "en_printavo": len(mockups),
                                                  "traidas": len(nuevas), "omitidas": omitidas})
     final = await db.orders.find_one({"order_id": order_id}, {"_id": 0, "images": 1})
     return {"traidas": len(nuevas), "en_printavo": len(mockups), "omitidas": omitidas,
