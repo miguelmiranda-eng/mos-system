@@ -1776,6 +1776,77 @@ async def upload_attachment(order_id: str, request: Request):
         raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
 
 
+@router.post("/{order_id}/images/printavo")
+async def traer_mocks_printavo(order_id: str, request: Request):
+    """Trae los mockups del invoice de Printavo a las imagenes de la orden.
+
+    En Printavo el mock vive en la impresion (imprint) de cada grupo de lineas:
+    es la imagen que se ve en el invoice debajo de esas lineas. Se descarga y se
+    guarda IGUAL que una imagen subida a mano (disco + order.images), asi la URL
+    no depende de que Printavo la siga sirviendo. Idempotente: un mockup ya
+    traido (printavo_mockup_id) no se repite. Solo imagenes: un PDF adjunto (p.ej.
+    el PO escaneado que a veces se pega como mockup) no es el arte."""
+    import httpx
+    import printavo_client
+    user = await require_auth(request)
+    order = await db.orders.find_one({"order_id": order_id}, {"_id": 0, "printavo_invoice_id": 1, "images": 1})
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    inv = order.get("printavo_invoice_id")
+    if not inv:
+        raise HTTPException(status_code=400, detail="Esta orden no viene de Printavo: no hay invoice del cual traer el mock")
+    if not printavo_client.is_configured():
+        raise HTTPException(status_code=400, detail="Credenciales de Printavo no configuradas")
+    try:
+        mockups = await printavo_client.fetch_invoice_mockups(inv)
+    except Exception as e:
+        logger.error(f"[mocks] Printavo {inv}: {e}")
+        raise HTTPException(status_code=502, detail=f"Printavo no respondió: {str(e)[:200]}")
+
+    ya = {img.get("printavo_mockup_id") for img in (order.get("images") or []) if img.get("printavo_mockup_id")}
+    nuevas, omitidas = [], []
+    backend_url = os.environ.get("BACKEND_PUBLIC_URL", "")
+    async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+        for n, m in enumerate(mockups, 1):
+            if m["id"] in ya:
+                continue
+            if m["mime"] and not m["mime"].startswith("image/"):
+                omitidas.append(f"{m['id']} ({m['mime']})")
+                continue
+            try:
+                r = await client.get(m["url"])
+                r.raise_for_status()
+            except Exception as e:
+                logger.warning(f"[mocks] no se pudo bajar el mockup {m['id']} de {inv}: {e}")
+                omitidas.append(f"{m['id']} (no se pudo descargar)")
+                continue
+            ctype = (r.headers.get("content-type") or m["mime"] or "").split(";")[0].strip()
+            if not ctype.startswith("image/"):
+                omitidas.append(f"{m['id']} ({ctype or 'sin tipo'})")
+                continue
+            ext = {"image/jpeg": "jpg", "image/png": "png", "image/gif": "gif", "image/webp": "webp"}.get(ctype, "img")
+            filename = f"printavo_mock_{n}.{ext}"
+            storage_key = f"{order_id}_{uuid.uuid4().hex[:8]}_{filename}"
+            with open(UPLOADS_DIR / storage_key, "wb") as f:
+                f.write(r.content)
+            await db.file_uploads.insert_one({
+                "storage_key": storage_key, "content_type": ctype, "order_id": order_id,
+                "filename": filename, "uploaded_at": datetime.now(timezone.utc).isoformat(),
+                "source": "printavo", "printavo_mockup_id": m["id"]})
+            nuevas.append({"filename": filename, "url": f"{backend_url}/api/uploads/{storage_key}",
+                           "uploaded_at": datetime.now(timezone.utc).isoformat(),
+                           "source": "printavo", "printavo_mockup_id": m["id"]})
+    upd = {"$set": {"printavo_mocks_at": datetime.now(timezone.utc).isoformat()}}
+    if nuevas:
+        upd["$push"] = {"images": {"$each": nuevas}}
+    await db.orders.update_one({"order_id": order_id}, upd)
+    await log_activity(user, "printavo_mocks", {"order_id": order_id, "invoice": inv,
+                                                 "traidas": len(nuevas), "omitidas": omitidas})
+    final = await db.orders.find_one({"order_id": order_id}, {"_id": 0, "images": 1})
+    return {"traidas": len(nuevas), "en_printavo": len(mockups), "omitidas": omitidas,
+            "images": (final or {}).get("images") or []}
+
+
 # ==================== EVIDENCIA DE SAMPLE (playerita) ====================
 # Contenedor propio de la orden (`sample_evidence`), separado del `images`
 # genérico, para que el modal de la playerita muestre SOLO la evidencia del

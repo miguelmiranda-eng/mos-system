@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { X, Image as ImageIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import { API } from '../lib/constants';
@@ -248,7 +248,51 @@ export default function WorkOrderModal({ order, isOpen, onClose, isDark = false,
   const [mocks, setMocks] = useState([]);
   const [uploading, setUploading] = useState(false);
   const fileRef = useRef(null);
-  useEffect(() => { setMocks(Array.isArray(order?.images) ? order.images : []); }, [order]);
+  const [trayendo, setTrayendo] = useState(false);
+  // `images` de la orden guarda TODOS sus adjuntos (también PDFs y Excels de los
+  // comentarios); la galería de mocks muestra solo imágenes.
+  const soloImagenes = (lista) => (Array.isArray(lista) ? lista : [])
+    .filter((m) => /\.(png|jpe?g|gif|webp|bmp|img)$/i.test(m.filename || m.url || ''));
+
+  // Trae los mockups del invoice de Printavo (POST /orders/{id}/images/printavo).
+  // `auto`: la llamada que hace la ficha sola al abrir; no avisa si no hay nada.
+  const traerDePrintavo = useCallback(async (auto = false) => {
+    if (!order?.order_id) return;
+    setTrayendo(true);
+    try {
+      const res = await fetch(`${API}/orders/${order.order_id}/images/printavo`, {
+        method: 'POST', credentials: 'include' });
+      let d = null;
+      try { d = await res.json(); } catch { /* sin cuerpo */ }
+      if (!res.ok) throw new Error(d?.detail || `Printavo respondió ${res.status}`);
+      setMocks(soloImagenes(d.images));
+      if (d.traidas) toast.success(`${d.traidas} mock(s) traído(s) de Printavo`);
+      else if (!auto) toast(d.en_printavo ? 'Los mocks de Printavo ya estaban aquí' : 'Este invoice no tiene mocks en Printavo');
+    } catch (e) {
+      if (!auto) toast.error(e.message || 'No se pudo traer de Printavo');
+    } finally {
+      setTrayendo(false);
+    }
+  }, [order]);
+
+  // El tablero NO trae las imágenes de las órdenes (eran el 79% del payload), así
+  // que leer `order.images` dejaba la galería siempre vacía. Se piden al abrir; si
+  // la orden viene de Printavo y nunca se le buscaron mocks, se traen solas.
+  useEffect(() => {
+    setMocks([]);
+    if (!isOpen || !order?.order_id) return undefined;
+    let alive = true;
+    fetch(`${API}/orders/${order.order_id}`, { credentials: 'include' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((full) => {
+        if (!alive || !full) return;
+        const imgs = soloImagenes(full.images);
+        setMocks(imgs);
+        if (!imgs.length && full.printavo_invoice_id && !full.printavo_mocks_at) traerDePrintavo(true);
+      })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [isOpen, order, traerDePrintavo]);
 
   const toBase64 = (file) => new Promise((resolve, reject) => {
     const r = new FileReader();
@@ -420,7 +464,9 @@ export default function WorkOrderModal({ order, isOpen, onClose, isDark = false,
                 )}
                 <div className="flex gap-2 justify-center">
                   <button type="button" onClick={() => fileRef.current && fileRef.current.click()} disabled={uploading} className="px-3 py-1.5 rounded-lg bg-blue-600 text-white text-[12px] font-bold hover:bg-blue-500 disabled:opacity-60">{uploading ? 'Subiendo…' : 'Subir imágenes'}</button>
-                  <button type="button" onClick={() => toast('Traer de Printavo: próximamente')} className={`px-3 py-1.5 rounded-lg border text-[12px] font-bold ${isDark ? 'border-white/15 hover:bg-white/5' : 'border-gray-300 hover:bg-gray-50'}`}>Traer de Printavo</button>
+                  <button type="button" onClick={() => traerDePrintavo(false)} disabled={trayendo || !o.printavo_invoice_id}
+                    title={o.printavo_invoice_id ? '' : 'Esta orden no viene de Printavo'}
+                    className={`px-3 py-1.5 rounded-lg border text-[12px] font-bold disabled:opacity-50 ${isDark ? 'border-white/15 hover:bg-white/5' : 'border-gray-300 hover:bg-gray-50'}`}>{trayendo ? 'Trayendo…' : 'Traer de Printavo'}</button>
                 </div>
                 <input ref={fileRef} type="file" accept="image/*" multiple hidden onChange={(e) => { subirMocks(e.target.files); e.target.value = ''; }} />
               </div>

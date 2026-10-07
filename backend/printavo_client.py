@@ -216,6 +216,48 @@ async def create_quote(quote_input: dict) -> dict:
     return (data.get("quoteCreate")) or {}
 
 
+# Mockups del invoice: en Printavo cada grupo de lineas tiene sus impresiones
+# (imprints) y cada impresion sus mockups — es la imagen que se ve en el invoice
+# debajo de las lineas del grupo. Una llamada por orden, bajo demanda (la ficha
+# del work order); complejidad 25 x 10 x 10, lejos del limite de 25000.
+INVOICE_MOCKUPS_QUERY = """
+query InvoiceMockups($id: ID!) {
+  invoice(id: $id) {
+    id
+    lineItemGroups(first: 25) {
+      nodes {
+        position
+        imprints(first: 10) {
+          nodes {
+            id
+            mockups(first: 10) {
+              nodes { id fullImageUrl thumbnailUrl mimeType }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+"""
+
+
+async def fetch_invoice_mockups(invoice_id: str) -> list:
+    """Mockups de un invoice en el orden en que se ven en Printavo:
+    [{id, url, thumbnail, mime, group}]. [] si el invoice no tiene ninguno."""
+    data = await _graphql(INVOICE_MOCKUPS_QUERY, {"id": str(invoice_id)})
+    inv = data.get("invoice") or {}
+    out = []
+    for g in ((inv.get("lineItemGroups") or {}).get("nodes") or []):
+        for imp in ((g.get("imprints") or {}).get("nodes") or []):
+            for m in ((imp.get("mockups") or {}).get("nodes") or []):
+                url = m.get("fullImageUrl") or m.get("thumbnailUrl")
+                if url:
+                    out.append({"id": m.get("id"), "url": url, "thumbnail": m.get("thumbnailUrl"),
+                                "mime": m.get("mimeType") or "", "group": g.get("position")})
+    return out
+
+
 async def fetch_recent_invoices(first: int = 25) -> list:
     """Return up to `first` most-recently-created invoices (raw GraphQL nodes).
 
