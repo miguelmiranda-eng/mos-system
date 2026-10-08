@@ -267,6 +267,16 @@ s_alto = pe.schedule(j9b, machines(1), cfg9, cal9, LUNES, 1.0, {}, {},
 check("sin histórico: el turno rinde lo base (4000 hits)", abs(s_fix - 4000) <= 2, s_fix)
 check("velocidad por corrida: Alto a 800/h rinde el doble en el turno (8000)", abs(s_alto - 8000) <= 2, s_alto)
 
+# Frente antes que espalda: en una máquina, el frente se programa primero.
+cfgfe = cfg_with(shifts=[{"key": "DIA", "start": "07:00", "hours": 12, "crews": 1},
+                         {"key": "NOCHE", "start": "19:00", "hours": 12, "crews": 0}],
+                 setup_min_per_color=0)
+calfe = pe.Calendar(cfgfe, [], max_machines=1)
+jfe, _ = pe.build_jobs([order(400, 1000, ["FRENTE", "ESPALDA"], cancel="2026-12-31")], {}, cfgfe, calfe, ["MAQUINA1"], LUNES.date())
+segfe = {j["position"]: (j.get("segments") or [{}])[0].get("start") for j in pe.schedule(jfe, machines(1), cfgfe, calfe, LUNES, 1.0, {})}
+check("frente se programa antes que espalda", bool(segfe.get("FRENTE")) and bool(segfe.get("ESPALDA"))
+      and segfe["FRENTE"] < segfe["ESPALDA"], segfe)
+
 print("== Ajustes manuales ==")
 cfgm = cfg_with(shifts=[{"key": "DIA", "start": "07:00", "hours": 12, "crews": 2},
                         {"key": "NOCHE", "start": "19:00", "hours": 12, "crews": 0}],

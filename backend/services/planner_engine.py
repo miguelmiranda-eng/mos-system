@@ -47,6 +47,9 @@ DEFAULT_CONFIG = {
     "ready_production_statuses": ["LABEL LISTO"],
     # Tableros cuya demanda cuenta (además de las MAQUINA<n>).
     "demand_boards": ["SCHEDULING", "READY TO SCHEDULED", "BLANKS", "SCREENS", "NECK"],
+    # Orden en que se programan las posiciones de una orden (frente antes que
+    # espalda). Es el último desempate del acomodo; vaciar la lista lo apaga.
+    "position_order": ["FRENTE", "ESPALDA", "MANGA"],
     # production_status que significan "ya se imprimió" (sale de la demanda).
     "printed_statuses": [
         "NECESITA EMPACAR", "EN PROCESO DE EMPAQUE", "NECESITA QC", "CORRECIÓN DE QC",
@@ -398,6 +401,8 @@ def build_jobs(orders: List[dict], produced: Dict[str, Dict[str, int]], cfg: dic
     """
     machine_set = set(machines)
     printed = {s.upper() for s in cfg["printed_statuses"]}
+    pos_order = cfg.get("position_order") or []
+    pos_rank = {p.upper(): i for i, p in enumerate(pos_order)}
     jobs, issues = [], []
     for o in orders:
         prod_status = str(o.get("production_status") or "").strip().upper()
@@ -470,6 +475,7 @@ def build_jobs(orders: List[dict], produced: Dict[str, Dict[str, int]], cfg: dic
                 "is_ready": all(ready.values()),
                 "started": started,
                 "target_date": target.isoformat() if target else None,
+                "_pos_rank": pos_rank.get(str(pos).upper(), len(pos_order)),
             })
     return jobs, issues
 
@@ -504,6 +510,7 @@ def _sort_key(j):
             0 if j["started"] else 1,
             PRIORITY_RANK.get(j["priority"], 9),
             j["target_date"] or "9999-12-31",
+            j.get("_pos_rank", 0),   # frente antes que espalda (último desempate)
             -j["remaining"])
 
 
