@@ -171,6 +171,9 @@ async def main():
                                                                   "preferred_client": "SPEKTRUM"})
         m3 = next(m for m in r.json()["machines"] if m["machine"] == "MAQUINA3")
         check("editar máquina", m3["active"] is False and m3["heads"] == 8 and m3["preferred_client"] == "SPEKTRUM", m3)
+        r = await sup.put("/api/planner/machines/MAQUINA1", json={"pallet_size": "16x18", "has_folder": True})
+        m1b = next(m for m in r.json()["machines"] if m["machine"] == "MAQUINA1")
+        check("guardar tamaño de paleta y dobladora", m1b.get("pallet_size") == "16x18" and m1b.get("has_folder") is True, m1b)
         # Borrar los ajustes (limpieza al eliminar el tablero): vuelve a defaults.
         r = await sup.delete("/api/planner/machines/MAQUINA3")
         check("borrar ajustes de máquina", r.status_code == 200 and r.json().get("deleted") == 1, r.status_code)

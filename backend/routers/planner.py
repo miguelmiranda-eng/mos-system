@@ -76,7 +76,8 @@ async def _machines() -> list:
     for n in names:
         out.append({"machine": n, "number": machine_number(n),
                     **pe.MACHINE_DEFAULTS, **{k: v for k, v in saved.get(n, {}).items()
-                                              if k in ("active", "heads", "preferred_client", "notes")}})
+                                              if k in ("active", "heads", "preferred_client", "notes",
+                                                       "pallet_size", "has_folder")}})
     return out
 
 
@@ -298,6 +299,10 @@ async def put_machine(machine: str, request: Request):
         upd["preferred_client"] = str(body["preferred_client"] or "").strip()
     if "notes" in body:
         upd["notes"] = str(body["notes"] or "").strip()[:300]
+    if "pallet_size" in body:
+        upd["pallet_size"] = str(body["pallet_size"] or "").strip()[:40]
+    if "has_folder" in body:
+        upd["has_folder"] = bool(body["has_folder"])
     if not upd:
         raise HTTPException(400, "Nada que cambiar")
     before = await db.planner_machines.find_one({"machine": machine}, {"_id": 0})

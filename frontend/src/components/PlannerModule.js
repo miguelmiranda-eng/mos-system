@@ -1752,6 +1752,7 @@ const MachinesTab = ({ cfgData, canEdit, onSaved, tr }) => {
             <thead><tr className="text-left text-[11px] uppercase tracking-wider text-slate-400">
               <th className="py-2 pr-3">{tr("plan_machine")}</th><th className="pr-3">{tr("plan_active")}</th>
               <th className="pr-3">{tr("plan_heads")}</th><th className="pr-3">{tr("plan_pref_client")}</th>
+              <th className="pr-3">{tr("plan_pallet")}</th><th className="pr-3">{tr("plan_folder")}</th>
               <th className="pr-3">{tr("plan_notes")}</th><th />
             </tr></thead>
             <tbody className="divide-y divide-slate-100">
@@ -1772,6 +1773,15 @@ const MachinesTab = ({ cfgData, canEdit, onSaved, tr }) => {
                       className="h-9 px-2 rounded-lg border border-slate-200 text-sm w-44" />
                   </td>
                   <td className="pr-3">
+                    <input value={m.pallet_size || ""} disabled={!canEdit} placeholder={tr("plan_pallet_ph")}
+                      onChange={(e) => setRows(rows.map((x, k) => (k === i ? { ...x, pallet_size: e.target.value } : x)))}
+                      className="h-9 px-2 rounded-lg border border-slate-200 text-sm w-28" />
+                  </td>
+                  <td className="pr-3 text-center">
+                    <input type="checkbox" checked={!!m.has_folder} disabled={!canEdit}
+                      onChange={(e) => setRows(rows.map((x, k) => (k === i ? { ...x, has_folder: e.target.checked } : x)))} className="w-4 h-4" />
+                  </td>
+                  <td className="pr-3">
                     <input value={m.notes || ""} disabled={!canEdit}
                       onChange={(e) => setRows(rows.map((x, k) => (k === i ? { ...x, notes: e.target.value } : x)))}
                       className="h-9 px-2 rounded-lg border border-slate-200 text-sm w-56" />
@@ -1779,7 +1789,7 @@ const MachinesTab = ({ cfgData, canEdit, onSaved, tr }) => {
                   <td>
                     {canEdit && (
                       <div className="inline-flex items-center gap-1.5">
-                      <button onClick={() => saveMachine(m, { heads: m.heads, preferred_client: m.preferred_client || "", notes: m.notes || "" })}
+                      <button onClick={() => saveMachine(m, { heads: m.heads, preferred_client: m.preferred_client || "", notes: m.notes || "", pallet_size: m.pallet_size || "", has_folder: !!m.has_folder })}
                         className="h-8 px-3 rounded-lg border border-slate-200 text-xs font-bold hover:border-blue-300 inline-flex items-center gap-1">
                         <Save className="w-3.5 h-3.5" />{tr("plan_save")}
                       </button>
