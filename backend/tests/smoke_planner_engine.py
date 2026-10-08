@@ -315,6 +315,24 @@ pde = {j["order_number"]: (j.get("segments") or [{}])[0].get("start") for j in p
 check("máquina dedicada prioriza a su cliente sobre uno más urgente",
       bool(pde.get("720")) and bool(pde.get("721")) and pde["720"] < pde["721"], pde)
 
+# Trabajo extra (no impresión): sale del bloque FRONT/BACK PRINT; ignora las
+# estándar (finishing/neck label) y marca solo lo especial (rhinestones).
+owe = order(730, 1000, ["FRENTE"], cancel="2026-12-31")
+owe["work_order"] = {"lines": [
+    "PRODUCTION DEPARTMENT\r\n(DO NOT EDIT)",
+    "FRONT PRINT\r\nBACK PRINT\r\nRHINESTONES\r\nNECK LABEL\r\nFINISHING",
+    "SETUP FEE (Applies when order quantity is less than 1,500 pcs)",
+]}
+ew = pe.extra_work_of(owe, cfg)
+check("trabajo extra = solo lo especial (rhinestones)", ew == ["RHINESTONES"], ew)
+jwe, _ = pe.build_jobs([owe], {}, cfg, cal, ["MAQUINA1"], LUNES.date())
+check("has_extra_work llega al job", bool(jwe) and jwe[0]["has_extra_work"] is True
+      and jwe[0]["extra_work"] == ["RHINESTONES"], jwe and jwe[0].get("extra_work"))
+# sin trabajo especial (solo estándar) -> no marca
+ono = order(731, 1000, ["FRENTE"], cancel="2026-12-31")
+ono["work_order"] = {"lines": ["FRONT PRINT\r\nBACK PRINT\r\nNECK LABEL\r\nFINISHING"]}
+check("solo estándar no marca trabajo extra", pe.extra_work_of(ono, cfg) == [], pe.extra_work_of(ono, cfg))
+
 print("== Ajustes manuales ==")
 cfgm = cfg_with(shifts=[{"key": "DIA", "start": "07:00", "hours": 12, "crews": 2},
                         {"key": "NOCHE", "start": "19:00", "hours": 12, "crews": 0}],

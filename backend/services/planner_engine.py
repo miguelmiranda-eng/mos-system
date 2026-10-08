@@ -54,6 +54,11 @@ DEFAULT_CONFIG = {
     # misma urgencia, estos se programan primero en este orden; lo que no esté
     # en la lista va al final. Vaciar la lista lo apaga.
     "packing_priority": ["BulkPack", "Prepack", "PickPack"],
+    # Trabajo EXTRA (no impresión) que marca una orden: sale del bloque de
+    # operaciones del work order (líneas con FRONT/BACK PRINT). Una operación
+    # sin "PRINT" es trabajo extra, SALVO estas estándar que trae casi todo.
+    "extra_work_ignore": ["FINISHING", "NECK LABEL", "PICK & PACK",
+                          "PICK AND PACK", "PICK&PACK", "(PENDING CAD)"],
     # production_status que significan "ya se imprimió" (sale de la demanda).
     "printed_statuses": [
         "NECESITA EMPACAR", "EN PROCESO DE EMPAQUE", "NECESITA QC", "CORRECIÓN DE QC",
@@ -395,6 +400,28 @@ def stale_printed(orders: List[dict], produced: Dict[str, Dict[str, int]],
     return sorted(out, key=lambda r: -r["days"])
 
 
+def extra_work_of(order: dict, cfg: dict) -> List[str]:
+    """Operaciones que NO son impresión y que marcan la orden como "trabajo
+    extra" (rhinestones, glitter, puff, foil, bordado, manga…). Salen del
+    bloque de operaciones del work order (la línea con FRONT/BACK PRINT); una
+    sub-línea sin "PRINT" es extra, salvo las estándar de `extra_work_ignore`
+    (finishing, neck label, pick&pack, pending cad) que trae casi todo."""
+    ignore = {str(x).strip().upper() for x in cfg.get("extra_work_ignore", [])}
+    out, seen = [], set()
+    for line in ((order.get("work_order") or {}).get("lines") or []):
+        up = str(line).upper()
+        if "FRONT PRINT" not in up and "BACK PRINT" not in up:
+            continue
+        for sub in str(line).replace("\r", "").split("\n"):
+            sub = sub.strip()
+            key = sub.upper()
+            if not sub or "PRINT" in key or key in ignore or key in seen:
+                continue
+            seen.add(key)
+            out.append(sub)
+    return out
+
+
 def build_jobs(orders: List[dict], produced: Dict[str, Dict[str, int]], cfg: dict,
                cal: Calendar, machines: List[str], today: date,
                sample_approved: Optional[set] = None):
@@ -455,6 +482,7 @@ def build_jobs(orders: List[dict], produced: Dict[str, Dict[str, int]], cfg: dic
             continue
         ready = readiness(o, cfg, sample_approved)
         sinfo = sample_info(o, cfg, sample_approved)
+        extra_work = extra_work_of(o, cfg)
         started = (o.get("board") in machine_set or prod_status == "EN PRODUCCION" or prog["made"] > 0)
         target = cal.minus_business_days(cancel, cfg["buffer_business_days"]) if cancel else None
         for pos, p in prog["positions"].items():
@@ -475,6 +503,8 @@ def build_jobs(orders: List[dict], produced: Dict[str, Dict[str, int]], cfg: dic
                 "color": o.get("color") or "",
                 "design": str(o.get("design_#") or "").strip(),
                 "customer_po": str(o.get("customer_po") or "").strip(),
+                "extra_work": extra_work,
+                "has_extra_work": bool(extra_work),
                 "priority": str(o.get("priority") or "").strip().upper(),
                 "volume": volume_class(qty, cfg),
                 "ready": ready,

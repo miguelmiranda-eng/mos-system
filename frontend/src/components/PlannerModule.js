@@ -102,6 +102,15 @@ const NumberInput = ({ value, onChange, min, max, step = 1, disabled, className 
 const KIND_STYLE = { REORDEN: "bg-sky-50 text-sky-700 border-sky-200", NUEVA: "bg-violet-50 text-violet-700 border-violet-200",
   SIN_DATO: "bg-slate-50 text-slate-500 border-slate-200" };
 
+// Marca trabajo que no es impresión (rhinestones, glitter, puff, foil…).
+const ExtraWorkBadge = ({ extra, tr }) => {
+  if (!extra || !extra.length) return null;
+  return (
+    <span className="px-1.5 py-0.5 rounded bg-fuchsia-100 text-fuchsia-700 text-[9px] font-black uppercase align-middle whitespace-nowrap"
+      title={extra.join(" · ")}>{tr("plan_extra_work")}</span>
+  );
+};
+
 // Reorden / Nueva, y en qué va el ejemplo de las nuevas.
 const KindBadge = ({ kind, state, tr }) => {
   if (!kind) return null;
@@ -729,6 +738,7 @@ const ScheduleTab = ({ config, efficiency, run, running, onRun, canEdit, onToggl
   onApplyMoves, applied, onRevertMove, lastApply, tr }) => {
   const [status, setStatus] = useState("");
   const [kindF, setKindF] = useState("");
+  const [extraOnly, setExtraOnly] = useState(false);
   const [showBlocked, setShowBlocked] = useState(false);
   const [miss, setMiss] = useState("");
   const [onlyThat, setOnlyThat] = useState(false);
@@ -834,7 +844,8 @@ const ScheduleTab = ({ config, efficiency, run, running, onRun, canEdit, onToggl
     );
   }
   const by = run.stats?.by_status || {};
-  const jobs = (run.jobs || []).filter((j) => (!status || j.status === status) && (!kindF || j.kind === kindF));
+  const jobs = (run.jobs || []).filter((j) => (!status || j.status === status) && (!kindF || j.kind === kindF)
+    && (!extraOnly || j.has_extra_work));
   return (
     <div className="space-y-5">
       <div className="flex items-start gap-3 bg-sky-50 border border-sky-200 rounded-xl px-4 py-3 text-sm text-sky-800">
@@ -928,6 +939,11 @@ const ScheduleTab = ({ config, efficiency, run, running, onRun, canEdit, onToggl
                 {s ? tr(`plan_status_${s}`) : tr("plan_all")}
               </button>
             ))}
+            <button onClick={() => setExtraOnly(!extraOnly)}
+              className={`px-2.5 py-1 rounded-lg border text-xs font-bold ${extraOnly
+                ? "bg-fuchsia-600 border-fuchsia-600 text-white" : "bg-white border-slate-200 text-slate-600"}`}>
+              {tr("plan_extra_only")} <span className="opacity-60 ml-1">{(run.jobs || []).filter((j) => j.has_extra_work).length}</span>
+            </button>
           </div>
         </div>
         <div className="overflow-x-auto">
@@ -943,7 +959,7 @@ const ScheduleTab = ({ config, efficiency, run, running, onRun, canEdit, onToggl
             <tbody className="divide-y divide-slate-100">
               {jobs.map((j) => (
                 <tr key={j.job_id}>
-                  <td className="py-1.5 pr-3 font-black whitespace-nowrap">{j.order_number} <OverrideBadges manual={j.manual} warnings={j.warnings} tr={tr} /></td>
+                  <td className="py-1.5 pr-3 font-black whitespace-nowrap">{j.order_number} <OverrideBadges manual={j.manual} warnings={j.warnings} tr={tr} /> <ExtraWorkBadge extra={j.extra_work} tr={tr} /></td>
                   <td className="pr-3 text-xs">{j.position}</td>
                   <td className="pr-3 text-xs text-slate-500 max-w-[160px] truncate">{j.client}</td>
                   <td className="pr-3"><KindBadge kind={j.kind} state={j.sample_state} tr={tr} /></td>
@@ -1026,7 +1042,7 @@ const ScheduleTab = ({ config, efficiency, run, running, onRun, canEdit, onToggl
               <tbody className="divide-y divide-slate-100">
                 {blockedRows.map((b) => (
                   <tr key={b.job_id}>
-                    <td className="py-1.5 pr-3 font-black">{b.order_number}</td>
+                    <td className="py-1.5 pr-3 font-black whitespace-nowrap">{b.order_number} <ExtraWorkBadge extra={b.extra_work} tr={tr} /></td>
                     <td className="pr-3 text-xs">{b.position}</td>
                     <td className="pr-3 text-xs text-slate-500">{b.client}</td>
                     <td className="pr-3"><KindBadge kind={b.kind} state={b.sample_state} tr={tr} /></td>
@@ -1960,6 +1976,7 @@ const LIST_FIELDS = [
   ["sample_at_machine_values", "plan_r_sample_machine"],
   ["sample_hold_values", "plan_r_sample_hold"],
   ["sample_ok_values", "plan_r_sample_ok"],
+  ["extra_work_ignore", "plan_r_extra_ignore"],
 ];
 
 const RulesTab = ({ cfgData, canEdit, onSaved, tr }) => {

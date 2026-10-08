@@ -147,7 +147,8 @@ async def _orders_and_production(cfg: dict, machines: list):
     proj = {"_id": 0, "order_id": 1, "order_number": 1, "client": 1, "branding": 1, "board": 1,
             "quantity": 1, "print_positions": 1, "hits_impresiones": 1, "colors": 1,
             "cancel_date": 1, "blank_status": 1, "screens": 1, "production_status": 1,
-            "priority": 1, "color": 1, "aprobaciones": 1, "sample": 1, "artwork_status": 1}
+            "priority": 1, "color": 1, "aprobaciones": 1, "sample": 1, "artwork_status": 1,
+            "design_#": 1, "customer_po": 1, "packing_type": 1, "work_order.lines": 1}
     orders = [o async for o in db.orders.find({"board": {"$in": boards}}, proj).batch_size(200)]
     ids = [o["order_id"] for o in orders if o.get("order_id")]
     produced = {}
@@ -532,7 +533,7 @@ async def shadow_run(request: Request, trigger: str = "manual", max_age: int = 0
             continue
         row = {k: j[k] for k in ("job_id", "order_id", "order_number", "client", "branding", "board",
                                  "position", "remaining", "cancel_date", "target_date", "ready", "volume",
-                                 "kind", "sample_state")}
+                                 "kind", "sample_state", "has_extra_work", "extra_work")}
         row["held"] = "hold" in ov.get(j["job_id"], {})
         row["manual"] = sorted(ov.get(j["job_id"], {}))
         blocked.append(row)
