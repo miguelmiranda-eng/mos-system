@@ -296,6 +296,25 @@ pp = {j["order_number"]: (j.get("segments") or [{}])[0].get("start") for j in pe
 check("mismo customer PO se mantiene junto (el de otro PO queda al final)",
       pp["600"] < pp["601"] and pp["602"] < pp["601"], pp)
 
+# Prioridad por tipo de empaque: BulkPack antes que Prepack antes que PickPack
+# (misma urgencia). Entra desordenado a propósito para probar el acomodo.
+ob = order(710, 1000, ["FRENTE"], cancel="2026-12-31"); ob["packing_type"] = "BulkPack"
+op = order(711, 1000, ["FRENTE"], cancel="2026-12-31"); op["packing_type"] = "Prepack"
+opk = order(712, 1000, ["FRENTE"], cancel="2026-12-31"); opk["packing_type"] = "PickPack"
+jpk, _ = pe.build_jobs([opk, op, ob], {}, cfgfe, calfe, ["MAQUINA1"], LUNES.date())
+ppk = {j["order_number"]: (j.get("segments") or [{}])[0].get("start") for j in pe.schedule(jpk, machines(1), cfgfe, calfe, LUNES, 1.0, {})}
+check("packing: BulkPack < Prepack < PickPack", ppk["710"] < ppk["711"] < ppk["712"], ppk)
+
+# Dedicación: máquina dedicada a GTS toma a su cliente aunque otro sea más
+# urgente; pero no se queda parada (luego toma la otra).
+oG = order(720, 1000, ["FRENTE"], cancel="2026-12-31"); oG["client"] = "GTS"
+oO = order(721, 1000, ["FRENTE"], cancel="2026-10-20"); oO["client"] = "OTHER"
+mded = [{"machine": "MAQUINA1", "active": True, "heads": 16, "preferred_client": "GTS", "dedicated": True}]
+jde, _ = pe.build_jobs([oO, oG], {}, cfgfe, calfe, ["MAQUINA1"], LUNES.date())
+pde = {j["order_number"]: (j.get("segments") or [{}])[0].get("start") for j in pe.schedule(jde, mded, cfgfe, calfe, LUNES, 1.0, {})}
+check("máquina dedicada prioriza a su cliente sobre uno más urgente",
+      bool(pde.get("720")) and bool(pde.get("721")) and pde["720"] < pde["721"], pde)
+
 print("== Ajustes manuales ==")
 cfgm = cfg_with(shifts=[{"key": "DIA", "start": "07:00", "hours": 12, "crews": 2},
                         {"key": "NOCHE", "start": "19:00", "hours": 12, "crews": 0}],

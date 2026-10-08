@@ -50,6 +50,10 @@ DEFAULT_CONFIG = {
     # Orden en que se programan las posiciones de una orden (frente antes que
     # espalda). Es el último desempate del acomodo; vaciar la lista lo apaga.
     "position_order": ["FRENTE", "ESPALDA", "MANGA"],
+    # Prioridad por tipo de empaque (columna MOS packing_type). Dentro de la
+    # misma urgencia, estos se programan primero en este orden; lo que no esté
+    # en la lista va al final. Vaciar la lista lo apaga.
+    "packing_priority": ["BulkPack", "Prepack", "PickPack"],
     # production_status que significan "ya se imprimió" (sale de la demanda).
     "printed_statuses": [
         "NECESITA EMPACAR", "EN PROCESO DE EMPAQUE", "NECESITA QC", "CORRECIÓN DE QC",
@@ -403,6 +407,8 @@ def build_jobs(orders: List[dict], produced: Dict[str, Dict[str, int]], cfg: dic
     printed = {s.upper() for s in cfg["printed_statuses"]}
     pos_order = cfg.get("position_order") or []
     pos_rank = {p.upper(): i for i, p in enumerate(pos_order)}
+    pack_order = cfg.get("packing_priority") or []
+    pack_rank = {p.upper(): i for i, p in enumerate(pack_order)}
     jobs, issues = [], []
     for o in orders:
         prod_status = str(o.get("production_status") or "").strip().upper()
@@ -478,6 +484,7 @@ def build_jobs(orders: List[dict], produced: Dict[str, Dict[str, int]], cfg: dic
                 "started": started,
                 "target_date": target.isoformat() if target else None,
                 "_pos_rank": pos_rank.get(str(pos).upper(), len(pos_order)),
+                "_pack_rank": pack_rank.get(str(o.get("packing_type") or "").strip().upper(), len(pack_order)),
             })
     return jobs, issues
 
@@ -512,6 +519,7 @@ def _sort_key(j):
             0 if j["started"] else 1,
             PRIORITY_RANK.get(j["priority"], 9),
             j["target_date"] or "9999-12-31",
+            j.get("_pack_rank", 0),  # prioridad por tipo de empaque (tras la urgencia)
             j.get("_pos_rank", 0),   # frente antes que espalda (último desempate)
             -j["remaining"])
 
@@ -632,12 +640,22 @@ def schedule(jobs: List[dict], machines: List[dict], cfg: dict, cal: Calendar,
         cands = [j for j in pool if fits(m, j) and eligible(j, d)]
         if not cands:
             return None
+        # Dedicación: si la máquina está dedicada a un cliente y ese cliente
+        # tiene trabajo elegible, prioriza FUERTE (toma lo suyo aunque otro
+        # cliente traiga algo más urgente); si no hay, toma los demás para no
+        # quedar parada.
+        if m["cfg"].get("dedicated"):
+            pc = (m["cfg"].get("preferred_client") or "").strip().upper()
+            mine = [j for j in cands if pc and pc in j["client"].upper()]
+            if mine:
+                cands = mine
         head = cands[0]
-        # Empates (misma urgencia): prefiere cliente de la máquina, luego seguir
-        # con el MISMO customer PO (imprimir el PO completo de corrido), luego el
-        # mismo design (mismo estilo = menos cambios de arte), luego el mismo
-        # color; nunca brinca a alguien más urgente.
-        same = [j for j in cands if _sort_key(j)[:4] == _sort_key(head)[:4]]
+        # Empates (misma urgencia + mismo tipo de empaque): prefiere cliente de
+        # la máquina, luego seguir con el MISMO customer PO (imprimir el PO
+        # completo de corrido), luego el mismo design (mismo estilo = menos
+        # cambios de arte), luego el mismo color; nunca brinca a alguien más
+        # urgente ni de mayor prioridad de empaque.
+        same = [j for j in cands if _sort_key(j)[:5] == _sort_key(head)[:5]]
         pref = (m["cfg"].get("preferred_client") or "").strip().upper()
         same.sort(key=lambda j: (0 if pref and pref in j["client"].upper() else 1,
                                  0 if j.get("customer_po") and j["customer_po"] == m.get("last_po") else 1,
