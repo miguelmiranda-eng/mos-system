@@ -287,6 +287,15 @@ pd = {j["order_number"]: (j.get("segments") or [{}])[0].get("start") for j in pe
 check("mismo design_# se agrupa (la de otro estilo queda al final)",
       pd["500"] < pd["501"] and pd["502"] < pd["501"], pd)
 
+# Mismo customer PO se mantiene junto (imprimir el PO completo de corrido).
+oX1 = order(600, 1000, ["FRENTE"], cancel="2026-12-31"); oX1["customer_po"] = "POX"; oX1["design_#"] = "D1"
+oY = order(601, 1000, ["FRENTE"], cancel="2026-12-31"); oY["customer_po"] = "POY"; oY["design_#"] = "D2"
+oX2 = order(602, 1000, ["FRENTE"], cancel="2026-12-31"); oX2["customer_po"] = "POX"; oX2["design_#"] = "D3"
+jp, _ = pe.build_jobs([oX1, oY, oX2], {}, cfgfe, calfe, ["MAQUINA1"], LUNES.date())
+pp = {j["order_number"]: (j.get("segments") or [{}])[0].get("start") for j in pe.schedule(jp, machines(1), cfgfe, calfe, LUNES, 1.0, {})}
+check("mismo customer PO se mantiene junto (el de otro PO queda al final)",
+      pp["600"] < pp["601"] and pp["602"] < pp["601"], pp)
+
 print("== Ajustes manuales ==")
 cfgm = cfg_with(shifts=[{"key": "DIA", "start": "07:00", "hours": 12, "crews": 2},
                         {"key": "NOCHE", "start": "19:00", "hours": 12, "crews": 0}],
