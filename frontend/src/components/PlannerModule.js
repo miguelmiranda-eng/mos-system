@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import {
   ArrowLeft, CalendarClock, Power, RefreshCw, Loader2, Cpu, TrendingUp,
   Settings2, CalendarDays, AlertTriangle, Trash2, Plus, Save, FlaskConical, Eye, Search,
-  Pin, ArrowUpDown, LogIn, PauseCircle, Undo2, X, SlidersHorizontal, BellRing, CheckCircle2, Download,
+  Pin, ArrowUpDown, LogIn, PauseCircle, Undo2, X, SlidersHorizontal, BellRing, CheckCircle2, Download, PackageCheck,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { saveAs } from "file-saver";
@@ -2179,6 +2179,56 @@ const DataTab = ({ tr }) => {
   );
 };
 
+/* ── Terminadas de pintar (seguimiento) ────────────────────────────────────
+   Órdenes que ya se imprimieron (production_status EN PROCESO DE EMPAQUE) y
+   siguen en proceso; se ven con su board/fecha para darles seguimiento. */
+const PaintFollowupTab = ({ tr }) => {
+  const [data, setData] = useState(null);
+  const [q, setQ] = useState("");
+  useEffect(() => { planner("/paint-followup").then(setData).catch((e) => toast.error(e.message)); }, []);
+  if (!data) return <div className="py-20 flex justify-center"><Loader2 className="w-7 h-7 animate-spin text-blue-600" /></div>;
+  const daysSince = (iso) => (iso ? Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 86400000)) : null);
+  const s = q.trim().toLowerCase();
+  const rows = (data.orders || []).filter((r) => !s
+    || String(r.order_number).toLowerCase().includes(s)
+    || String(r.client || "").toLowerCase().includes(s)
+    || String(r.customer_po || "").toLowerCase().includes(s));
+  return (
+    <Card className="p-4">
+      <div className="flex flex-wrap items-center gap-3 mb-3">
+        <SectionTitle hint={tr("plan_paint_hint")}>{tr("plan_paint_title")} · {tr("plan_paint_count", { n: data.count })}</SectionTitle>
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={tr("plan_search_order_client")}
+          className="ml-auto h-8 px-2 rounded-lg border border-slate-200 text-xs w-52" />
+      </div>
+      <div className="overflow-auto max-h-[70vh]">
+        <table className="min-w-full text-sm">
+          <thead className="planner-freeze"><tr className="text-left text-[11px] uppercase tracking-wider text-slate-400">
+            <th className="py-2 pr-3">{tr("plan_order")}</th><th className="pr-3">{tr("plan_client")}</th>
+            <th className="pr-3">{tr("plan_customer_po")}</th><th className="pr-3 text-right">{tr("plan_qty")}</th>
+            <th className="pr-3">{tr("plan_board")}</th><th className="pr-3">{tr("plan_paint_done")}</th>
+            <th className="pr-3 text-right">{tr("plan_paint_days")}</th><th className="pr-3">{tr("plan_cancel")}</th>
+          </tr></thead>
+          <tbody className="divide-y divide-slate-100">
+            {rows.map((r) => (
+              <tr key={r.order_id}>
+                <td className="py-1.5 pr-3 font-black">{r.order_number}</td>
+                <td className="pr-3 text-xs text-slate-500">{r.client}</td>
+                <td className="pr-3 text-xs">{r.customer_po || "—"}</td>
+                <td className="pr-3 text-right tabular-nums">{fmt(r.quantity)}</td>
+                <td className="pr-3 text-xs">{r.board}</td>
+                <td className="pr-3 text-xs tabular-nums">{r.since ? r.since.slice(0, 10) : "—"}</td>
+                <td className="pr-3 text-right tabular-nums">{daysSince(r.since) ?? "—"}</td>
+                <td className="pr-3 text-xs tabular-nums">{r.cancel_date || "—"}</td>
+              </tr>
+            ))}
+            {rows.length === 0 && <tr><td colSpan={8}><Empty>{tr("plan_paint_empty")}</Empty></td></tr>}
+          </tbody>
+        </table>
+      </div>
+    </Card>
+  );
+};
+
 /* ── Página ──────────────────────────────────────────────────────────────── */
 /* ── Buscador global del módulo ────────────────────────────────────────────
    Número de orden, PO, cliente, branding o diseño. Por cada orden dice DÓNDE
@@ -2328,6 +2378,7 @@ const TABS = [
   ["rules", "plan_tab_rules", Settings2],
   ["data", "plan_tab_data", AlertTriangle],
   ["alerts", "plan_tab_alerts", BellRing],
+  ["paint", "plan_tab_paint", PackageCheck],
 ];
 
 const PlannerModule = () => {
@@ -2572,6 +2623,7 @@ const PlannerModule = () => {
             {tab === "rules" && <RulesTab cfgData={cfgData} canEdit={canEdit} onSaved={afterConfigChange} tr={tr} />}
             {tab === "data" && <DataTab tr={tr} />}
             {tab === "alerts" && <AlertsTab data={alertData} tr={tr} />}
+            {tab === "paint" && <PaintFollowupTab tr={tr} />}
           </>
         )}
       </main>

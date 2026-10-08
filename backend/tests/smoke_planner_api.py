@@ -189,6 +189,12 @@ async def main():
         check("máquina sin ajustes vuelve a defaults",
               m3b["active"] is True and m3b["heads"] == 16 and m3b["preferred_client"] == "", m3b)
 
+        print("\n== Terminadas de pintar ==")
+        r = await op.get("/api/planner/paint-followup")
+        pf = r.json()
+        check("paint-followup 200 y forma", r.status_code == 200
+              and pf.get("status") == "EN PROCESO DE EMPAQUE" and isinstance(pf.get("orders"), list), r.status_code)
+
         print("\n== Calendario y proyección ==")
         r = await sup.get("/api/planner/projection")
         check("proyección 200", r.status_code == 200, r.text[:200])

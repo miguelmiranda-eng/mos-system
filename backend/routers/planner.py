@@ -671,6 +671,38 @@ async def alerts(request: Request):
     return {"printed_stale": rows, "days": cfg["printed_alert_days"], "pct": cfg["printed_complete_pct"]}
 
 
+# ── Terminadas de pintar (seguimiento post-impresión) ──────────────────────
+# "Terminada de pintar" = ya se imprimió y entró a empaque (production_status).
+# Se ocultan las que ya terminaron su flujo (board terminal / facturadas).
+PAINT_DONE_STATUS = "EN PROCESO DE EMPAQUE"
+PAINT_DONE_EXCLUDED_BOARDS = ["FINAL BILL", "COMPLETOS", "CANCELLED",
+                             "PAPELERA DE RECICLAJE", "INVENTARIO", "EJEMPLOS"]
+
+
+@router.get("/paint-followup")
+async def paint_followup(request: Request):
+    """Órdenes que terminaron de imprimirse (production_status EN PROCESO DE
+    EMPAQUE) y siguen en proceso, para darles seguimiento desde MOS. Sólo
+    lectura; no depende del motor."""
+    await require_auth(request)
+    orders = []
+    async for o in db.orders.find(
+            {"production_status": PAINT_DONE_STATUS, "board": {"$nin": PAINT_DONE_EXCLUDED_BOARDS}},
+            {"_id": 0, "order_id": 1, "order_number": 1, "client": 1, "branding": 1, "board": 1,
+             "production_status": 1, "production_status_at": 1, "updated_at": 1,
+             "cancel_date": 1, "quantity": 1, "customer_po": 1}):
+        orders.append({
+            "order_id": o.get("order_id"), "order_number": o.get("order_number"),
+            "client": o.get("client"), "branding": o.get("branding"), "board": o.get("board"),
+            "production_status": o.get("production_status"),
+            "since": o.get("production_status_at") or o.get("updated_at"),
+            "cancel_date": o.get("cancel_date"), "quantity": o.get("quantity"),
+            "customer_po": o.get("customer_po"),
+        })
+    orders.sort(key=lambda r: str(r.get("since") or ""), reverse=True)
+    return {"status": PAINT_DONE_STATUS, "count": len(orders), "orders": orders}
+
+
 # ── Ajustes manuales ───────────────────────────────────────────────────────
 @router.get("/overrides")
 async def list_overrides(request: Request):
