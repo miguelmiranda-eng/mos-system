@@ -97,7 +97,7 @@ DEFAULT_CONFIG = {
 }
 
 MACHINE_DEFAULTS = {"active": True, "heads": 16, "preferred_client": "",
-                    "pallet_size": "", "has_folder": False}
+                    "dedicated": False, "pallet_size": "", "has_folder": False}
 HEADS_MIN, HEADS_MAX = 8, 20
 
 PRIORITY_RANK = {"SPECIAL RUSH": 0, "RUSH": 1, "OVERSOLD": 2, "PRIORITY 1": 3,

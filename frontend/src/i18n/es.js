@@ -5477,6 +5477,8 @@ const es = {
   plan_machines_title: "Máquinas",
   plan_machines_hint: "Salen de los tableros MAQUINA. Cabezas = colores máximos ({min}–{max}). El cliente preferido sólo desempata.",
   plan_active_of: "{a} activas de {n}",
+  plan_dedicated: "Dedicada",
+  plan_dedicated_hint: "Dedicada: su cliente preferido va primero; si no hay trabajo de ese cliente, toma otras órdenes para no quedar parada.",
   plan_pallet: "Paleta",
   plan_pallet_ph: "estándar / 16x18",
   plan_folder: "Dobladora",

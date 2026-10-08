@@ -1771,6 +1771,11 @@ const MachinesTab = ({ cfgData, canEdit, onSaved, tr }) => {
                     <input value={m.preferred_client || ""} disabled={!canEdit} placeholder={tr("plan_any_client")}
                       onChange={(e) => setRows(rows.map((x, k) => (k === i ? { ...x, preferred_client: e.target.value } : x)))}
                       className="h-9 px-2 rounded-lg border border-slate-200 text-sm w-44" />
+                    <label className="ml-2 inline-flex items-center gap-1 text-[11px] text-slate-500 align-middle" title={tr("plan_dedicated_hint")}>
+                      <input type="checkbox" checked={!!m.dedicated} disabled={!canEdit}
+                        onChange={(e) => setRows(rows.map((x, k) => (k === i ? { ...x, dedicated: e.target.checked } : x)))} className="w-3.5 h-3.5" />
+                      {tr("plan_dedicated")}
+                    </label>
                   </td>
                   <td className="pr-3">
                     <input value={m.pallet_size || ""} disabled={!canEdit} placeholder={tr("plan_pallet_ph")}
@@ -1789,7 +1794,7 @@ const MachinesTab = ({ cfgData, canEdit, onSaved, tr }) => {
                   <td>
                     {canEdit && (
                       <div className="inline-flex items-center gap-1.5">
-                      <button onClick={() => saveMachine(m, { heads: m.heads, preferred_client: m.preferred_client || "", notes: m.notes || "", pallet_size: m.pallet_size || "", has_folder: !!m.has_folder })}
+                      <button onClick={() => saveMachine(m, { heads: m.heads, preferred_client: m.preferred_client || "", dedicated: !!m.dedicated, notes: m.notes || "", pallet_size: m.pallet_size || "", has_folder: !!m.has_folder })}
                         className="h-8 px-3 rounded-lg border border-slate-200 text-xs font-bold hover:border-blue-300 inline-flex items-center gap-1">
                         <Save className="w-3.5 h-3.5" />{tr("plan_save")}
                       </button>

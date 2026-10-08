@@ -77,7 +77,7 @@ async def _machines() -> list:
         out.append({"machine": n, "number": machine_number(n),
                     **pe.MACHINE_DEFAULTS, **{k: v for k, v in saved.get(n, {}).items()
                                               if k in ("active", "heads", "preferred_client", "notes",
-                                                       "pallet_size", "has_folder")}})
+                                                       "dedicated", "pallet_size", "has_folder")}})
     return out
 
 
@@ -297,6 +297,8 @@ async def put_machine(machine: str, request: Request):
         upd["heads"] = heads
     if "preferred_client" in body:
         upd["preferred_client"] = str(body["preferred_client"] or "").strip()
+    if "dedicated" in body:
+        upd["dedicated"] = bool(body["dedicated"])
     if "notes" in body:
         upd["notes"] = str(body["notes"] or "").strip()[:300]
     if "pallet_size" in body:
