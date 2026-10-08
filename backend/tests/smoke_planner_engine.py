@@ -277,6 +277,16 @@ segfe = {j["position"]: (j.get("segments") or [{}])[0].get("start") for j in pe.
 check("frente se programa antes que espalda", bool(segfe.get("FRENTE")) and bool(segfe.get("ESPALDA"))
       and segfe["FRENTE"] < segfe["ESPALDA"], segfe)
 
+# Mismo design_# se agrupa en la máquina (las dos del mismo estilo seguidas,
+# la de otro estilo al final), para no recalibrar el mismo arte.
+oA1 = order(500, 1000, ["FRENTE"], cancel="2026-12-31"); oA1["design_#"] = "STY-A"
+oB = order(501, 1000, ["FRENTE"], cancel="2026-12-31"); oB["design_#"] = "STY-B"
+oA2 = order(502, 1000, ["FRENTE"], cancel="2026-12-31"); oA2["design_#"] = "STY-A"
+jd, _ = pe.build_jobs([oA1, oB, oA2], {}, cfgfe, calfe, ["MAQUINA1"], LUNES.date())
+pd = {j["order_number"]: (j.get("segments") or [{}])[0].get("start") for j in pe.schedule(jd, machines(1), cfgfe, calfe, LUNES, 1.0, {})}
+check("mismo design_# se agrupa (la de otro estilo queda al final)",
+      pd["500"] < pd["501"] and pd["502"] < pd["501"], pd)
+
 print("== Ajustes manuales ==")
 cfgm = cfg_with(shifts=[{"key": "DIA", "start": "07:00", "hours": 12, "crews": 2},
                         {"key": "NOCHE", "start": "19:00", "hours": 12, "crews": 0}],

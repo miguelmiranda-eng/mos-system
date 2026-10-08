@@ -467,6 +467,7 @@ def build_jobs(orders: List[dict], produced: Dict[str, Dict[str, int]], cfg: dic
                 "colors": colors or cfg["default_colors"],
                 "colors_known": bool(colors),
                 "color": o.get("color") or "",
+                "design": str(o.get("design_#") or "").strip(),
                 "priority": str(o.get("priority") or "").strip().upper(),
                 "volume": volume_class(qty, cfg),
                 "ready": ready,
@@ -572,7 +573,7 @@ def schedule(jobs: List[dict], machines: List[dict], cfg: dict, cal: Calendar,
         pool.append(jj)
     pool.sort(key=_sort_key)
     meta = {j["job_id"]: j for j in pool}      # _manual / _warnings llegan a la salida
-    state = {m["machine"]: {"cfg": m, "current": None, "last_color": None, "queue": []} for m in active}
+    state = {m["machine"]: {"cfg": m, "current": None, "last_color": None, "last_design": None, "queue": []} for m in active}
     machine_order = {m["machine"]: i for i, m in enumerate(active)}
 
     # 1) Reprogramados a mano: van a la cola de SU máquina, en su lugar.
@@ -630,11 +631,13 @@ def schedule(jobs: List[dict], machines: List[dict], cfg: dict, cal: Calendar,
         if not cands:
             return None
         head = cands[0]
-        # Empates (misma urgencia): prefiere cliente de la máquina y mismo
-        # color de prenda (menos cambios); nunca brinca a alguien más urgente.
+        # Empates (misma urgencia): prefiere cliente de la máquina, luego seguir
+        # con el MISMO design (mismo estilo = menos cambios de arte), luego el
+        # mismo color de prenda; nunca brinca a alguien más urgente.
         same = [j for j in cands if _sort_key(j)[:4] == _sort_key(head)[:4]]
         pref = (m["cfg"].get("preferred_client") or "").strip().upper()
         same.sort(key=lambda j: (0 if pref and pref in j["client"].upper() else 1,
+                                 0 if j.get("design") and j["design"] == m.get("last_design") else 1,
                                  0 if j["color"] and j["color"] == m["last_color"] else 1))
         choice = same[0]
         # Mezcla de volumen: no un segundo Alto aquí si otra máquina que
@@ -702,6 +705,7 @@ def schedule(jobs: List[dict], machines: List[dict], cfg: dict, cal: Calendar,
                 rec["end_date"] = seg_end.date().isoformat()
                 m["current"] = None
                 m["last_color"] = j["color"]
+                m["last_design"] = j.get("design")
                 j.pop("_counted_alto", None)
 
     # Lo que quedó en máquina o en el pool sin terminar dentro del horizonte.
