@@ -256,6 +256,12 @@ def _validate_config(body: dict) -> dict:
         raise HTTPException(400, "efficiency_mode: auto o manual")
     if clean.get("engine_mode", "off") not in ("off", "shadow"):
         raise HTTPException(400, "Por ahora el motor sólo puede estar apagado o en modo sombra")
+    for key in ("packing_priority", "position_order"):
+        if key in clean:
+            vals = [str(x).strip() for x in clean[key]]
+            if any(not x for x in vals) or len(set(vals)) != len(vals):
+                raise HTTPException(400, f"{key}: valores no vacíos y sin repetir")
+            clean[key] = vals
     if "volume_low_max" in clean or "volume_high_min" in clean:
         pass  # la relación entre ambos se revisa con la config completa
     return clean

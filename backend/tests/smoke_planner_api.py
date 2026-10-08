@@ -145,6 +145,12 @@ async def main():
         check("regla desconocida -> 400", r.status_code == 400, r.status_code)
         r = await sup.put("/api/planner/config", json={"volume_low_max": 3000})
         check("Bajo > Alto -> 400", r.status_code == 400, r.status_code)
+        r = await sup.put("/api/planner/config", json={"packing_priority": ["PickPack", "BulkPack", "Prepack"]})
+        check("reordenar packing_priority -> ok",
+              r.status_code == 200 and r.json()["config"]["packing_priority"] == ["PickPack", "BulkPack", "Prepack"],
+              r.status_code)
+        r = await sup.put("/api/planner/config", json={"packing_priority": ["BulkPack", "BulkPack"]})
+        check("packing_priority con repetidos -> 400", r.status_code == 400, r.status_code)
         check("el motor arranca APAGADO", d["config"]["engine_mode"] == "off", d["config"]["engine_mode"])
         r = await sup.post("/api/planner/shadow-run")
         check("apagado: no corre (409)", r.status_code == 409, r.status_code)

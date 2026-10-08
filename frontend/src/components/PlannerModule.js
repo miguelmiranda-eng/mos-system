@@ -1968,11 +1968,20 @@ const RulesTab = ({ cfgData, canEdit, onSaved, tr }) => {
   useEffect(() => { setForm(cfgData.config); }, [cfgData]);
   const eff = cfgData.efficiency || {};
 
+  const movePacking = (i, dir) => {
+    const arr = [...(form.packing_priority || [])];
+    const j = i + dir;
+    if (j < 0 || j >= arr.length) return;
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+    setForm({ ...form, packing_priority: arr });
+  };
+
   const save = async () => {
     setSaving(true);
     const body = {};
     RULE_FIELDS.forEach(([k]) => { body[k] = form[k]; });
     LIST_FIELDS.forEach(([k]) => { body[k] = form[k]; });
+    body.packing_priority = form.packing_priority || [];
     body.ready_require_screens = !!form.ready_require_screens;
     body.ready_require_sample = !!form.ready_require_sample;
     body.efficiency_mode = form.efficiency_mode;
@@ -2010,6 +2019,25 @@ const RulesTab = ({ cfgData, canEdit, onSaved, tr }) => {
             <NumberInput value={form.auto_recalc_minutes} min={1} max={240} disabled={!canEdit || !form.auto_recalc}
               className="w-24" onChange={(v) => setForm({ ...form, auto_recalc_minutes: v })} /></label>
         </div>
+      </Card>
+      <Card className="p-4">
+        <SectionTitle hint={tr("plan_packing_hint")}>{tr("plan_packing_title")}</SectionTitle>
+        <ol className="space-y-1.5 max-w-xs">
+          {(form.packing_priority || []).map((p, i) => (
+            <li key={p} className="flex items-center gap-2 text-sm">
+              <span className="w-5 text-slate-400 tabular-nums">{i + 1}</span>
+              <span className="font-bold flex-1">{p}</span>
+              {canEdit && (
+                <span className="inline-flex gap-1">
+                  <button onClick={() => movePacking(i, -1)} disabled={i === 0}
+                    className="w-7 h-7 rounded-lg border border-slate-200 text-slate-600 disabled:opacity-30 hover:border-blue-300">↑</button>
+                  <button onClick={() => movePacking(i, 1)} disabled={i === (form.packing_priority || []).length - 1}
+                    className="w-7 h-7 rounded-lg border border-slate-200 text-slate-600 disabled:opacity-30 hover:border-blue-300">↓</button>
+                </span>
+              )}
+            </li>
+          ))}
+        </ol>
       </Card>
       <Card className="p-4">
         <SectionTitle hint={tr("plan_eff_hint")}>{tr("plan_efficiency")}</SectionTitle>

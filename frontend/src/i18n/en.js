@@ -5663,6 +5663,8 @@ const en = {
   plan_machines_title: "Machines",
   plan_machines_hint: "Taken from the MAQUINA boards. Heads = max colors ({min}–{max}). Preferred client only breaks ties.",
   plan_active_of: "{a} active of {n}",
+  plan_packing_title: "Priority by packing type",
+  plan_packing_hint: "Within the same urgency, the engine schedules the ones higher up first. Reorder with ↑/↓.",
   plan_dedicated: "Dedicated",
   plan_dedicated_hint: "Dedicated: its preferred client goes first; if that client has no work, it takes other orders so it doesn't sit idle.",
   plan_pallet: "Platen",
