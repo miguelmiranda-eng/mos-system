@@ -149,6 +149,7 @@ async def main():
         x = d["lines"][0]
         check("sin enlaces, notas internas, bulk ni qty embarcada",
               not ({"pl_url", "pl_number", "notes", "bulk", "qty_shipped", "qty_ordered"} & set(x)), sorted(x))
+        check("trae shipping_date (y ya no ship_from)", "shipping_date" in x and "ship_from" not in x, sorted(x))
         check("trae las columnas de la fila", x["client"] == "GTS" and x["customer_po"] == "23237"
               and x["status_effective"] == "ENVIADO" and x["pcs"] == 100, x)  # 3301 ya tiene packing sembrado
         check("la que no tiene packing muestra el status de MOS",
@@ -157,9 +158,13 @@ async def main():
               and "transport_company" not in d["exports"][-1], d["exports"])
 
         print("\n== Sólo ship_from y carrier ==")
-        r = await g.put(f"{API}/lines/s1", json={"ship_from": " ST ANDREWS ", "carrier": "UPS GROUND"})
-        check("guarda sus dos campos", r.status_code == 200 and r.json()["ship_from"] == "ST ANDREWS"
-              and r.json()["carrier"] == "UPS GROUND", r.text[:200])
+        r = await g.put(f"{API}/lines/s1", json={"shipping_date": "2026-10-09", "carrier": " UPS GROUND "})
+        check("guarda sus dos campos (SHIPPING DATE + CARRIER)", r.status_code == 200
+              and r.json()["shipping_date"] == "2026-10-09" and r.json()["carrier"] == "UPS GROUND", r.text[:200])
+        r = await g.put(f"{API}/lines/s1", json={"shipping_date": "mañana"})
+        check("fecha inválida → 400", r.status_code == 400, r.status_code)
+        r = await g.put(f"{API}/lines/s1", json={"ship_from": "ST ANDREWS"})
+        check("SHIPPING FROM ya no es editable para el invitado → 400", r.status_code == 400, r.status_code)
         r = await g.put(f"{API}/lines/s1", json={"carrier": "FEDEX", "pcs": 5})
         check("cualquier otro campo → 400 (y no guarda nada)", r.status_code == 400
               and sdb.scheduled_shipments.find_one({"shipment_id": "s1"})["carrier"] == "UPS GROUND", r.status_code)

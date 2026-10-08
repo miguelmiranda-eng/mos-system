@@ -96,6 +96,16 @@ async def main():
         mv = sdb.shipping_movements.find_one({"action": "export_update", "summary": {"$regex": "SHIPPING#"}})
         check("queda en la bitácora como SHIPPING#", bool(mv), [m["summary"] for m in sdb.shipping_movements.find()])
 
+        print("\n== SHIPPING DATE ==")
+        r = await c.put(f"{API}/s0", json={"shipping_date": "2026-10-09"})
+        check("SHIPPING DATE se guarda como fecha", r.status_code == 200 and r.json()["shipping_date"] == "2026-10-09", r.text[:200])
+        r = await c.put(f"{API}/s0", json={"shipping_date": "10/09"})
+        check("SHIPPING DATE inválida → 400", r.status_code == 400, r.status_code)
+        r = await c.put(f"{API}/s0", json={"shipping_date": None})
+        check("SHIPPING DATE se puede borrar", r.json()["shipping_date"] is None)
+        mv = sdb.shipping_movements.find_one({"summary": {"$regex": "SHIPPING DATE"}})
+        check("queda en la bitácora como SHIPPING DATE", bool(mv), [m["summary"] for m in sdb.shipping_movements.find()][-3:])
+
         print("\n== Color de fila ==")
         r = await c.put(f"{API}/s0", json={"row_color": "amarillo"})
         check("una fila: se guarda en mayúsculas", r.status_code == 200 and r.json()["row_color"] == "AMARILLO", r.text[:200])

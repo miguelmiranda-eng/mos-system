@@ -5,7 +5,7 @@ import { useLang } from "../contexts/LanguageContext";
 import { STATUS_COLORS as MOS_COLORS } from "../lib/constants";
 
 // Vista del INVITADO SHIPPING (rol shipping_guest): un proveedor externo ve todas
-// las órdenes programadas (todo el historial) y sólo llena SHIPPING FROM y CARRIER.
+// las órdenes programadas (todo el historial) y sólo llena SHIPPING DATE y CARRIER.
 // La seguridad vive en el backend (deps.GUEST_SURFACE: default-deny a todo lo
 // demás; routers/guest_shipping.py). Esta pantalla es lo único que App le
 // muestra a ese rol.
@@ -33,18 +33,18 @@ const to12h = (hhmm) => {
 };
 const LOCAL_COLORS = { ENVIADO: { bg: '#16a34a', text: '#FFFFFF' } }; // packing ya sembrado
 const pill = (s) => {
-  const c = s && (LOCAL_COLORS[s] || MOS_COLORS[s]);
+  const c = s && (MOS_COLORS[s] || LOCAL_COLORS[s]);
   return c ? { background: c.bg, color: c.text } : { background: '#e2e8f0', color: '#64748b' };
 };
 const PRIORITY_LABEL = { 1: '1RA', 2: '2DA', 3: '3RA', 4: '4TA' };
 
 // Celda editable: guarda al salir o con Enter, sólo si cambió.
-const Field = ({ value, list, onSave, placeholder }) => {
+const Field = ({ value, list, onSave, placeholder, type = 'text' }) => {
   const [v, setV] = useState(value ?? '');
   const [focused, setFocused] = useState(false);
   useEffect(() => { if (!focused) setV(value ?? ''); }, [value, focused]);
   return (
-    <input value={v} list={list} placeholder={placeholder}
+    <input type={type} value={v} list={list} placeholder={placeholder}
       onFocus={() => setFocused(true)}
       onChange={(e) => setV(e.target.value)}
       onBlur={() => { setFocused(false); if (v.trim() !== (value ?? '')) onSave(v.trim()); }}
@@ -110,15 +110,15 @@ const GuestShipping = ({ user, onLogout }) => {
     return out.map((d) => ({ ...d, exports: d.exports.filter((e) => e.lines.length) })).filter((d) => d.exports.length);
   }, [data]);
   const suggest = useMemo(() => {
-    const s = { ship_from: new Set(['ST ANDREWS']), carrier: new Set(['UPS GROUND', 'FEDEX GROUND']) };
-    (data?.lines || []).forEach((l) => { if (l.ship_from) s.ship_from.add(l.ship_from); if (l.carrier) s.carrier.add(l.carrier); });
-    return { ship_from: [...s.ship_from], carrier: [...s.carrier] };
+    const s = new Set(['UPS GROUND', 'FEDEX GROUND']);
+    (data?.lines || []).forEach((l) => { if (l.carrier) s.add(l.carrier); });
+    return { carrier: [...s] };
   }, [data]);
   const dayLabel = (iso) => {
     const d = parseIso(iso);
     return `${DAYS[L][(d.getDay() + 6) % 7]} · ${pad(d.getDate())} ${MONTHS[L][d.getMonth()]} ${d.getFullYear()}`;
   };
-  const pending = (data?.lines || []).filter((l) => !l.ship_from || !l.carrier).length;
+  const pending = (data?.lines || []).filter((l) => !l.shipping_date || !l.carrier).length;
   // Todo el historial: al cargar se salta al primer día de hoy en adelante.
   const [jumped, setJumped] = useState(false);
   useEffect(() => {
@@ -132,7 +132,6 @@ const GuestShipping = ({ user, onLogout }) => {
 
   return (
     <main id={ROOT_ID} className="min-h-screen w-full">
-      <datalist id="gs-from">{suggest.ship_from.map((v) => <option key={v} value={v} />)}</datalist>
       <datalist id="gs-carrier">{suggest.carrier.map((v) => <option key={v} value={v} />)}</datalist>
       <header className="sticky top-0 z-30 bg-white border-b border-slate-200 shadow-sm">
         <div className="max-w-[1700px] mx-auto px-4 py-3 flex flex-wrap items-center gap-3">
@@ -184,7 +183,7 @@ const GuestShipping = ({ user, onLogout }) => {
                         {['ORDER', 'CUSTOMER', 'DELIVER TO', 'BRANDING', 'CUSTOMER PO.', 'DESIGN #', 'PCS', 'STATUS', t('sch_priority'), 'NOTES'].map((c) => (
                           <th key={c} className="px-2 py-1.5 text-left border-r border-slate-200 whitespace-nowrap">{c}</th>
                         ))}
-                        <th className="px-2 py-1.5 text-left border-r border-slate-200 whitespace-nowrap">SHIPPING FROM ✎</th>
+                        <th className="px-2 py-1.5 text-left border-r border-slate-200 whitespace-nowrap">SHIPPING DATE ✎</th>
                         <th className="px-2 py-1.5 text-left whitespace-nowrap">CARRIER ✎</th>
                       </tr>
                     </thead>
@@ -206,7 +205,7 @@ const GuestShipping = ({ user, onLogout }) => {
                           </td>
                           <td className="px-2 py-1.5">{l.priority ? PRIORITY_LABEL[l.priority] : '—'}</td>
                           <td className="px-2 py-1.5 text-slate-600">{l.ship_notes || ''}</td>
-                          <td className="px-2 py-1"><Field value={l.ship_from} list="gs-from" placeholder="ST ANDREWS" onSave={(v) => save(l, { ship_from: v })} /></td>
+                          <td className="px-2 py-1"><Field type="date" value={l.shipping_date} onSave={(v) => save(l, { shipping_date: v || null })} /></td>
                           <td className="px-2 py-1"><Field value={l.carrier} list="gs-carrier" placeholder="UPS GROUND" onSave={(v) => save(l, { carrier: v })} /></td>
                         </tr>
                       ))}

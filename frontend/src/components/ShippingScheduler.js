@@ -48,7 +48,7 @@ const tint = (hex, k = 0.8) => {
 // tiene packing sembrado (backend SHIPPED_STATUS). Verde.
 const LOCAL_COLORS = { ENVIADO: { bg: '#16a34a', text: '#FFFFFF' } };
 const statusColor = (s) => {
-  const c = s && (LOCAL_COLORS[s] || MOS_COLORS[s]);
+  const c = s && (MOS_COLORS[s] || LOCAL_COLORS[s]);
   return c ? { pill: c.bg, text: c.text, row: tint(c.bg) } : null;
 };
 const pillStyle = (s) => {
@@ -145,7 +145,7 @@ const Cell = ({ value, onSave, type = 'text', list, placeholder, className = '',
 // selección + manija de arrastre (SEL_W).
 // SHIPPING# ya no es columna: es del envío y va en el encabezado del export.
 // El Excel la conserva (XL_COLS), llena con el valor del encabezado.
-const COLS = ['ORDER', 'CUSTOMER', 'DELIVER TO', 'BRANDING', 'CUSTOMER PO.', 'DESIGN #', 'PCS', 'STATUS', 'PRIORITY', 'NOTES', 'SHIPPING FROM', 'CARRIER'];
+const COLS = ['ORDER', 'CUSTOMER', 'DELIVER TO', 'BRANDING', 'CUSTOMER PO.', 'DESIGN #', 'PCS', 'STATUS', 'PRIORITY', 'NOTES', 'SHIPPING DATE', 'CARRIER'];
 const COL_W = [125, 110, 120, 130, 150, 150, 80, 190, 80, 190, 120, 120, 120];
 const XL_COLS = ['ORDER', 'CUSTOMER', 'SHIPPING#', ...COLS.slice(2)];
 const XL_W = [125, 110, 90, ...COL_W.slice(2, COLS.length)];
@@ -760,7 +760,7 @@ const ShippingScheduler = () => {
       `${l.order_number}${l.late ? ' (LATE)' : ''}`, l.client || '', exp.shipping_no || '', l.delivery_to || '',
       l.branding || '', l.customer_po || '', l.design_num || '',
       l.pcs ?? '', `${l.status_effective || ''}${l.cancel_moved ? ' · SE MUEVE FECHA' : ''}`, l.priority ? `${PRIORITY_LABEL[l.priority]} PRIORIDAD` : '',
-      l.ship_notes || '', l.ship_from || '', l.carrier || '',
+      l.ship_notes || '', l.shipping_date || '', l.carrier || '',
       ...(showCrm ? crmValues(l) : []),
     ]);
     return [...head, ...body, ['', '', '', '', '', '', '', sumPcs(ls)], []];
@@ -1235,7 +1235,7 @@ const ShippingScheduler = () => {
                       </select>
                     </td>
                     <td className="border-r border-slate-200"><Cell value={l.ship_notes} onSave={(v) => updateLine(l, { ship_notes: v })} /></td>
-                    <td className="border-r border-slate-200"><Cell value={l.ship_from} list="sch-from" className="text-center" onSave={(v) => updateLine(l, { ship_from: v })} /></td>
+                    <td className="border-r border-slate-200"><Cell type="date" value={l.shipping_date} className="text-center" onSave={(v) => updateLine(l, { shipping_date: v })} /></td>
                     <td className="border-r border-slate-200"><Cell value={l.carrier} list="sch-carrier" className="text-center" onSave={(v) => updateLine(l, { carrier: v })} /></td>
                     {showCrm && (() => {
                       const [cancel, days, prod, qty, pl, notes] = crmValues(l);
@@ -1301,7 +1301,6 @@ const ShippingScheduler = () => {
     <ReadOnlyCtx.Provider value={readOnly}>
     <main id={ROOT_ID} className="w-full max-w-[1900px] mx-auto space-y-4">
       <datalist id="sch-deliver">{(suggest.delivery_to || []).map((v) => <option key={v} value={v} />)}</datalist>
-      <datalist id="sch-from">{(suggest.ship_from || []).map((v) => <option key={v} value={v} />)}</datalist>
       <datalist id="sch-carrier">{(suggest.carrier || []).map((v) => <option key={v} value={v} />)}</datalist>
 
       {/* PROGRAMA | MOVIMIENTOS + permiso */}

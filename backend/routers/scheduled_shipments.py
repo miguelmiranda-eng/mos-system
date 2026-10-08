@@ -252,6 +252,9 @@ def _row(sched: dict, order: dict | None, pl_seed: dict | None = None,
         "priority": sched.get("priority"),
         "ship_notes": sched.get("ship_notes"),
         "ship_from": sched.get("ship_from"),
+        # SHIPPING DATE (2026-10-08): reemplaza a SHIPPING FROM en pantalla; fecha
+        # en que sale, la llena Envíos o el proveedor (invitado shipping).
+        "shipping_date": sched.get("shipping_date"),
         "carrier": sched.get("carrier"),
         "manual": bool(sched.get("manual")),
         "position": sched.get("position"),
@@ -935,7 +938,7 @@ async def add_lines(request: Request):
     # hoja): el último valor capturado de cada campo, aunque el renglón final
     # lo tenga vacío.
     inherit = {}
-    for k in ("shipping_no", "delivery_to", "ship_from", "carrier"):
+    for k in ("shipping_no", "delivery_to", "ship_from", "shipping_date", "carrier"):
         inherit[k] = next((s.get(k) for s in reversed(existing) if s.get(k)), None)
     pos = (max((s.get("position") or 0) for s in existing) + 1) if existing else 0
     now = _now()
@@ -1235,6 +1238,8 @@ async def update_scheduled(shipment_id: str, request: Request):
         allowed["pcs"] = _int_or_none(body["pcs"], "pcs")
     if "row_color" in body:
         allowed["row_color"] = _row_color(body["row_color"])
+    if "shipping_date" in body:
+        allowed["shipping_date"] = _req_date(body["shipping_date"], "shipping_date") if body["shipping_date"] else None
     if "priority" in body:
         p = _int_or_none(body["priority"], "priority", 1, 4)
         allowed["priority"] = p

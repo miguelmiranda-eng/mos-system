@@ -26,7 +26,7 @@ IGNORE = {"_id", "position", "updated_at"}
 MESES = ["ENE", "FEB", "MAR", "ABR", "MAY", "JUN", "JUL", "AGO", "SEP", "OCT", "NOV", "DIC"]
 LINE_FIELDS = {
     "status": "STATUS", "pcs": "PCS", "shipping_no": "SHIPPING#", "delivery_to": "DELIVER TO",
-    "ship_from": "SHIPPING FROM", "carrier": "CARRIER", "priority": "PRIORIDAD",
+    "ship_from": "SHIPPING FROM", "shipping_date": "SHIPPING DATE", "carrier": "CARRIER", "priority": "PRIORIDAD",
     "ship_notes": "NOTES", "manual_fields": "datos manuales", "export_id": "export", "row_color": "Color",
 }
 EXPORT_FIELDS = {
