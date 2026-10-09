@@ -799,10 +799,42 @@ async def build_dashboard() -> dict:
         if k in week_units:
             week_units[k] += units_once(j, seen_w)
 
+    # Falta producir, por CANCEL DATE real (sin el día hábil de margen del
+    # motor): lo que vence esta semana (lun-dom) y lo atrasado de semanas
+    # anteriores, por separado y con su lista. La demanda de la proyección
+    # (target = cancel - margen, atrasado pesa hoy) se sigue usando para la
+    # capacidad; esto es lo que se reporta como "falta producir".
+    week_end = w0 + timedelta(days=6)
+    order_rem = {}
+    for j in jobs:
+        order_rem[j["order_id"]] = order_rem.get(j["order_id"], 0) + j["remaining"]
+
+    def pend_row(oid, o, cd):
+        return {"order_number": str(o.get("order_number") or ""), "client": o.get("client"),
+                "branding": o.get("branding"), "board": o.get("board"),
+                "production_status": o.get("production_status"), "cancel_date": cd.isoformat(),
+                "pending": order_rem[oid], "pending_units": round(order_units.get(oid, 0)),
+                "printed": produced.get(oid, 0)}
+    due_items, overdue_items = [], []
+    for oid, rem in order_rem.items():
+        o = order_by_id.get(oid) or {}
+        cd = pe.parse_date(o.get("cancel_date"))
+        if cd is None or rem <= 0:
+            continue
+        if w0 <= cd <= week_end:
+            due_items.append(pend_row(oid, o, cd))
+        elif cd < w0:
+            overdue_items.append(pend_row(oid, o, cd))
+    due_items.sort(key=lambda x: (x["cancel_date"], -x["pending"]))
+    overdue_items.sort(key=lambda x: -x["pending"])
+
+    def pend_total(items):
+        return {"hits": sum(x["pending"] for x in items), "units": sum(x["pending_units"] for x in items),
+                "orders": len(items), "items": items}
+
     # Test Orders separadas (branding ~ TEST): pendiente por semana + producido.
-    test_pend = test_this = test_next = test_prod = 0
+    test_pend = test_prod = 0
     test_pend_u, seen_t = 0.0, set()
-    test_this_u, seen_tt, test_next_u, seen_tn = 0.0, set(), 0.0, set()
     test_oids = set()
     test_job_pend = {}   # order_id -> [hits pendientes, piezas pendientes]
     for j in jobs:
@@ -814,50 +846,58 @@ async def build_dashboard() -> dict:
             acc = test_job_pend.setdefault(j["order_id"], [0, 0.0])
             acc[0] += j["remaining"]
             acc[1] = order_units.get(j["order_id"], 0)
-            t = pe.parse_date(j.get("target_date"))
-            if t and t < today:
-                t = today
-            if t and w0 <= t < w0 + timedelta(days=7):
-                test_this += j["remaining"]
-                test_this_u += units_once(j, seen_tt)
-            elif t and w0 + timedelta(days=7) <= t < w0 + timedelta(days=14):
-                test_next += j["remaining"]
-                test_next_u += units_once(j, seen_tn)
     for oid in test_oids:
         test_prod += produced.get(oid, 0)
 
-    # Programa TEST completo (todos los tableros, no solo demanda) para que
-    # cuadre con lo que se ve en MASTER: abiertas = por imprimir + ya impresas
-    # en proceso. "Abierta" = no en tablero terminal ni ya enviada/cancelada.
+    # Programa TEST completo (todos los tableros). Regla de "abierta" acordada
+    # con operaciones: una orden en packing / QC / lista para enviar / enviada
+    # que YA TIENE captura de producción NO está abierta (ya se imprimió). Si
+    # está en esos status pero no tiene ninguna captura, se reporta aparte
+    # para revisar (el status dice impresa y producción no lo registró).
+    # Abiertas = las demás, separadas por su cancel date: atrasadas (antes de
+    # esta semana), de esta semana y de semanas futuras.
     patterns = [str(p) for p in cfg.get("test_branding_patterns", []) if str(p).strip()]
-    test_open = test_toprint = test_printed = 0
-    test_items = []
+    closed_st = {s.upper() for s in cfg["printed_statuses"]} - {"CANCELLED"}
+    term = {"FINAL BILL", "COMPLETOS", "CANCELLED", "PAPELERA DE RECICLAJE"}
+    t_open, t_closed, t_no_capture = [], 0, []
+    t_due = {"overdue": [0, 0.0], "this_week": [0, 0.0], "next_week": [0, 0.0], "later": [0, 0.0]}
     if patterns:
         brx = {"$regex": "|".join(patterns), "$options": "i"}
         demand_set = set(cfg["demand_boards"]) | {m["machine"] for m in ctx["machines"]}
-        term = {"FINAL BILL", "COMPLETOS", "CANCELLED", "PAPELERA DE RECICLAJE"}
-        ship_st = {"LISTO PARA ENVIO", "LISTO PARA INVENTARIO", "ENVIADO TIJANA-SAN DIEGO", "CANCELLED"}
-        printed_st = {s.upper() for s in cfg["printed_statuses"]}
-        async for o in db.orders.find({"branding": brx}, {"_id": 0, "order_id": 1, "order_number": 1, "board": 1,
-                                                          "production_status": 1, "cancel_date": 1, "quantity": 1}):
+        tests = [o async for o in db.orders.find(
+            {"branding": brx}, {"_id": 0, "order_id": 1, "order_number": 1, "board": 1,
+                                "production_status": 1, "cancel_date": 1, "quantity": 1})]
+        t_ids = [o["order_id"] for o in tests if o.get("order_id")]
+        t_made = {}
+        async for r in db.production_logs.aggregate([
+                {"$match": {"order_id": {"$in": t_ids}}},
+                {"$group": {"_id": "$order_id", "n": {"$sum": "$quantity_produced"}}}]):
+            t_made[r["_id"]] = r["n"]
+        for o in tests:
             st = (o.get("production_status") or "").upper()
-            if o.get("board") in term or st in ship_st:
+            if o.get("board") in term or st == "CANCELLED":
                 continue
-            test_open += 1
-            to_print = o.get("board") in demand_set and st not in printed_st
-            if to_print:
-                test_toprint += 1
-            else:
-                test_printed += 1
-            pend = test_job_pend.get(o.get("order_id"), [0, 0])
+            made = t_made.get(o.get("order_id"), 0)
             cd = pe.parse_date(o.get("cancel_date"))
-            test_items.append({"order_number": str(o.get("order_number") or ""), "board": o.get("board"),
-                               "production_status": o.get("production_status"), "quantity": o.get("quantity"),
-                               "stage": "to_print" if to_print else "in_process",
-                               "pending": pend[0], "pending_units": round(pend[1]),
-                               "cancel_date": cd.isoformat() if cd else None})
-        # Primero las que faltan por imprimir, por fecha de cancelación.
-        test_items.sort(key=lambda x: (x["stage"] != "to_print", x["cancel_date"] or "9999", x["order_number"]))
+            row = {"order_number": str(o.get("order_number") or ""), "board": o.get("board"),
+                   "production_status": o.get("production_status"), "quantity": o.get("quantity"),
+                   "printed": made, "cancel_date": cd.isoformat() if cd else None}
+            if st in closed_st:
+                if made > 0:
+                    t_closed += 1
+                else:
+                    t_no_capture.append(row)
+                continue
+            due = ("later" if cd is None else "overdue" if cd < w0 else "this_week" if cd <= week_end
+                   else "next_week" if cd <= week_end + timedelta(days=7) else "later")
+            pend = test_job_pend.get(o.get("order_id"), [0, 0])
+            t_due[due][0] += pend[0]
+            t_due[due][1] += pend[1]
+            t_open.append({**row, "due": due, "pending": pend[0], "pending_units": round(pend[1]),
+                           "stage": "to_print" if o.get("board") in demand_set else "in_process"})
+        rank = {"overdue": 0, "this_week": 1, "next_week": 2, "later": 3}
+        t_open.sort(key=lambda x: (rank[x["due"]], x["cancel_date"] or "9999", x["order_number"]))
+    t_count = {k: sum(1 for x in t_open if x["due"] == k) for k in t_due}
 
     # Envíos comprometidos por día (próximos 10 días, por cancel date).
     ship, seen_s = {}, set()
@@ -897,6 +937,7 @@ async def build_dashboard() -> dict:
         "unit_note": "1 impresión = 1 print; frente+espalda = 2. units = piezas (hits ÷ hits por pieza)",
         "this_week": {"produced": prod_week["hits"], "produced_units": prod_week["units"],
                       "pending": weeks[0]["demand"], "pending_units": round(week_units[0]),
+                      "due_this_week": pend_total(due_items), "overdue": pend_total(overdue_items),
                       "capacity_regular": this_reg, "capacity_overtime": this_ot,
                       "capacity": this_reg + this_ot, "demand": weeks[0]["demand"],
                       "delta": (this_reg + this_ot) - weeks[0]["demand"],
@@ -905,12 +946,21 @@ async def build_dashboard() -> dict:
                       "capacity": next_reg + next_ot, "demand": weeks[1]["demand"],
                       "demand_units": round(week_units[1]),
                       "delta": (next_reg + next_ot) - weeks[1]["demand"]},
-        "test_orders": {"open": test_open, "to_print": test_toprint,
-                        "printed_in_process": test_printed, "pending": test_pend,
-                        "pending_units": round(test_pend_u),
-                        "pending_this_week": test_this, "pending_next_week": test_next,
-                        "pending_this_week_units": round(test_this_u), "pending_next_week_units": round(test_next_u),
-                        "produced": test_prod, "items": test_items},
+        # open = abiertas que vencen esta semana o antes (atrasadas); las de
+        # semanas futuras van en upcoming. closed = impresas en packing/QC/
+        # listas con captura (no cuentan como abiertas).
+        "test_orders": {"open": t_count["overdue"] + t_count["this_week"],
+                        "open_overdue": t_count["overdue"], "open_this_week": t_count["this_week"],
+                        "upcoming": t_count["next_week"] + t_count["later"],
+                        "closed": t_closed, "no_capture": len(t_no_capture),
+                        "pending_due": t_due["overdue"][0] + t_due["this_week"][0],
+                        "pending_due_units": round(t_due["overdue"][1] + t_due["this_week"][1]),
+                        "pending_overdue": t_due["overdue"][0], "pending_this_week": t_due["this_week"][0],
+                        "pending_next_week": t_due["next_week"][0],
+                        "pending_this_week_units": round(t_due["this_week"][1]),
+                        "pending_next_week_units": round(t_due["next_week"][1]),
+                        "pending": test_pend, "pending_units": round(test_pend_u),
+                        "produced": test_prod, "items": t_open, "no_capture_items": t_no_capture},
         "shipments_by_day": shipments,
         "exceptions": {"status_behind": status_behind,
                        "machines_no_capture": machines_no_capture,

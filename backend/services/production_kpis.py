@@ -223,6 +223,8 @@ async def build_executive(now: Optional[datetime] = None) -> dict:
         out["week"] = {"produced_hits": week_prod["hits"] if week_prod else tw["produced"],
                        "produced_units": week_prod["units"] if week_prod else tw.get("produced_units"),
                        "pending_hits": tw["pending"], "pending_units": tw.get("pending_units"),
+                       # Lo que se reporta como "falta producir": por cancel date real.
+                       "due": tw.get("due_this_week"), "overdue": tw.get("overdue"),
                        "capacity": tw["capacity"], "capacity_regular": tw["capacity_regular"],
                        "capacity_overtime": tw["capacity_overtime"], "delta": tw["delta"],
                        "pull_ahead": tw["pull_ahead"]}

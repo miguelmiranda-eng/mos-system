@@ -76,6 +76,9 @@ def sembrar(kpis, TZ):
     today = kpis.op_today(now)
     Y = today - timedelta(days=1)
     cancel = (now.date() + timedelta(days=20)).isoformat()
+    w0 = today - timedelta(days=today.weekday())
+    overdue = (w0 - timedelta(days=3)).isoformat()
+    week_end = (w0 + timedelta(days=6)).isoformat()
     base = {"client": "GOODIE TWO SLEEVES", "branding": "SPENCERS", "cancel_date": cancel,
             "blank_status": "CONTADO", "screens": True, "colors": 4, "aprobaciones": "Reorder"}
     sdb.orders.insert_many([
@@ -85,7 +88,22 @@ def sembrar(kpis, TZ):
          "print_positions": ["FRENTE"], "hits_impresiones": 1, "production_status": "LABEL LISTO"},
         {**base, "order_id": "ord_t", "order_number": "7003", "board": "BLANKS", "quantity": 100,
          "branding": "SPENCERS TEST", "print_positions": ["FRENTE"], "hits_impresiones": 1,
-         "production_status": "LABEL LISTO"},                                       # Test Order sin imprimir
+         "production_status": "LABEL LISTO"},                     # Test Order sin imprimir, vence en 20 días
+        {**base, "order_id": "ord_tl", "order_number": "7004", "board": "SCREENS", "quantity": 60,
+         "branding": "SPENCERS TEST", "print_positions": ["FRENTE"], "hits_impresiones": 1,
+         "production_status": "EN ESPERA", "cancel_date": overdue},  # Test Order ATRASADA
+        {**base, "order_id": "ord_tp", "order_number": "7005", "board": "PACKING", "quantity": 80,
+         "branding": "SPENCERS TEST", "print_positions": ["FRENTE"], "hits_impresiones": 1,
+         "production_status": "EN PROCESO DE EMPAQUE", "cancel_date": overdue},  # impresa con captura: NO abierta
+        {**base, "order_id": "ord_tn", "order_number": "7006", "board": "PACKING", "quantity": 90,
+         "branding": "SPENCERS TEST", "print_positions": ["FRENTE"], "hits_impresiones": 1,
+         "production_status": "NECESITA QC", "cancel_date": overdue},  # packing SIN captura: a revisar
+        {**base, "order_id": "ord_late", "order_number": "7007", "board": "BLANKS", "quantity": 500,
+         "print_positions": ["FRENTE"], "hits_impresiones": 1, "production_status": "LABEL LISTO",
+         "cancel_date": overdue},                                 # orden normal atrasada
+        {**base, "order_id": "ord_due", "order_number": "7008", "board": "BLANKS", "quantity": 300,
+         "print_positions": ["FRENTE"], "hits_impresiones": 1, "production_status": "LABEL LISTO",
+         "cancel_date": week_end},                                # vence el domingo de esta semana
     ])
 
     def at(d, h, m=0):
@@ -102,6 +120,7 @@ def sembrar(kpis, TZ):
         {**log("l7", "ord_x", 400, "TURNO 1", at(Y, 9)), "order_number": "MACHINE_TEST1"},  # prueba: fuera
         log("l5", "ord_a", 999, "TURNO 2", at(Y, 3)),                                    # madrugada de ayer → ANTEAYER
         log("l6", "ord_b", 50, "TURNO 1", at(today, 8), machine="MAQUINA2"),             # hoy
+        log("l8", "ord_tp", 80, "TURNO 1", at(today - timedelta(days=40), 10)),          # la de packing sí se capturó
     ])
     sdb.production_goals.insert_one({"date": Y.isoformat(), "day": 1000,
                                      "shifts": {"TURNO 1": 600, "TURNO 2": 400}})
@@ -252,9 +271,21 @@ async def main():
         check("excepciones presentes", isinstance(k.get("exceptions"), dict), k.get("exceptions"))
         to = k.get("test_orders") or {}
         it = {i["order_number"]: i for i in to.get("items", [])}
-        check("Test Orders: lista con la 7003 por imprimir y 100 pendientes",
-              it.get("7003", {}).get("stage") == "to_print" and it["7003"]["pending"] == 100
-              and to.get("open") == 1 and to.get("to_print") == 1, to)
+        check("Test Orders: abiertas a esta semana = sólo la atrasada (7004), 60 impresiones atrasadas",
+              to.get("open") == 1 and to.get("open_overdue") == 1 and it.get("7004", {}).get("due") == "overdue"
+              and to.get("pending_overdue") == 60, to)
+        check("Test Orders: la que vence en 20 días (7003) va en semanas futuras, no abierta a esta semana",
+              it.get("7003", {}).get("due") in ("next_week", "later") and to.get("upcoming") == 1, to)
+        check("regla de abierta: en packing CON captura (7005) no está abierta ni listada",
+              to.get("closed") == 1 and "7005" not in it, to)
+        check("en packing/QC SIN captura (7006) se reporta para revisar",
+              [i["order_number"] for i in to.get("no_capture_items", [])] == ["7006"] and "7006" not in it, to)
+        w = k.get("week") or {}
+        due, od = w.get("due") or {}, w.get("overdue") or {}
+        check("falta producir: vence esta semana = 7008 (300) por cancel real",
+              [i["order_number"] for i in due.get("items", [])] == ["7008"] and due.get("hits") == 300, due)
+        check("falta producir: atrasado = 7007 (500) + Test 7004 (60), separado",
+              sorted(i["order_number"] for i in od.get("items", [])) == ["7004", "7007"] and od.get("hits") == 560, od)
         check("Test Orders: impreso ayer/hoy/semana en prints y unidades",
               all(set(k.get("test_printed", {}).get(x, {})) == {"hits", "units"} for x in ("yesterday", "today", "week")),
               k.get("test_printed"))

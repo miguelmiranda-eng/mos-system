@@ -2200,6 +2200,37 @@ const DataTab = ({ tr }) => {
   );
 };
 
+/* Lista compacta de órdenes por vencer / atrasadas (dashboard de producción). */
+const DueTable = ({ title, rows, tr, showClient }) => (
+  <div className="mt-3">
+    <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1">{title}</div>
+    <div className="overflow-x-auto border border-slate-200 rounded-lg">
+      <table className="w-full text-xs">
+        <thead className="bg-slate-50 text-slate-500">
+          <tr>
+            <th className="text-left px-2 py-1.5">{tr("plan_dash_col_order")}</th>
+            {showClient && <th className="text-left px-2 py-1.5">{tr("plan_dash_col_client")}</th>}
+            <th className="text-left px-2 py-1.5">{tr("plan_dash_col_status")}</th>
+            <th className="text-left px-2 py-1.5">{tr("plan_dash_col_cancel")}</th>
+            <th className="text-right px-2 py-1.5">{tr("plan_dash_col_pending")}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr key={r.order_number} className="border-t border-slate-100">
+              <td className="px-2 py-1.5 font-bold">#{r.order_number}</td>
+              {showClient && <td className="px-2 py-1.5 text-slate-600">{[r.client, r.branding].filter(Boolean).join(" · ")}</td>}
+              <td className="px-2 py-1.5 text-slate-600">{r.production_status || r.board || "—"}</td>
+              <td className={`px-2 py-1.5 ${r.due === "overdue" || showClient ? "text-red-600 font-semibold" : ""}`}>{r.cancel_date || "—"}</td>
+              <td className="px-2 py-1.5 text-right tabular-nums">{fmt(r.pending)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  </div>
+);
+
 /* ── Dashboard de producción ───────────────────────────────────────────────
    Una sola fuente de verdad: producido, pendiente, capacidad (regular + extra),
    demanda, brecha, envíos por día, Test Orders separadas y excepciones. */
@@ -2234,12 +2265,17 @@ const DashboardTab = ({ tr, cfgData, canEdit, onSaved }) => {
 
       <Card className="p-4">
         <SectionTitle hint={tr("plan_dash_unit")}>{tr("plan_dash_this_week")} · {d.week_start}</SectionTitle>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
           <Stat label={tr("plan_dash_produced")} value={fmt(tw.produced)} color="text-violet-700" />
-          <Stat label={tr("plan_dash_pending")} value={fmt(tw.pending)} color="text-amber-600" />
+          <Stat label={tr("plan_dash_due_week")} value={fmt(tw.due_this_week?.hits)} color="text-amber-600" />
+          <Stat label={tr("plan_dash_overdue")} value={fmt(tw.overdue?.hits)} color={tw.overdue?.hits ? "text-red-600" : "text-slate-900"} />
           <Stat label={tr("plan_dash_cap_remaining")} value={fmt(tw.capacity)} />
           <Stat label={tr("plan_dash_pull_ahead")} value={fmt(tw.pull_ahead)} color="text-emerald-600" />
         </div>
+        <p className="text-[11px] text-slate-400 mt-2">{tr("plan_dash_due_hint")}</p>
+        {(tw.overdue?.items || []).length > 0 && (
+          <DueTable title={tr("plan_dash_overdue_list", { n: tw.overdue.orders })} rows={tw.overdue.items} tr={tr} showClient />
+        )}
       </Card>
 
       <Card className="p-4">
@@ -2264,17 +2300,27 @@ const DashboardTab = ({ tr, cfgData, canEdit, onSaved }) => {
 
       <Card className="p-4">
         <SectionTitle hint={tr("plan_dash_test_hint")}>{tr("plan_dash_test")}</SectionTitle>
-        <div className="grid grid-cols-3 gap-3 mb-3">
-          <Stat label={tr("plan_dash_test_openlbl")} value={fmt(to.open)} />
-          <Stat label={tr("plan_dash_test_toprint")} value={fmt(to.to_print)} color="text-amber-600" />
-          <Stat label={tr("plan_dash_test_printed")} value={fmt(to.printed_in_process)} color="text-emerald-600" />
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+          <Stat label={tr("plan_dash_test_open_due")} value={fmt(to.open)} color={to.open ? "text-amber-600" : "text-emerald-600"} />
+          <Stat label={tr("plan_dash_test_overdue")} value={fmt(to.open_overdue)} color={to.open_overdue ? "text-red-600" : "text-slate-900"} />
+          <Stat label={tr("plan_dash_test_closed")} value={fmt(to.closed)} color="text-emerald-600" />
+          <Stat label={tr("plan_dash_test_upcoming")} value={fmt(to.upcoming)} />
         </div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <Stat label={tr("plan_dash_produced")} value={fmt(to.produced)} color="text-violet-700" />
-          <Stat label={tr("plan_dash_test_pend_imp")} value={fmt(to.pending)} color="text-amber-600" />
+          <Stat label={tr("plan_dash_test_pend_overdue")} value={fmt(to.pending_overdue)} color={to.pending_overdue ? "text-red-600" : "text-slate-900"} />
           <Stat label={tr("plan_dash_test_this")} value={fmt(to.pending_this_week)} />
           <Stat label={tr("plan_dash_test_next")} value={fmt(to.pending_next_week)} />
         </div>
+        {(to.items || []).filter((i) => i.due === "overdue" || i.due === "this_week").length > 0 && (
+          <DueTable title={tr("plan_dash_test_open_list")} rows={to.items.filter((i) => i.due === "overdue" || i.due === "this_week")} tr={tr} />
+        )}
+        {(to.no_capture_items || []).length > 0 && (
+          <div className="mt-3 flex items-start gap-2 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+            <AlertTriangle className="w-4 h-4 shrink-0" />
+            <span>{tr("plan_dash_test_nocap", { n: to.no_capture_items.length })}: {to.no_capture_items.map((i) => `#${i.order_number}`).join(", ")}</span>
+          </div>
+        )}
       </Card>
 
       <Card className="p-4">
