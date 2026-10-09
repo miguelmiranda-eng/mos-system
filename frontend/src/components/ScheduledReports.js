@@ -85,6 +85,9 @@ export default function ScheduledReports() {
   const [previewing, setPreviewing] = useState(false);
   const [preview, setPreview] = useState(null);
   const [newEmail, setNewEmail] = useState("");
+  const [users, setUsers] = useState([]);         // usuarios de MOS para sugerir correos
+  const [sugOpen, setSugOpen] = useState(false);
+  const [sugIdx, setSugIdx] = useState(0);
   const [testEmail, setTestEmail] = useState("");
 
   const selected = reports.find((r) => r.schedule_id === selectedId) || null;
@@ -108,6 +111,13 @@ export default function ScheduledReports() {
 
   useEffect(() => { load(); }, [load]);
 
+  // Mismo directorio que las menciones de comentarios (nombre + correo).
+  useEffect(() => {
+    api("/users/list").then((list) => setUsers(
+      (list || []).filter((u) => EMAIL_RE.test(u.email || "")).sort((a, b) => (a.name || a.email).localeCompare(b.name || b.email)),
+    )).catch(() => setUsers([]));
+  }, []);
+
   const select = (id) => {
     if (id === selectedId) return;
     if (dirty && !window.confirm(t("rs_unsaved_confirm"))) return;
@@ -120,13 +130,38 @@ export default function ScheduledReports() {
   const patch = (changes) => setDraft((d) => ({ ...d, ...changes }));
 
   // Acepta uno o varios correos pegados (separados por coma, espacio o ;).
-  const addEmails = () => {
-    const parts = newEmail.split(/[\s,;]+/).map((e) => e.trim().toLowerCase()).filter(Boolean);
+  const addEmails = (text = newEmail) => {
+    const parts = text.split(/[\s,;]+/).map((e) => e.trim().toLowerCase()).filter(Boolean);
     if (!parts.length) return;
     const bad = parts.filter((e) => !EMAIL_RE.test(e));
     if (bad.length) { toast.error(`${t("rs_invalid_email")}: ${bad.join(", ")}`); return; }
     setDraft((d) => ({ ...d, recipients: [...new Set([...d.recipients, ...parts])] }));
     setNewEmail("");
+    setSugOpen(false);
+  };
+
+  // Sugerencias: usuarios de MOS cuyo nombre o correo contiene lo que se está
+  // escribiendo (el último pedazo, si se pegaron varios), sin los ya agregados.
+  const typed = (newEmail.split(/[\s,;]+/).pop() || "").trim().toLowerCase();
+  const suggestions = typed.length < 2 || !draft ? [] : users.filter((u) =>
+    !draft.recipients.includes(u.email.toLowerCase())
+    && (u.email.toLowerCase().includes(typed) || (u.name || "").toLowerCase().includes(typed))).slice(0, 8);
+  const showSug = sugOpen && suggestions.length > 0;
+
+  const pickSuggestion = (u) => {
+    const rest = newEmail.split(/[\s,;]+/).slice(0, -1).join(", ");
+    addEmails(rest ? `${rest}, ${u.email}` : u.email);
+  };
+
+  const onEmailKey = (e) => {
+    if (showSug && e.key === "ArrowDown") { e.preventDefault(); setSugIdx((i) => (i + 1) % suggestions.length); return; }
+    if (showSug && e.key === "ArrowUp") { e.preventDefault(); setSugIdx((i) => (i - 1 + suggestions.length) % suggestions.length); return; }
+    if (e.key === "Escape") { setSugOpen(false); return; }
+    if (e.key === "Enter") {
+      e.preventDefault();
+      if (showSug) pickSuggestion(suggestions[Math.min(sugIdx, suggestions.length - 1)]);
+      else addEmails();
+    }
   };
 
   const toggleDay = (d) => setDraft((cur) => {
@@ -336,16 +371,41 @@ export default function ScheduledReports() {
                 ))}
               </div>
               <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={newEmail}
-                  onChange={(e) => setNewEmail(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addEmails(); } }}
-                  placeholder={t("rs_emails_placeholder")}
-                  className={`${inputCls} flex-1 min-w-0`}
-                />
+                <div className="relative flex-1 min-w-0">
+                  <input
+                    type="text"
+                    value={newEmail}
+                    onChange={(e) => { setNewEmail(e.target.value); setSugOpen(true); setSugIdx(0); }}
+                    onKeyDown={onEmailKey}
+                    onFocus={() => setSugOpen(true)}
+                    onBlur={() => setTimeout(() => setSugOpen(false), 150)}
+                    placeholder={t("rs_emails_placeholder")}
+                    autoComplete="off"
+                    role="combobox"
+                    aria-expanded={showSug}
+                    aria-autocomplete="list"
+                    className={inputCls}
+                  />
+                  {showSug && (
+                    <ul role="listbox" className="absolute left-0 right-0 top-full mt-1 z-30 bg-card border border-border rounded-xl shadow-xl py-1 max-h-72 overflow-auto">
+                      {suggestions.map((u, i) => (
+                        <li key={u.email} role="option" aria-selected={i === sugIdx}>
+                          <button
+                            type="button"
+                            onMouseDown={(e) => { e.preventDefault(); pickSuggestion(u); }}
+                            onMouseEnter={() => setSugIdx(i)}
+                            className={`w-full text-left px-3 py-2 flex flex-col ${i === sugIdx ? "bg-primary/10" : ""}`}
+                          >
+                            <span className="text-sm font-semibold text-foreground truncate">{u.name || u.email}</span>
+                            {u.name && <span className="text-xs text-muted-foreground truncate">{u.email}</span>}
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
                 <button
-                  onClick={addEmails}
+                  onClick={() => addEmails()}
                   className="px-4 py-2 bg-secondary hover:bg-secondary/70 border border-border rounded-lg text-sm font-semibold text-foreground shrink-0"
                 >
                   {t("rs_add_email")}
