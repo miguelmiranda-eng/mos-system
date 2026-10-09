@@ -123,6 +123,17 @@ async def produced_window(d_from: date, d_to: date) -> dict:
     return {"rows": rows, "excluded": excluded}
 
 
+async def test_order_ids(order_ids, cfg: dict) -> set:
+    """De estas órdenes, cuáles son Test Orders (por branding, pe.is_test_branding)."""
+    ids = [i for i in order_ids if i and not str(i).startswith("#")]
+    out = set()
+    for i in range(0, len(ids), 400):
+        async for o in db.orders.find({"order_id": {"$in": ids[i:i + 400]}}, {"_id": 0, "order_id": 1, "branding": 1}):
+            if pe.is_test_branding(o.get("branding"), cfg):
+                out.add(o["order_id"])
+    return out
+
+
 def between(window: dict, d_from: date, d_to: date) -> list:
     a, b = d_from.isoformat(), d_to.isoformat()
     return [r for r in window["rows"] if a <= r["date"] <= b]
@@ -169,7 +180,7 @@ async def build_executive(now: Optional[datetime] = None) -> dict:
     """Todo lo que lleva el Reporte Ejecutivo de Producción. Cada sección se
     calcula aparte: si una falla, va en `unavailable` y las demás salen."""
     from routers.production import _goals_for_days
-    from routers.planner import build_dashboard, build_audit
+    from routers.planner import build_dashboard, build_audit, _config
 
     now = (now or datetime.now(TZ)).astimezone(TZ)
     today = op_today(now)
@@ -194,6 +205,13 @@ async def build_executive(now: Optional[datetime] = None) -> dict:
         week_rows = between(window, w0, today)
         week_prod = measure(week_rows)
         out["week_clients"] = by_client(week_rows)
+        # Lo impreso de Test Orders (programa SPENCERS TEST: órdenes reales,
+        # branding ~ test_branding_patterns), con la misma regla de units.
+        test_ids = await test_order_ids({r["order"] for r in window["rows"]}, await _config())
+        out["test_printed"] = {
+            "yesterday": measure(r for r in between(window, yesterday, yesterday) if r["order"] in test_ids),
+            "today": measure(r for r in between(window, today, today) if r["order"] in test_ids),
+            "week": measure(r for r in week_rows if r["order"] in test_ids)}
     except Exception as e:
         logger.error(f"[kpis] producción por día falló: {e}")
         out["unavailable"].append("production")

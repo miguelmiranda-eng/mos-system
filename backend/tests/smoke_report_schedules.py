@@ -1,8 +1,9 @@
 """Smoke de Reportes Automáticos (programaciones) + Reporte Ejecutivo de Producción.
 
-Fija: la configuración única de antes se migra sola a la programación
-"daily_production" sin perder destinatarios/hora/estado; CRUD de programaciones
-(permisos, días de la semana, la original no se borra); la cuenta de
+Fija: catálogo FIJO de reportes (uno por tipo, sin crear ni borrar); la
+configuración única de antes y un ejecutivo creado con la versión anterior
+(rsch_...) se adoptan como los registros fijos sin perder destinatarios/hora/
+estado ni su bitácora; edición (permisos, días de la semana, destinatarios); la cuenta de
 production_kpis con las definiciones de los registros de facturación 2026 (día
 operativo: la noche capturada de madrugada es del día en que empezó; units = por
 orden, la ubicación con más impresiones; pruebas de máquina excluidas; clientes
@@ -82,6 +83,9 @@ def sembrar(kpis, TZ):
          "print_positions": ["FRENTE", "ESPALDA"], "hits_impresiones": 2, "production_status": "EN PRODUCCION"},
         {**base, "order_id": "ord_b", "order_number": "7002", "board": "BLANKS", "quantity": 600, "client": "SPEKTRUM",
          "print_positions": ["FRENTE"], "hits_impresiones": 1, "production_status": "LABEL LISTO"},
+        {**base, "order_id": "ord_t", "order_number": "7003", "board": "BLANKS", "quantity": 100,
+         "branding": "SPENCERS TEST", "print_positions": ["FRENTE"], "hits_impresiones": 1,
+         "production_status": "LABEL LISTO"},                                       # Test Order sin imprimir
     ])
 
     def at(d, h, m=0):
@@ -106,6 +110,14 @@ def sembrar(kpis, TZ):
                                      "recipients": ["viejo@test.local"], "preset": "yesterday",
                                      "format": "excel", "subject": "Reporte Diario de Producción",
                                      "quotes_report": False, "last_sent_date": now.strftime("%Y-%m-%d")})
+    # Un ejecutivo creado con la versión anterior (botón "Nuevo reporte").
+    sdb.report_schedules.insert_one({"schedule_id": "rsch_viejo1", "report_type": "executive_production",
+                                     "name": "Production Report (executive)", "enabled": False, "hour": 7,
+                                     "minute": 15, "weekdays": [0, 1, 2, 3, 4, 5, 6], "lang": "es",
+                                     "recipients": ["luke@test.local"], "subject": "Production Report",
+                                     "last_sent_date": None, "created_at": "2026-10-09T18:51:42+00:00"})
+    sdb.report_sends.insert_one({"send_id": "rs_old", "schedule_id": "rsch_viejo1", "ok": True, "trigger": "test",
+                                 "recipients": ["luke@test.local"], "at": "2026-10-09T19:00:00+00:00"})
     sdb.users.insert_many([
         {"user_id": "u_sup", "email": "sup@test.local", "name": "Sup", "password_hash": bcrypt.hash("sup123"),
          "role": "supersu", "admin_level": 5, "active": True},
@@ -168,33 +180,43 @@ async def main():
               old["recipients"] == ["viejo@test.local"] and old["hour"] == 18 and old["minute"] == 30
               and old["enabled"] is True and old["preset"] == "yesterday", old)
         check("weekdays por defecto = todos", old["weekdays"] == [0, 1, 2, 3, 4, 5, 6], old.get("weekdays"))
-        check("no duplica el documento", sdb.report_schedules.count_documents({}) == 1)
+        check("un documento por tipo (sin duplicar)", sdb.report_schedules.count_documents({}) == 2)
+        ex0 = sdb.report_schedules.find_one({"schedule_id": "executive_production"})
+        check("el ejecutivo viejo (rsch_) se adoptó como 'executive_production' con su configuración",
+              ex0 and ex0["recipients"] == ["luke@test.local"] and ex0["lang"] == "es"
+              and not sdb.report_schedules.find_one({"schedule_id": "rsch_viejo1"}), ex0)
+        check("su bitácora se movió con él", sdb.report_sends.find_one({"send_id": "rs_old"})["schedule_id"]
+              == "executive_production")
         r = await sup.put("/api/report-schedule", json={"hour": 19})
         check("PUT viejo edita la original", r.status_code == 200 and r.json()["hour"] == 19, r.text[:200])
 
-        print("\n== Programaciones ==")
+        print("\n== Catálogo de reportes ==")
         r = await op.get("/api/report-schedules")
         lst = r.json()
-        check("lista: 1 programación, 2 tipos", len(lst["schedules"]) == 1 and len(lst["types"]) == 2, lst.get("types"))
-        r = await op.post("/api/report-schedules", json={"report_type": "executive_production"})
-        check("operador no crea (403)", r.status_code == 403, r.status_code)
-        r = await sup.post("/api/report-schedules", json={"report_type": "nope"})
-        check("tipo inválido 400", r.status_code == 400, r.status_code)
-        r = await sup.post("/api/report-schedules", json={"report_type": "executive_production", "enabled": True,
-                                                          "recipients": ["Luke@Test.local", "luke@test.local"]})
-        ex = r.json()
-        sid = ex.get("schedule_id")
-        check("crea ejecutivo APAGADO aunque pidan enabled", r.status_code == 200 and ex["enabled"] is False, ex)
-        check("defaults del ejecutivo: 07:15, inglés", ex["hour"] == 7 and ex["minute"] == 15 and ex["lang"] == "en", ex)
-        check("destinatarios en minúsculas y sin repetidos", ex["recipients"] == ["luke@test.local"], ex["recipients"])
+        check("lista: los 2 reportes del catálogo, en orden",
+              [x["schedule_id"] for x in lst["schedules"]] == ["daily_production", "executive_production"], lst)
+        check("nombre fijo por tipo (no el guardado)",
+              lst["schedules"][1]["name"] == "Reporte ejecutivo de producción", lst["schedules"][1]["name"])
+        r = await sup.post("/api/report-schedules", json={"report_type": "executive_production"})
+        check("ya no se crean reportes (405)", r.status_code == 405, r.status_code)
+        r = await sup.delete("/api/report-schedules/executive_production")
+        check("ya no se borran reportes (405)", r.status_code == 405, r.status_code)
+        sid = "executive_production"
+        r = await op.put(f"/api/report-schedules/{sid}", json={"enabled": True})
+        check("operador no edita (403)", r.status_code == 403, r.status_code)
+        r = await sup.put(f"/api/report-schedules/{sid}", json={"recipients": ["Luke@Test.local", "luke@test.local",
+                                                                              "angel@test.local"]})
+        check("destinatarios por reporte, en minúsculas y sin repetidos",
+              r.json()["recipients"] == ["luke@test.local", "angel@test.local"], r.json().get("recipients"))
+        d0 = sdb.report_schedules.find_one({"schedule_id": "daily_production"})
+        check("los destinatarios del diario no se tocan", d0["recipients"] == ["viejo@test.local"], d0["recipients"])
         r = await sup.put(f"/api/report-schedules/{sid}", json={"weekdays": []})
         check("sin días = 400", r.status_code == 400, r.status_code)
         r = await sup.put(f"/api/report-schedules/{sid}", json={"weekdays": [4, 0, 9, 1], "lang": "es", "preset": "month"})
         e2 = r.json()
         check("días válidos ordenados, idioma es", e2["weekdays"] == [0, 1, 4] and e2["lang"] == "es", e2)
         check("campos de otro tipo se ignoran", "preset" not in sdb.report_schedules.find_one({"schedule_id": sid}))
-        r = await sup.delete("/api/report-schedules/daily_production")
-        check("la original no se borra", r.status_code == 400, r.status_code)
+        await sup.put(f"/api/report-schedules/{sid}", json={"recipients": ["luke@test.local"]})
 
         print("\n== Indicadores (vista previa del ejecutivo) ==")
         await sup.put(f"/api/report-schedules/{sid}", json={"lang": "en"})
@@ -228,6 +250,14 @@ async def main():
         check("próxima semana trae demanda en hits y unidades",
               nw.get("demand_hits") is not None and nw.get("demand_units") is not None, nw)
         check("excepciones presentes", isinstance(k.get("exceptions"), dict), k.get("exceptions"))
+        to = k.get("test_orders") or {}
+        it = {i["order_number"]: i for i in to.get("items", [])}
+        check("Test Orders: lista con la 7003 por imprimir y 100 pendientes",
+              it.get("7003", {}).get("stage") == "to_print" and it["7003"]["pending"] == 100
+              and to.get("open") == 1 and to.get("to_print") == 1, to)
+        check("Test Orders: impreso ayer/hoy/semana en prints y unidades",
+              all(set(k.get("test_printed", {}).get(x, {})) == {"hits", "units"} for x in ("yesterday", "today", "week")),
+              k.get("test_printed"))
         html = pv.get("html", "")
         check("HTML con 910 y 710", "910" in html and "710" in html)
         check("HTML con tabla por cliente", "Goodie Two Sleeves" in html and "Miscellaneous" in html)
@@ -284,10 +314,8 @@ async def main():
         rs._send_report_email = real_send
 
         r = await sup.get("/api/report-schedules")
-        check("lista trae últimos envíos", len(r.json()["sends"]) == 2, len(r.json()["sends"]))
-        r = await sup.delete(f"/api/report-schedules/{sid}")
-        check("borrar programación nueva", r.status_code == 200
-              and not sdb.report_schedules.find_one({"schedule_id": sid}), r.status_code)
+        mine = [x for x in r.json()["sends"] if x["schedule_id"] == sid]
+        check("lista trae los envíos del reporte (2 del tick + 1 migrado)", len(mine) == 3, len(mine))
 
 
 try:

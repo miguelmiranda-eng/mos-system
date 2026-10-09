@@ -29,6 +29,11 @@ T = {
         "week_units_note": "Weekly units count each garment once even when its locations printed on different days, so they are lower than the sum of the days.",
         "test": "Test Orders", "open": "Open orders", "to_print": "To print",
         "in_process": "Printed, in process", "pending_prints": "Pending",
+        "t_printed_y": "Printed yesterday", "t_printed_t": "Printed today (so far)", "t_printed_w": "Printed this week",
+        "t_left_w": "Still to print this week", "t_next_w": "Due next week", "t_total": "Total still to print",
+        "t_open_eq": "{o} open = {p} to print + {i} printed, in process",
+        "t_list": "Open Test Orders", "order": "Order", "status": "Status", "cancel": "Cancel",
+        "t_more": "+{n} more in MOS", "st_to_print": "To print", "st_in_process": "In process",
         "ship": "Due to ship (next 7 days, by cancel date)", "date": "Date",
         "machines": "Yesterday by machine", "machine": "Machine",
         "exc": "Exceptions (MOS vs floor)",
@@ -58,6 +63,11 @@ T = {
         "week_units_note": "Las unidades de la semana cuentan cada pieza una vez aunque sus ubicaciones se imprimieran en días distintos; por eso son menos que la suma de los días.",
         "test": "Test Orders", "open": "Órdenes abiertas", "to_print": "Por imprimir",
         "in_process": "Impresas, en proceso", "pending_prints": "Pendiente",
+        "t_printed_y": "Impreso ayer", "t_printed_t": "Impreso hoy (hasta ahora)", "t_printed_w": "Impreso esta semana",
+        "t_left_w": "Falta imprimir esta semana", "t_next_w": "Para la próxima semana", "t_total": "Total por imprimir",
+        "t_open_eq": "{o} abiertas = {p} por imprimir + {i} impresas en proceso",
+        "t_list": "Test Orders abiertas", "order": "Orden", "status": "Estatus", "cancel": "Cancel",
+        "t_more": "+{n} más en MOS", "st_to_print": "Por imprimir", "st_in_process": "En proceso",
         "ship": "Por enviar (próximos 7 días, por cancel date)", "date": "Fecha",
         "machines": "Ayer por máquina", "machine": "Máquina",
         "exc": "Excepciones (MOS vs piso)",
@@ -229,14 +239,33 @@ def render(k: dict, lang: str = "en", mos_url: str = "") -> str:
     # 4. Test Orders
     to = k.get("test_orders")
     if to:
+        tp = k.get("test_printed") or {}
         rows.append(_h2(tr["test"]))
-        rows.append(_table(["", ""], [
-            [tr["open"], (_n(to.get("open")), C["ink"], True)],
-            [tr["to_print"], _n(to.get("to_print"))],
-            [tr["in_process"], _n(to.get("printed_in_process"))],
-            [f'{tr["pending_prints"]} ({tr["prints"].lower()} / {tr["units"].lower()})',
-             f'{_n(to.get("pending"))} / {_n(to.get("pending_units"))}'],
-        ]))
+        rows.append(f'<tr><td style="padding:0 0 6px;font:700 14px Arial,sans-serif;color:{C["ink"]}">'
+                    + escape(tr["t_open_eq"].format(o=_n(to.get("open")), p=_n(to.get("to_print")),
+                                                    i=_n(to.get("printed_in_process")))) + '</td></tr>')
+        body = []
+        for key, label in (("yesterday", "t_printed_y"), ("today", "t_printed_t"), ("week", "t_printed_w")):
+            if tp.get(key) is not None:
+                body.append([tr[label], _n(tp[key]["hits"]), _n(tp[key]["units"])])
+        body += [
+            [tr["t_left_w"], (_n(to.get("pending_this_week")), C["ink"], True),
+             (_n(to.get("pending_this_week_units")), C["ink"], True)],
+            [tr["t_next_w"], _n(to.get("pending_next_week")), _n(to.get("pending_next_week_units"))],
+            [tr["t_total"], _n(to.get("pending")), _n(to.get("pending_units"))],
+        ]
+        rows.append(_table(["", tr["prints"], tr["units"]], body))
+        items = to.get("items") or []
+        if items:
+            shown = items[:30]
+            rows.append(_table([tr["order"], tr["status"], tr["pending_prints"], tr["cancel"]], [
+                [f'#{escape(i["order_number"])}'
+                 f'<br><span style="font-size:12px;color:{C["muted"]}">{escape(str(i.get("production_status") or i.get("board") or ""))}</span>',
+                 (tr["st_" + i["stage"]], C["warn"] if i["stage"] == "to_print" else C["muted"], False),
+                 _n(i["pending"]) if i["pending"] else "—",
+                 _d(i["cancel_date"], tr, False) if i.get("cancel_date") else "—"] for i in shown]))
+            if len(items) > len(shown):
+                rows.append(_note(tr["t_more"].format(n=len(items) - len(shown)), C["muted"]))
 
     # 5. Envíos
     sh = k.get("shipments")

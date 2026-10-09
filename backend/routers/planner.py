@@ -802,20 +802,27 @@ async def build_dashboard() -> dict:
     # Test Orders separadas (branding ~ TEST): pendiente por semana + producido.
     test_pend = test_this = test_next = test_prod = 0
     test_pend_u, seen_t = 0.0, set()
+    test_this_u, seen_tt, test_next_u, seen_tn = 0.0, set(), 0.0, set()
     test_oids = set()
+    test_job_pend = {}   # order_id -> [hits pendientes, piezas pendientes]
     for j in jobs:
         o = order_by_id.get(j["order_id"]) or {}
         if pe.is_test_branding(o.get("branding") or j.get("branding"), cfg):
             test_oids.add(j["order_id"])
             test_pend += j["remaining"]
             test_pend_u += units_once(j, seen_t)
+            acc = test_job_pend.setdefault(j["order_id"], [0, 0.0])
+            acc[0] += j["remaining"]
+            acc[1] = order_units.get(j["order_id"], 0)
             t = pe.parse_date(j.get("target_date"))
             if t and t < today:
                 t = today
             if t and w0 <= t < w0 + timedelta(days=7):
                 test_this += j["remaining"]
+                test_this_u += units_once(j, seen_tt)
             elif t and w0 + timedelta(days=7) <= t < w0 + timedelta(days=14):
                 test_next += j["remaining"]
+                test_next_u += units_once(j, seen_tn)
     for oid in test_oids:
         test_prod += produced.get(oid, 0)
 
@@ -824,21 +831,33 @@ async def build_dashboard() -> dict:
     # en proceso. "Abierta" = no en tablero terminal ni ya enviada/cancelada.
     patterns = [str(p) for p in cfg.get("test_branding_patterns", []) if str(p).strip()]
     test_open = test_toprint = test_printed = 0
+    test_items = []
     if patterns:
         brx = {"$regex": "|".join(patterns), "$options": "i"}
         demand_set = set(cfg["demand_boards"]) | {m["machine"] for m in ctx["machines"]}
         term = {"FINAL BILL", "COMPLETOS", "CANCELLED", "PAPELERA DE RECICLAJE"}
         ship_st = {"LISTO PARA ENVIO", "LISTO PARA INVENTARIO", "ENVIADO TIJANA-SAN DIEGO", "CANCELLED"}
         printed_st = {s.upper() for s in cfg["printed_statuses"]}
-        async for o in db.orders.find({"branding": brx}, {"_id": 0, "board": 1, "production_status": 1}):
+        async for o in db.orders.find({"branding": brx}, {"_id": 0, "order_id": 1, "order_number": 1, "board": 1,
+                                                          "production_status": 1, "cancel_date": 1, "quantity": 1}):
             st = (o.get("production_status") or "").upper()
             if o.get("board") in term or st in ship_st:
                 continue
             test_open += 1
-            if o.get("board") in demand_set and st not in printed_st:
+            to_print = o.get("board") in demand_set and st not in printed_st
+            if to_print:
                 test_toprint += 1
             else:
                 test_printed += 1
+            pend = test_job_pend.get(o.get("order_id"), [0, 0])
+            cd = pe.parse_date(o.get("cancel_date"))
+            test_items.append({"order_number": str(o.get("order_number") or ""), "board": o.get("board"),
+                               "production_status": o.get("production_status"), "quantity": o.get("quantity"),
+                               "stage": "to_print" if to_print else "in_process",
+                               "pending": pend[0], "pending_units": round(pend[1]),
+                               "cancel_date": cd.isoformat() if cd else None})
+        # Primero las que faltan por imprimir, por fecha de cancelación.
+        test_items.sort(key=lambda x: (x["stage"] != "to_print", x["cancel_date"] or "9999", x["order_number"]))
 
     # Envíos comprometidos por día (próximos 10 días, por cancel date).
     ship, seen_s = {}, set()
@@ -890,7 +909,8 @@ async def build_dashboard() -> dict:
                         "printed_in_process": test_printed, "pending": test_pend,
                         "pending_units": round(test_pend_u),
                         "pending_this_week": test_this, "pending_next_week": test_next,
-                        "produced": test_prod},
+                        "pending_this_week_units": round(test_this_u), "pending_next_week_units": round(test_next_u),
+                        "produced": test_prod, "items": test_items},
         "shipments_by_day": shipments,
         "exceptions": {"status_behind": status_behind,
                        "machines_no_capture": machines_no_capture,

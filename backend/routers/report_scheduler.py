@@ -1,38 +1,43 @@
-"""Reportes automáticos por correo (programaciones).
+"""Reportes automáticos por correo: un CATÁLOGO FIJO de tipos de reporte.
 
-Cada programación = un TIPO de reporte + horario (hora Tijuana y días de la
-semana) + destinatarios. Corre dentro del proceso de FastAPI con APScheduler:
-un solo job revisa cada 60s, y un claim atómico por (programación, día) en
-Mongo hace el envío idempotente aunque haya varios workers.
+Cada tipo de reporte tiene UNA configuración propia (activo, hora Tijuana,
+días de la semana, destinatarios, asunto y opciones del tipo). No se crean ni
+se borran reportes: se prenden, se apagan y se les asignan correos. Corre
+dentro del proceso de FastAPI con APScheduler: un solo job revisa cada 60s, y
+un claim atómico por (reporte, día) en Mongo hace el envío idempotente aunque
+haya varios workers.
 
-Tipos (REPORT_TYPES):
-  production_daily      el reporte diario de siempre: Excel/PDF de producción
-                        adjunto + quotes de Printavo pendientes de MOS.
-  executive_production  Reporte Ejecutivo de Producción: indicadores en el
-                        cuerpo del correo (prints y unidades de ayer/hoy, semana,
-                        próxima semana, Test Orders, envíos, excepciones). Sale
-                        de services/production_kpis, la misma cuenta del
-                        dashboard de Planeación.
+Tipos (REPORT_TYPES, en el orden en que se muestran):
+  production_daily      -> schedule_id "daily_production". El reporte diario de
+                           siempre: Excel/PDF de producción adjunto + quotes de
+                           Printavo pendientes de MOS.
+  executive_production  -> schedule_id "executive_production". Reporte Ejecutivo
+                           de Producción: indicadores en el cuerpo del correo
+                           (prints y unidades de ayer/hoy, semana, próxima semana,
+                           Test Orders, envíos, excepciones). Sale de
+                           services/production_kpis, la misma cuenta del
+                           dashboard de Planeación.
+Agregar un tipo = una entrada en REPORT_TYPES + su constructor en BUILDERS.
 
 Colecciones:
-  report_schedules  {schedule_id, report_type, name, enabled, hour, minute,
-                     weekdays[0=lun..6=dom], recipients, subject, last_sent_date, ...params}
-                    La programación original (config_id "daily_production") se
-                    migra sola a schedule_id "daily_production" y no se puede borrar.
+  report_schedules  {schedule_id, report_type, enabled, hour, minute,
+                     weekdays[0=lun..6=dom], recipients, subject, last_sent_date, ...opciones}
+                    Migración automática: la configuración única vieja
+                    ({config_id: daily_production}) y un ejecutivo creado con
+                    la versión anterior (schedule_id rsch_...) se adoptan como
+                    los registros fijos, sin perder destinatarios ni horario.
   report_sends      bitácora de cada envío (auto / manual / prueba), con error.
 
 Endpoints:
-  GET    /api/report-schedules                lista + tipos + últimos envíos
-  POST   /api/report-schedules                nueva programación (admin)
-  PUT    /api/report-schedules/{id}           edita (admin)
-  DELETE /api/report-schedules/{id}           borra (admin; la original no)
-  POST   /api/report-schedules/{id}/run-now   envía ya; body.to = prueba a un solo correo (admin)
-  GET    /api/report-schedules/{id}/preview   asunto + HTML sin enviar (admin)
+  GET  /api/report-schedules                los reportes del catálogo + últimos envíos
+  PUT  /api/report-schedules/{id}           edita (admin)
+  POST /api/report-schedules/{id}/run-now   envía ya; body.to = prueba a un solo correo (admin)
+  GET  /api/report-schedules/{id}/preview   asunto + HTML sin enviar (admin)
   GET/PUT /api/report-schedule, POST /api/report-schedule/run-now
-                                              compatibilidad: la programación original.
+                                            compatibilidad: el reporte diario.
 
-Toda programación nueva nace APAGADA. Si APScheduler no está instalado la app
-arranca igual y "enviar ahora" funciona; sólo se salta el envío automático.
+Si APScheduler no está instalado la app arranca igual y "enviar ahora"
+funciona; sólo se salta el envío automático.
 """
 from fastapi import APIRouter, HTTPException, Request
 from deps import db, require_auth, require_admin, log_activity, logger
@@ -65,7 +70,8 @@ COMMON_DEFAULTS = {
 
 REPORT_TYPES = {
     "production_daily": {
-        "name": "Reporte Diario de Producción",
+        "schedule_id": LEGACY_ID,
+        "name": "Reporte diario de producción",
         "defaults": {
             "preset": "today",     # rango del reporte
             "format": "excel",
@@ -75,7 +81,8 @@ REPORT_TYPES = {
         },
     },
     "executive_production": {
-        "name": "Production Report (executive)",
+        "schedule_id": "executive_production",
+        "name": "Reporte ejecutivo de producción",
         "defaults": {
             "hour": 7, "minute": 15,   # después del cierre del turno de noche: "ayer" ya está completo
             "lang": "en",
@@ -85,33 +92,49 @@ REPORT_TYPES = {
 }
 
 
+CATALOG_IDS = [t["schedule_id"] for t in REPORT_TYPES.values()]
+
+
 def _full(doc: dict) -> dict:
     rtype = doc.get("report_type") or "production_daily"
-    return {**COMMON_DEFAULTS, **REPORT_TYPES.get(rtype, REPORT_TYPES["production_daily"])["defaults"],
-            "report_type": rtype, "name": REPORT_TYPES.get(rtype, {}).get("name", rtype), **doc}
+    meta = REPORT_TYPES.get(rtype, REPORT_TYPES["production_daily"])
+    return {**COMMON_DEFAULTS, **meta["defaults"], **doc, "report_type": rtype, "name": meta["name"]}
 
 
 _migrated = False
 
 
-async def _ensure_legacy():
-    """La configuración única de antes ({config_id: daily_production}) pasa a ser
-    la programación "daily_production" de tipo production_daily, sin tocar sus
-    destinatarios, hora ni estado."""
+async def _ensure_catalog():
+    """Un registro por tipo de reporte, con su schedule_id fijo. Adopta lo que
+    ya exista (config única vieja; ejecutivo creado con la versión anterior)
+    sin tocar destinatarios, horario ni estado; si no hay nada, lo crea APAGADO."""
     global _migrated
     if _migrated:
         return
     await db.report_schedules.update_many(
         {"config_id": LEGACY_ID, "schedule_id": {"$exists": False}},
         {"$set": {"schedule_id": LEGACY_ID, "report_type": "production_daily"}})
-    if not await db.report_schedules.find_one({"schedule_id": LEGACY_ID}):
-        await db.report_schedules.insert_one(
-            {**_full({"report_type": "production_daily"}), "schedule_id": LEGACY_ID, "config_id": LEGACY_ID})
+    for rtype, meta in REPORT_TYPES.items():
+        sid = meta["schedule_id"]
+        if await db.report_schedules.find_one({"schedule_id": sid}):
+            continue
+        older = await db.report_schedules.find_one(
+            {"report_type": rtype, "schedule_id": {"$nin": CATALOG_IDS}}, sort=[("created_at", 1)])
+        if older:
+            await db.report_schedules.update_one({"_id": older["_id"]}, {"$set": {"schedule_id": sid}})
+            await db.report_sends.update_many({"schedule_id": older.get("schedule_id")},
+                                              {"$set": {"schedule_id": sid}})
+        else:
+            doc = {k: v for k, v in _full({"report_type": rtype}).items() if k != "name"}
+            doc["schedule_id"] = sid
+            if sid == LEGACY_ID:
+                doc["config_id"] = LEGACY_ID
+            await db.report_schedules.insert_one(doc)
     _migrated = True
 
 
 async def _get(schedule_id: str) -> dict:
-    await _ensure_legacy()
+    await _ensure_catalog()
     doc = await db.report_schedules.find_one({"schedule_id": schedule_id}, {"_id": 0})
     if not doc:
         raise HTTPException(404, "Programación no encontrada")
@@ -223,10 +246,10 @@ def _due(cfg: dict, now: datetime) -> bool:
 
 async def _tick():
     try:
-        await _ensure_legacy()
+        await _ensure_catalog()
         now = datetime.now(TIJUANA)
         today = now.strftime("%Y-%m-%d")
-        docs = [d async for d in db.report_schedules.find({"enabled": True, "schedule_id": {"$exists": True}},
+        docs = [d async for d in db.report_schedules.find({"enabled": True, "schedule_id": {"$in": CATALOG_IDS}},
                                                           {"_id": 0})]
         for doc in docs:
             cfg = _full(doc)
@@ -274,8 +297,6 @@ def start_report_scheduler():
 # ── Validación ──────────────────────────────────────────────────────────────
 def _sanitize(body: dict, rtype: str) -> dict:
     allowed = {}
-    if "name" in body:
-        allowed["name"] = str(body["name"]).strip()[:80] or REPORT_TYPES[rtype]["name"]
     if "enabled" in body:
         allowed["enabled"] = bool(body["enabled"])
     if "hour" in body:
@@ -338,46 +359,17 @@ async def _run_now(schedule_id: str, request: Request, user) -> dict:
 @router.get("/report-schedules")
 async def list_schedules(request: Request):
     await require_auth(request)
-    await _ensure_legacy()
-    docs = [_full(d) async for d in db.report_schedules.find({"schedule_id": {"$exists": True}}, {"_id": 0})]
-    docs.sort(key=lambda d: (d["schedule_id"] != LEGACY_ID, d.get("created_at") or ""))
-    sends = [s async for s in db.report_sends.find({}, {"_id": 0}).sort("at", -1).limit(20)]
-    return {"schedules": docs, "sends": sends,
-            "types": [{"type": k, "name": v["name"], "defaults": {**COMMON_DEFAULTS, **v["defaults"]}}
-                      for k, v in REPORT_TYPES.items()]}
-
-
-@router.post("/report-schedules")
-async def create_schedule(request: Request):
-    user = await require_admin(request)
-    body = await request.json()
-    rtype = body.get("report_type")
-    if rtype not in REPORT_TYPES:
-        raise HTTPException(400, "Tipo de reporte inválido")
-    sid = f"rsch_{uuid.uuid4().hex[:10]}"
-    doc = {**_full({"report_type": rtype}), **_sanitize(body, rtype), "schedule_id": sid,
-           "enabled": False, "last_sent_date": None, "created_at": datetime.now(timezone.utc).isoformat(),
-           "created_by": user.get("email")}
-    await db.report_schedules.insert_one(dict(doc))
-    await log_activity(user, "create_report_schedule", {"schedule_id": sid, "report_type": rtype})
-    return await _get(sid)
+    await _ensure_catalog()
+    by_id = {d["schedule_id"]: _full(d) async for d in
+             db.report_schedules.find({"schedule_id": {"$in": CATALOG_IDS}}, {"_id": 0})}
+    sends = [x async for x in db.report_sends.find({}, {"_id": 0}).sort("at", -1).limit(50)]
+    return {"schedules": [by_id[i] for i in CATALOG_IDS if i in by_id], "sends": sends}
 
 
 @router.put("/report-schedules/{schedule_id}")
 async def update_schedule(schedule_id: str, request: Request):
     user = await require_admin(request)
     return await _update(schedule_id, await request.json(), user)
-
-
-@router.delete("/report-schedules/{schedule_id}")
-async def delete_schedule(schedule_id: str, request: Request):
-    user = await require_admin(request)
-    if schedule_id == LEGACY_ID:
-        raise HTTPException(400, "La programación original no se borra; desactívala")
-    cfg = await _get(schedule_id)
-    await db.report_schedules.delete_one({"schedule_id": schedule_id})
-    await log_activity(user, "delete_report_schedule", {"schedule_id": schedule_id, "name": cfg.get("name")})
-    return {"deleted": schedule_id}
 
 
 @router.post("/report-schedules/{schedule_id}/run-now")
