@@ -195,6 +195,13 @@ async def main():
         check("paint-followup 200 y forma", r.status_code == 200
               and pf.get("status") == "EN PROCESO DE EMPAQUE" and isinstance(pf.get("orders"), list), r.status_code)
 
+        print("\n== Dashboard de producción ==")
+        r = await op.get("/api/planner/dashboard")
+        dash = r.json()
+        check("dashboard 200 y forma", r.status_code == 200
+              and all(k in dash for k in ("this_week", "next_week", "test_orders", "exceptions", "shipments_by_day"))
+              and "status_behind" in dash["exceptions"], r.status_code)
+
         print("\n== Calendario y proyección ==")
         r = await sup.get("/api/planner/projection")
         check("proyección 200", r.status_code == 200, r.text[:200])

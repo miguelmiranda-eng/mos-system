@@ -704,6 +704,145 @@ async def paint_followup(request: Request):
     return {"status": PAINT_DONE_STATUS, "count": len(orders), "orders": orders}
 
 
+# ── Dashboard de producción (una sola fuente de verdad, solo lectura) ───────
+@router.get("/dashboard")
+async def dashboard(request: Request):
+    """Resumen de producción para piso/dirección: producido esta semana,
+    pendiente, capacidad para adelantar (regular + extra), demanda de la próxima
+    semana, brecha, envíos por día, Test Orders separadas y excepciones de la
+    auditoría. Solo lectura; no mueve nada."""
+    await require_auth(request)
+    ctx = await _context()
+    cfg, cal, jobs, now = ctx["cfg"], ctx["cal"], ctx["jobs"], ctx["now"]
+    eff = ctx["eff"]["applied"]
+    today = now.date()
+    w0 = pe.week_start(today)
+    cap_shift = cfg["hits_per_shift"] * eff
+
+    def week_cap(ws):   # capacidad futura de la semana, separando regular vs extra
+        reg = ot = 0.0
+        for k in range(7):
+            d = ws + timedelta(days=k)
+            if d < today:
+                continue
+            for s in cfg["shifts"]:
+                full_h = float(s.get("hours") or 12)
+                c = cal.crews(d, s["key"])
+                _, hrs = cal.window(d, s["key"], "00:00", full_h)
+                cap = c * cap_shift * (hrs / full_h)
+                if d.weekday() in cal.base_weekdays:
+                    reg += cap
+                else:
+                    ot += cap
+        return round(reg), round(ot)
+
+    # Demanda por semana (misma cuenta que la proyección), sólo this/next.
+    res = pe.projection(jobs, cfg, cal, today, eff, len(ctx["active"]), None)
+    weeks = res["weeks"]
+    this_reg, this_ot = week_cap(w0)
+    next_reg, next_ot = week_cap(w0 + timedelta(weeks=1))
+
+    # Producido real esta semana (production_logs).
+    def utc(d):
+        return datetime.combine(d, datetime.min.time(), tzinfo=TZ).astimezone(timezone.utc).isoformat()
+    prod_week = 0
+    async for r in db.production_logs.aggregate([
+            {"$match": {"created_at": {"$gte": utc(w0), "$lt": utc(w0 + timedelta(days=7))}}},
+            {"$group": {"_id": None, "n": {"$sum": "$quantity_produced"}}}]):
+        prod_week = r["n"]
+
+    # Producido por orden + última captura por máquina/orden (para test y excepciones).
+    oids = [o["order_id"] for o in ctx["orders"] if o.get("order_id")]
+    produced, last_order = {}, {}
+    for i in range(0, len(oids), 400):
+        async for r in db.production_logs.aggregate([
+                {"$match": {"order_id": {"$in": oids[i:i + 400]}}},
+                {"$group": {"_id": "$order_id", "n": {"$sum": "$quantity_produced"},
+                            "last": {"$max": "$created_at"}}}]):
+            produced[r["_id"]] = r["n"]
+            last_order[r["_id"]] = r["last"]
+    last_machine = {}
+    async for r in db.production_logs.aggregate([
+            {"$group": {"_id": "$machine", "last": {"$max": "$created_at"}}}]):
+        last_machine[r["_id"]] = r["last"]
+
+    order_by_id = {o["order_id"]: o for o in ctx["orders"]}
+
+    def req(o):
+        pos = len([x for x in (o.get("print_positions") or []) if x]) or 1
+        return int(o.get("quantity") or 0) * pos
+
+    # Test Orders separadas (branding ~ TEST): pendiente por semana + producido.
+    test_pend = test_this = test_next = test_prod = 0
+    test_oids = set()
+    for j in jobs:
+        o = order_by_id.get(j["order_id"]) or {}
+        if pe.is_test_branding(o.get("branding") or j.get("branding"), cfg):
+            test_oids.add(j["order_id"])
+            test_pend += j["remaining"]
+            t = pe.parse_date(j.get("target_date"))
+            if t and t < today:
+                t = today
+            if t and w0 <= t < w0 + timedelta(days=7):
+                test_this += j["remaining"]
+            elif t and w0 + timedelta(days=7) <= t < w0 + timedelta(days=14):
+                test_next += j["remaining"]
+    for oid in test_oids:
+        test_prod += produced.get(oid, 0)
+
+    # Envíos comprometidos por día (próximos 10 días, por cancel date).
+    ship = {}
+    for j in jobs:
+        cd = pe.parse_date(j.get("cancel_date"))
+        if cd and today <= cd < today + timedelta(days=10):
+            ship[cd.isoformat()] = ship.get(cd.isoformat(), 0) + j["remaining"]
+    shipments = [{"date": d, "impressions": n} for d, n in sorted(ship.items())]
+
+    # Excepciones de la auditoría.
+    PRINTED = {s.upper() for s in cfg["printed_statuses"]}
+    status_behind = []
+    for oid, o in order_by_id.items():
+        r = req(o); p = produced.get(oid, 0)
+        st = (o.get("production_status") or "").upper()
+        if r and p / r >= 0.90 and st not in PRINTED and st != "CANCELLED":
+            status_behind.append({"order_number": o.get("order_number"), "board": o.get("board"),
+                                  "production_status": o.get("production_status"),
+                                  "printed_pct": round(p / r * 100), "impressions": p})
+    status_behind.sort(key=lambda x: -x["impressions"])
+
+    cutoff = (now - timedelta(hours=24)).astimezone(timezone.utc).isoformat()
+    machines_no_capture = [m["machine"] for m in ctx["active"]
+                           if str(last_machine.get(m["machine"], "")) < cutoff]
+    cut3 = (now - timedelta(days=3)).astimezone(timezone.utc).isoformat()
+    machine_names = {m["machine"] for m in ctx["machines"]}
+    no_movement = []
+    for oid, o in order_by_id.items():
+        if o.get("board") in machine_names and str(last_order.get(oid, "")) < cut3:
+            no_movement.append({"order_number": o.get("order_number"), "board": o.get("board"),
+                                "production_status": o.get("production_status")})
+
+    return {
+        "today": today.isoformat(), "week_start": w0.isoformat(),
+        "unit_note": "1 impresión = 1 print; frente+espalda = 2",
+        "this_week": {"produced": prod_week, "pending": weeks[0]["demand"],
+                      "capacity_regular": this_reg, "capacity_overtime": this_ot,
+                      "capacity": this_reg + this_ot, "demand": weeks[0]["demand"],
+                      "delta": (this_reg + this_ot) - weeks[0]["demand"],
+                      "pull_ahead": max(0, (this_reg + this_ot) - weeks[0]["demand"])},
+        "next_week": {"capacity_regular": next_reg, "capacity_overtime": next_ot,
+                      "capacity": next_reg + next_ot, "demand": weeks[1]["demand"],
+                      "delta": (next_reg + next_ot) - weeks[1]["demand"]},
+        "test_orders": {"open": len(test_oids), "pending": test_pend,
+                        "pending_this_week": test_this, "pending_next_week": test_next,
+                        "produced": test_prod},
+        "shipments_by_day": shipments,
+        "exceptions": {"status_behind": status_behind,
+                       "machines_no_capture": machines_no_capture,
+                       "no_movement": no_movement[:50], "no_movement_count": len(no_movement)},
+        "overtime_loaded": bool(ctx["entries"]),
+    }
+
+
 # ── Ajustes manuales ───────────────────────────────────────────────────────
 @router.get("/overrides")
 async def list_overrides(request: Request):

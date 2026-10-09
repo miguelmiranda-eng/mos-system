@@ -59,6 +59,9 @@ DEFAULT_CONFIG = {
     # sin "PRINT" es trabajo extra, SALVO estas estándar que trae casi todo.
     "extra_work_ignore": ["FINISHING", "NECK LABEL", "PICK & PACK",
                           "PICK AND PACK", "PICK&PACK", "(PENDING CAD)"],
+    # Test Orders (programa SPENCERS TEST): se identifican por el branding.
+    # Se separan en el dashboard de producción. Patrón (contiene), editable.
+    "test_branding_patterns": ["TEST"],
     # production_status que significan "ya se imprimió" (sale de la demanda).
     "printed_statuses": [
         "NECESITA EMPACAR", "EN PROCESO DE EMPAQUE", "NECESITA QC", "CORRECIÓN DE QC",
@@ -398,6 +401,12 @@ def stale_printed(orders: List[dict], produced: Dict[str, Dict[str, int]],
                     "complete_pct": round(prog["complete_pct"], 1),
                     "last_print": last.isoformat(), "days": round(days, 1)})
     return sorted(out, key=lambda r: -r["days"])
+
+
+def is_test_branding(branding: str, cfg: dict) -> bool:
+    """Test Orders (programa SPENCERS TEST) por su branding. Patrón configurable."""
+    up = str(branding or "").upper()
+    return any(str(p).upper() in up for p in cfg.get("test_branding_patterns", []) if str(p).strip())
 
 
 def extra_work_of(order: dict, cfg: dict) -> List[str]:

@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import {
   ArrowLeft, CalendarClock, Power, RefreshCw, Loader2, Cpu, TrendingUp,
   Settings2, CalendarDays, AlertTriangle, Trash2, Plus, Save, FlaskConical, Eye, Search,
-  Pin, ArrowUpDown, LogIn, PauseCircle, Undo2, X, SlidersHorizontal, BellRing, CheckCircle2, Download, PackageCheck,
+  Pin, ArrowUpDown, LogIn, PauseCircle, Undo2, X, SlidersHorizontal, BellRing, CheckCircle2, Download, PackageCheck, Gauge,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { saveAs } from "file-saver";
@@ -2196,6 +2196,106 @@ const DataTab = ({ tr }) => {
   );
 };
 
+/* ── Dashboard de producción ───────────────────────────────────────────────
+   Una sola fuente de verdad: producido, pendiente, capacidad (regular + extra),
+   demanda, brecha, envíos por día, Test Orders separadas y excepciones. */
+const DashboardTab = ({ tr }) => {
+  const [d, setD] = useState(null);
+  useEffect(() => { planner("/dashboard").then(setD).catch((e) => toast.error(e.message)); }, []);
+  if (!d) return <div className="py-20 flex justify-center"><Loader2 className="w-7 h-7 animate-spin text-blue-600" /></div>;
+  const tw = d.this_week, nw = d.next_week, to = d.test_orders, ex = d.exceptions;
+  const gcol = (n) => (n < 0 ? "text-red-600" : "text-emerald-600");
+  return (
+    <div className="space-y-5">
+      {!d.overtime_loaded && (
+        <div className="flex items-start gap-3 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm text-amber-800">
+          <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+          <span>{tr("plan_dash_no_ot")}</span>
+        </div>
+      )}
+
+      <Card className="p-4">
+        <SectionTitle hint={tr("plan_dash_unit")}>{tr("plan_dash_this_week")} · {d.week_start}</SectionTitle>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <Stat label={tr("plan_dash_produced")} value={fmt(tw.produced)} color="text-violet-700" />
+          <Stat label={tr("plan_dash_pending")} value={fmt(tw.pending)} color="text-amber-600" />
+          <Stat label={tr("plan_dash_cap_remaining")} value={fmt(tw.capacity)} />
+          <Stat label={tr("plan_dash_pull_ahead")} value={fmt(tw.pull_ahead)} color="text-emerald-600" />
+        </div>
+      </Card>
+
+      <Card className="p-4">
+        <SectionTitle>{tr("plan_dash_next_week")}</SectionTitle>
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+          <Stat label={tr("plan_dash_cap_regular")} value={fmt(nw.capacity_regular)} />
+          <Stat label={tr("plan_dash_cap_ot")} value={fmt(nw.capacity_overtime)} color={nw.capacity_overtime ? "text-slate-900" : "text-slate-300"} />
+          <Stat label={tr("plan_dash_cap_total")} value={fmt(nw.capacity)} color="text-blue-600" />
+          <Stat label={tr("plan_dash_demand")} value={fmt(nw.demand)} />
+          <Stat label={tr("plan_dash_gap")} value={fmt(nw.delta)} color={gcol(nw.delta)} />
+        </div>
+      </Card>
+
+      <Card className="p-4">
+        <SectionTitle hint={tr("plan_dash_test_hint")}>{tr("plan_dash_test")} · {tr("plan_dash_test_open", { n: to.open })}</SectionTitle>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <Stat label={tr("plan_dash_produced")} value={fmt(to.produced)} color="text-violet-700" />
+          <Stat label={tr("plan_dash_pending")} value={fmt(to.pending)} color="text-amber-600" />
+          <Stat label={tr("plan_dash_test_this")} value={fmt(to.pending_this_week)} />
+          <Stat label={tr("plan_dash_test_next")} value={fmt(to.pending_next_week)} />
+        </div>
+      </Card>
+
+      <Card className="p-4">
+        <SectionTitle hint={tr("plan_dash_ship_hint")}>{tr("plan_dash_shipments")}</SectionTitle>
+        {(d.shipments_by_day || []).length === 0 ? <Empty>{tr("plan_dash_no_ship")}</Empty> : (
+          <div className="flex flex-wrap gap-2">
+            {d.shipments_by_day.map((s) => (
+              <div key={s.date} className="px-3 py-2 rounded-lg border border-slate-200 bg-white text-sm">
+                <div className="text-[10px] font-bold uppercase text-slate-400">{s.date}</div>
+                <div className="font-black tabular-nums">{fmt(s.impressions)}</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
+
+      <Card className="p-4">
+        <SectionTitle hint={tr("plan_dash_exc_hint")}>{tr("plan_dash_exceptions")}</SectionTitle>
+        <div className="flex flex-wrap gap-2 mb-3 text-xs">
+          <span className="px-2.5 py-1 rounded-lg bg-red-50 text-red-700 font-bold">{tr("plan_dash_status_behind", { n: (ex.status_behind || []).length })}</span>
+          <span className="px-2.5 py-1 rounded-lg bg-amber-50 text-amber-700 font-bold">{tr("plan_dash_no_capture", { n: (ex.machines_no_capture || []).length })}</span>
+          <span className="px-2.5 py-1 rounded-lg bg-slate-100 text-slate-600 font-bold">{tr("plan_dash_no_movement", { n: ex.no_movement_count || 0 })}</span>
+        </div>
+        {(ex.machines_no_capture || []).length > 0 && (
+          <div className="text-xs text-slate-500 mb-3">{tr("plan_dash_no_capture_list")}: {ex.machines_no_capture.join(", ").replace(/MAQUINA/g, "M")}</div>
+        )}
+        {(ex.status_behind || []).length > 0 && (
+          <div className="overflow-auto max-h-[50vh]">
+            <table className="min-w-full text-sm">
+              <thead className="planner-freeze"><tr className="text-left text-[11px] uppercase tracking-wider text-slate-400">
+                <th className="py-2 pr-3">{tr("plan_order")}</th><th className="pr-3">{tr("plan_status")}</th>
+                <th className="pr-3">{tr("plan_board")}</th><th className="pr-3 text-right">{tr("plan_dash_pct")}</th>
+                <th className="pr-3 text-right">{tr("plan_dash_impressions")}</th>
+              </tr></thead>
+              <tbody className="divide-y divide-slate-100">
+                {ex.status_behind.map((o) => (
+                  <tr key={o.order_number}>
+                    <td className="py-1.5 pr-3 font-black">{o.order_number}</td>
+                    <td className="pr-3 text-xs">{o.production_status}</td>
+                    <td className="pr-3 text-xs">{o.board}</td>
+                    <td className="pr-3 text-right tabular-nums">{o.printed_pct}%</td>
+                    <td className="pr-3 text-right tabular-nums">{fmt(o.impressions)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+    </div>
+  );
+};
+
 /* ── Terminadas de pintar (seguimiento) ────────────────────────────────────
    Órdenes que ya se imprimieron (production_status EN PROCESO DE EMPAQUE) y
    siguen en proceso; se ven con su board/fecha para darles seguimiento. */
@@ -2393,6 +2493,7 @@ const TABS = [
   ["machines", "plan_tab_machines", Cpu],
   ["calendar", "plan_tab_calendar", CalendarDays],
   ["rules", "plan_tab_rules", Settings2],
+  ["dashboard", "plan_tab_dashboard", Gauge],
   ["data", "plan_tab_data", AlertTriangle],
   ["alerts", "plan_tab_alerts", BellRing],
   ["paint", "plan_tab_paint", PackageCheck],
@@ -2638,6 +2739,7 @@ const PlannerModule = () => {
             {tab === "machines" && <MachinesTab cfgData={cfgData} canEdit={canEdit} onSaved={afterConfigChange} tr={tr} />}
             {tab === "calendar" && <CalendarTab cfgData={cfgData} canEdit={canEdit} onSaved={afterConfigChange} tr={tr} />}
             {tab === "rules" && <RulesTab cfgData={cfgData} canEdit={canEdit} onSaved={afterConfigChange} tr={tr} />}
+            {tab === "dashboard" && <DashboardTab tr={tr} />}
             {tab === "data" && <DataTab tr={tr} />}
             {tab === "alerts" && <AlertsTab data={alertData} tr={tr} />}
             {tab === "paint" && <PaintFollowupTab tr={tr} />}
