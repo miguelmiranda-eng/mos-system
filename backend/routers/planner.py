@@ -55,6 +55,7 @@ from fastapi import APIRouter, HTTPException, Request
 from deps import (db, require_auth, require_admin, log_activity, get_machines, machine_number,
                   DESIGN_POSITIONS)
 from services import planner_engine as pe
+from services import production_kpis as kpis
 
 router = APIRouter(prefix="/api/planner")
 TZ = zoneinfo.ZoneInfo("America/Tijuana")
@@ -86,10 +87,9 @@ async def _calendar_entries() -> list:
 
 
 def _shift_date(dt_local: datetime, shift: str) -> date:
-    # La noche que cruza la medianoche pertenece al día en que empezó.
-    if shift == "TURNO 2" and dt_local.hour < 7:
-        return dt_local.date() - timedelta(days=1)
-    return dt_local.date()
+    # La noche que cruza la medianoche pertenece al día en que empezó
+    # (regla única en services/production_kpis.op_date).
+    return kpis.op_date(dt_local, shift)
 
 
 SHIFT_FROM_LOG = {"TURNO 1": "DIA", "TURNO 2": "NOCHE"}
@@ -712,6 +712,12 @@ async def dashboard(request: Request):
     semana, brecha, envíos por día, Test Orders separadas y excepciones de la
     auditoría. Solo lectura; no mueve nada."""
     await require_auth(request)
+    return await build_dashboard()
+
+
+async def build_dashboard() -> dict:
+    """Cuenta del dashboard sin Request: la usa también el reporte por correo
+    (services/production_kpis). Hits y piezas (units) siempre por separado."""
     ctx = await _context()
     cfg, cal, jobs, now = ctx["cfg"], ctx["cal"], ctx["jobs"], ctx["now"]
     eff = ctx["eff"]["applied"]
@@ -742,14 +748,9 @@ async def dashboard(request: Request):
     this_reg, this_ot = week_cap(w0)
     next_reg, next_ot = week_cap(w0 + timedelta(weeks=1))
 
-    # Producido real esta semana (production_logs).
-    def utc(d):
-        return datetime.combine(d, datetime.min.time(), tzinfo=TZ).astimezone(timezone.utc).isoformat()
-    prod_week = 0
-    async for r in db.production_logs.aggregate([
-            {"$match": {"created_at": {"$gte": utc(w0), "$lt": utc(w0 + timedelta(days=7))}}},
-            {"$group": {"_id": None, "n": {"$sum": "$quantity_produced"}}}]):
-        prod_week = r["n"]
+    # Producido real esta semana (production_logs), por DÍA OPERATIVO: la noche
+    # del domingo que se captura el lunes de madrugada es de la semana pasada.
+    prod_week = kpis.sum_days(await kpis.produced_window(w0, today), w0, today)
 
     # Producido por orden + última captura por máquina/orden (para test y excepciones).
     oids = [o["order_id"] for o in ctx["orders"] if o.get("order_id")]
@@ -772,14 +773,42 @@ async def dashboard(request: Request):
         pos = len([x for x in (o.get("print_positions") or []) if x]) or 1
         return int(o.get("quantity") or 0) * pos
 
+    # Piezas pendientes por orden = las de la ubicación más atrasada (misma
+    # regla que kpis.measure: la ubicación más grande manda). Un job es una
+    # ubicación; sus piezas = hits restantes ÷ hits por pieza de esa ubicación.
+    order_units = {}
+    for j in jobs:
+        mult = (j["hits"] / j["quantity"]) if j.get("quantity") else 1
+        order_units[j["order_id"]] = max(order_units.get(j["order_id"], 0), j["remaining"] / (mult or 1))
+
+    def units_once(j, seen):   # cada orden suma sus piezas una sola vez
+        if j["order_id"] in seen:
+            return 0
+        seen.add(j["order_id"])
+        return order_units.get(j["order_id"], 0)
+
+    # Piezas por semana: mismo reparto que pe.projection (atrasado pesa hoy,
+    # sin fecha o más allá del horizonte no entra).
+    week_units, seen_w = {0: 0.0, 1: 0.0}, set()
+    for j in jobs:
+        t = pe.parse_date(j.get("target_date"))
+        if t is None:
+            continue
+        t = max(t, today)
+        k = (pe.week_start(t) - w0).days // 7
+        if k in week_units:
+            week_units[k] += units_once(j, seen_w)
+
     # Test Orders separadas (branding ~ TEST): pendiente por semana + producido.
     test_pend = test_this = test_next = test_prod = 0
+    test_pend_u, seen_t = 0.0, set()
     test_oids = set()
     for j in jobs:
         o = order_by_id.get(j["order_id"]) or {}
         if pe.is_test_branding(o.get("branding") or j.get("branding"), cfg):
             test_oids.add(j["order_id"])
             test_pend += j["remaining"]
+            test_pend_u += units_once(j, seen_t)
             t = pe.parse_date(j.get("target_date"))
             if t and t < today:
                 t = today
@@ -812,12 +841,14 @@ async def dashboard(request: Request):
                 test_printed += 1
 
     # Envíos comprometidos por día (próximos 10 días, por cancel date).
-    ship = {}
+    ship, seen_s = {}, set()
     for j in jobs:
         cd = pe.parse_date(j.get("cancel_date"))
         if cd and today <= cd < today + timedelta(days=10):
-            ship[cd.isoformat()] = ship.get(cd.isoformat(), 0) + j["remaining"]
-    shipments = [{"date": d, "impressions": n} for d, n in sorted(ship.items())]
+            acc = ship.setdefault(cd.isoformat(), [0, 0.0])
+            acc[0] += j["remaining"]
+            acc[1] += units_once(j, seen_s)
+    shipments = [{"date": d, "impressions": n, "units": round(u)} for d, (n, u) in sorted(ship.items())]
 
     # Excepciones de la auditoría.
     PRINTED = {s.upper() for s in cfg["printed_statuses"]}
@@ -844,17 +875,20 @@ async def dashboard(request: Request):
 
     return {
         "today": today.isoformat(), "week_start": w0.isoformat(),
-        "unit_note": "1 impresión = 1 print; frente+espalda = 2",
-        "this_week": {"produced": prod_week, "pending": weeks[0]["demand"],
+        "unit_note": "1 impresión = 1 print; frente+espalda = 2. units = piezas (hits ÷ hits por pieza)",
+        "this_week": {"produced": prod_week["hits"], "produced_units": prod_week["units"],
+                      "pending": weeks[0]["demand"], "pending_units": round(week_units[0]),
                       "capacity_regular": this_reg, "capacity_overtime": this_ot,
                       "capacity": this_reg + this_ot, "demand": weeks[0]["demand"],
                       "delta": (this_reg + this_ot) - weeks[0]["demand"],
                       "pull_ahead": max(0, (this_reg + this_ot) - weeks[0]["demand"])},
         "next_week": {"capacity_regular": next_reg, "capacity_overtime": next_ot,
                       "capacity": next_reg + next_ot, "demand": weeks[1]["demand"],
+                      "demand_units": round(week_units[1]),
                       "delta": (next_reg + next_ot) - weeks[1]["demand"]},
         "test_orders": {"open": test_open, "to_print": test_toprint,
                         "printed_in_process": test_printed, "pending": test_pend,
+                        "pending_units": round(test_pend_u),
                         "pending_this_week": test_this, "pending_next_week": test_next,
                         "produced": test_prod},
         "shipments_by_day": shipments,
@@ -872,6 +906,11 @@ async def audit(request: Request):
     sin avanzar status, (2) órdenes sin movimiento, (3) máquinas sin captura,
     (4) sobreimpresión. Solo lectura; umbrales en Reglas."""
     await require_auth(request)
+    return await build_audit()
+
+
+async def build_audit() -> dict:
+    """Cuenta de la auditoría sin Request (la usa también el reporte por correo)."""
     ctx = await _context()
     cfg, now = ctx["cfg"], ctx["now"]
     pct = float(cfg.get("audit_printed_pct", 90)) / 100.0

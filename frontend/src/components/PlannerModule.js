@@ -1,5 +1,5 @@
 import { Fragment, useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   ArrowLeft, CalendarClock, Power, RefreshCw, Loader2, Cpu, TrendingUp,
   Settings2, CalendarDays, AlertTriangle, Trash2, Plus, Save, FlaskConical, Eye, Search,
@@ -2617,7 +2617,12 @@ const PlannerModule = () => {
   const { t: tr } = useLang();
   const canEdit = ["admin", "supersu"].includes(user?.role) || (user?.admin_level || 0) >= 3;
 
-  const [tab, setTab] = useState("schedule");
+  // ?tab=dashboard abre directo una pestaña (link del reporte por correo).
+  const [searchParams] = useSearchParams();
+  const [tab, setTab] = useState(() => {
+    const q = searchParams.get("tab");
+    return TABS.some(([key]) => key === q) ? q : "schedule";
+  });
   const [cfgData, setCfgData] = useState(null);
   const [run, setRun] = useState(null);
   const [running, setRunning] = useState(false);
