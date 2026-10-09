@@ -5878,6 +5878,8 @@ const en = {
   plan_r_audit_over: "Audit: % to flag overprint",
   plan_dash_no_ot: "Overtime is not loaded in the calendar, so the capacity shown is regular shifts only. Load it in Calendar so the numbers include overtime.",
   plan_dash_unit: "1 impression = 1 print; front + back = 2.",
+  plan_dash_add_capacity: "Add overtime / crews",
+  plan_dash_add_capacity_hint: "Add an overtime shift or more crews (teams) on a day — more machines running. Raises capacity right away.",
   plan_dash_this_week: "This week",
   plan_dash_next_week: "Next week",
   plan_dash_produced: "Produced",

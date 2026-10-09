@@ -5692,6 +5692,8 @@ const es = {
   plan_r_audit_over: "Auditoría: % para marcar sobreimpresión",
   plan_dash_no_ot: "El tiempo extra no está cargado en el calendario, así que la capacidad mostrada es solo turno regular. Cárgalo en Calendario para que los números incluyan el tiempo extra.",
   plan_dash_unit: "1 impresión = 1 print; frente + espalda = 2.",
+  plan_dash_add_capacity: "Agregar tiempo extra / cuadrillas",
+  plan_dash_add_capacity_hint: "Agrega un turno de tiempo extra o más cuadrillas (teams) en un día — más máquinas trabajando. Sube la capacidad al instante.",
   plan_dash_this_week: "Esta semana",
   plan_dash_next_week: "Próxima semana",
   plan_dash_produced: "Producido",

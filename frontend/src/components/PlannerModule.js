@@ -2203,12 +2203,26 @@ const DataTab = ({ tr }) => {
 /* ── Dashboard de producción ───────────────────────────────────────────────
    Una sola fuente de verdad: producido, pendiente, capacidad (regular + extra),
    demanda, brecha, envíos por día, Test Orders separadas y excepciones. */
-const DashboardTab = ({ tr }) => {
+const DashboardTab = ({ tr, cfgData, canEdit, onSaved }) => {
   const [d, setD] = useState(null);
-  useEffect(() => { planner("/dashboard").then(setD).catch((e) => toast.error(e.message)); }, []);
+  const [otOpen, setOtOpen] = useState(false);
+  const [savingOt, setSavingOt] = useState(false);
+  const load = useCallback(() => { planner("/dashboard").then(setD).catch((e) => toast.error(e.message)); }, []);
+  useEffect(() => { load(); }, [load]);
+  const saveOt = async (entry) => {
+    setSavingOt(true);
+    try {
+      await planner("/calendar", { method: "POST", body: JSON.stringify(entry) });
+      toast.success(tr("plan_ot_saved"));
+      setOtOpen(false);
+      load();
+      if (onSaved) onSaved();
+    } catch (e) { toast.error(e.message); } finally { setSavingOt(false); }
+  };
   if (!d) return <div className="py-20 flex justify-center"><Loader2 className="w-7 h-7 animate-spin text-blue-600" /></div>;
   const tw = d.this_week, nw = d.next_week, to = d.test_orders, ex = d.exceptions;
   const gcol = (n) => (n < 0 ? "text-red-600" : "text-emerald-600");
+  const nextWeekStart = addDays(d.week_start, 7);
   return (
     <div className="space-y-5">
       {!d.overtime_loaded && (
@@ -2229,7 +2243,15 @@ const DashboardTab = ({ tr }) => {
       </Card>
 
       <Card className="p-4">
-        <SectionTitle>{tr("plan_dash_next_week")}</SectionTitle>
+        <div className="flex items-center gap-3 mb-1">
+          <SectionTitle>{tr("plan_dash_next_week")}</SectionTitle>
+          {canEdit && (
+            <button onClick={() => setOtOpen(true)}
+              className="ml-auto h-8 px-3 rounded-lg bg-blue-600 text-white text-xs font-bold inline-flex items-center gap-1.5 hover:bg-blue-700">
+              <Plus className="w-4 h-4" />{tr("plan_dash_add_capacity")}
+            </button>
+          )}
+        </div>
         <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
           <Stat label={tr("plan_dash_cap_regular")} value={fmt(nw.capacity_regular)} />
           <Stat label={tr("plan_dash_cap_ot")} value={fmt(nw.capacity_overtime)} color={nw.capacity_overtime ? "text-slate-900" : "text-slate-300"} />
@@ -2237,6 +2259,7 @@ const DashboardTab = ({ tr }) => {
           <Stat label={tr("plan_dash_demand")} value={fmt(nw.demand)} />
           <Stat label={tr("plan_dash_gap")} value={fmt(nw.delta)} color={gcol(nw.delta)} />
         </div>
+        <p className="text-[11px] text-slate-400 mt-2">{tr("plan_dash_add_capacity_hint")}</p>
       </Card>
 
       <Card className="p-4">
@@ -2301,6 +2324,12 @@ const DashboardTab = ({ tr }) => {
           </div>
         )}
       </Card>
+
+      {otOpen && (
+        <OvertimeModal initial={{ date_from: nextWeekStart }} mode="new" weekStart={nextWeekStart}
+          shifts={cfgData?.config?.shifts} hitsPerShift={cfgData?.config?.hits_per_shift}
+          onSave={saveOt} onClose={() => setOtOpen(false)} busy={savingOt} tr={tr} />
+      )}
     </div>
   );
 };
@@ -2856,7 +2885,7 @@ const PlannerModule = () => {
             {tab === "machines" && <MachinesTab cfgData={cfgData} canEdit={canEdit} onSaved={afterConfigChange} tr={tr} />}
             {tab === "calendar" && <CalendarTab cfgData={cfgData} canEdit={canEdit} onSaved={afterConfigChange} tr={tr} />}
             {tab === "rules" && <RulesTab cfgData={cfgData} canEdit={canEdit} onSaved={afterConfigChange} tr={tr} />}
-            {tab === "dashboard" && <DashboardTab tr={tr} />}
+            {tab === "dashboard" && <DashboardTab tr={tr} cfgData={cfgData} canEdit={canEdit} onSaved={afterConfigChange} />}
             {tab === "audit" && <AuditTab tr={tr} />}
             {tab === "data" && <DataTab tr={tr} />}
             {tab === "alerts" && <AlertsTab data={alertData} tr={tr} />}
