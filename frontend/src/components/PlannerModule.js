@@ -2236,10 +2236,15 @@ const DashboardTab = ({ tr }) => {
       </Card>
 
       <Card className="p-4">
-        <SectionTitle hint={tr("plan_dash_test_hint")}>{tr("plan_dash_test")} · {tr("plan_dash_test_open", { n: to.open })}</SectionTitle>
+        <SectionTitle hint={tr("plan_dash_test_hint")}>{tr("plan_dash_test")}</SectionTitle>
+        <div className="grid grid-cols-3 gap-3 mb-3">
+          <Stat label={tr("plan_dash_test_openlbl")} value={fmt(to.open)} />
+          <Stat label={tr("plan_dash_test_toprint")} value={fmt(to.to_print)} color="text-amber-600" />
+          <Stat label={tr("plan_dash_test_printed")} value={fmt(to.printed_in_process)} color="text-emerald-600" />
+        </div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <Stat label={tr("plan_dash_produced")} value={fmt(to.produced)} color="text-violet-700" />
-          <Stat label={tr("plan_dash_pending")} value={fmt(to.pending)} color="text-amber-600" />
+          <Stat label={tr("plan_dash_test_pend_imp")} value={fmt(to.pending)} color="text-amber-600" />
           <Stat label={tr("plan_dash_test_this")} value={fmt(to.pending_this_week)} />
           <Stat label={tr("plan_dash_test_next")} value={fmt(to.pending_next_week)} />
         </div>

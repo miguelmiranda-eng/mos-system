@@ -790,6 +790,27 @@ async def dashboard(request: Request):
     for oid in test_oids:
         test_prod += produced.get(oid, 0)
 
+    # Programa TEST completo (todos los tableros, no solo demanda) para que
+    # cuadre con lo que se ve en MASTER: abiertas = por imprimir + ya impresas
+    # en proceso. "Abierta" = no en tablero terminal ni ya enviada/cancelada.
+    patterns = [str(p) for p in cfg.get("test_branding_patterns", []) if str(p).strip()]
+    test_open = test_toprint = test_printed = 0
+    if patterns:
+        brx = {"$regex": "|".join(patterns), "$options": "i"}
+        demand_set = set(cfg["demand_boards"]) | {m["machine"] for m in ctx["machines"]}
+        term = {"FINAL BILL", "COMPLETOS", "CANCELLED", "PAPELERA DE RECICLAJE"}
+        ship_st = {"LISTO PARA ENVIO", "LISTO PARA INVENTARIO", "ENVIADO TIJANA-SAN DIEGO", "CANCELLED"}
+        printed_st = {s.upper() for s in cfg["printed_statuses"]}
+        async for o in db.orders.find({"branding": brx}, {"_id": 0, "board": 1, "production_status": 1}):
+            st = (o.get("production_status") or "").upper()
+            if o.get("board") in term or st in ship_st:
+                continue
+            test_open += 1
+            if o.get("board") in demand_set and st not in printed_st:
+                test_toprint += 1
+            else:
+                test_printed += 1
+
     # Envíos comprometidos por día (próximos 10 días, por cancel date).
     ship = {}
     for j in jobs:
@@ -832,7 +853,8 @@ async def dashboard(request: Request):
         "next_week": {"capacity_regular": next_reg, "capacity_overtime": next_ot,
                       "capacity": next_reg + next_ot, "demand": weeks[1]["demand"],
                       "delta": (next_reg + next_ot) - weeks[1]["demand"]},
-        "test_orders": {"open": len(test_oids), "pending": test_pend,
+        "test_orders": {"open": test_open, "to_print": test_toprint,
+                        "printed_in_process": test_printed, "pending": test_pend,
                         "pending_this_week": test_this, "pending_next_week": test_next,
                         "produced": test_prod},
         "shipments_by_day": shipments,
