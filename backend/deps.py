@@ -693,9 +693,43 @@ def api_surface_permitida(metodo: str, ruta: str) -> bool:
 
 SUPER_ROLES = {"admin", "supersu"}
 
+# ── Multi-rol (2026-10-09) ────────────────────────────────────────────────────
+# Un usuario puede tener VARIOS roles ADITIVOS (combinables): la autorización se
+# evalúa por UNIÓN — gana el más permisivo. Los roles EXCLUSIVOS (restrictivos /
+# de encierro) van SOLOS — la UI y la API lo obligan — así sus candados, que
+# siguen leyendo el `role` PRIMARIO (p.ej. el default-deny de shipping_guest en
+# get_current_user, el scope de customer, el lock de operator), nunca se bypassan.
+ADDITIVE_ROLES = {"supersu", "admin", "ceo", "inventory", "picker", "general",
+                  "qc", "inspector_qc", "paint", "paint_lead", "sample_lead"}
+EXCLUSIVE_ROLES = {"customer", "shipping_guest", "operator", "external_api"}
+# Orden de "representatividad" para derivar el role PRIMARIO cuando hay varios.
+ROLE_PRECEDENCE = ["supersu", "admin", "ceo", "inventory", "qc", "inspector_qc",
+                   "paint_lead", "paint", "sample_lead", "picker", "general"]
+
+
+def user_roles(user: Dict) -> set:
+    """Conjunto de roles del usuario. Soporta el formato NUEVO (lista `roles`) y
+    el VIEJO (`role` string) sin migrar: si no hay `roles`, cae en [role]."""
+    u = user or {}
+    roles = {r for r in (u.get("roles") or []) if r}
+    primary = u.get("role")
+    if primary:
+        roles.add(primary)
+    return roles or {"general"}
+
+
+def primary_role(roles) -> str:
+    """Rol representativo (display + candados restrictivos) de un conjunto."""
+    rs = set(roles or [])
+    for r in ROLE_PRECEDENCE:
+        if r in rs:
+            return r
+    return next(iter(rs)) if rs else "general"
+
+
 async def require_supersu(request: Request) -> Dict:
     user = await require_auth(request)
-    if user.get("role") != "supersu":
+    if "supersu" not in user_roles(user):
         raise HTTPException(status_code=403, detail="Solo el Super Usuario puede realizar esta acción")
     return user
 
@@ -703,13 +737,13 @@ async def require_admin(request: Request) -> Dict:
     user = await require_auth(request)
     # Admins/supersu pass, and so does anyone the tiered ladder places at admin
     # level 3+ (which includes inventory level 3 — see get_admin_level).
-    if user.get("role") not in SUPER_ROLES and get_admin_level(user) < 3:
+    if not (user_roles(user) & SUPER_ROLES) and get_admin_level(user) < 3:
         raise HTTPException(status_code=403, detail="Admin access required")
     return user
 
 async def require_ceo(request: Request) -> Dict:
     user = await require_auth(request)
-    if user.get("role") not in {*SUPER_ROLES, "ceo"}:
+    if not (user_roles(user) & {*SUPER_ROLES, "ceo"}):
         raise HTTPException(status_code=403, detail="CEO or Admin access required")
     return user
 
@@ -725,13 +759,13 @@ def get_admin_level(user: Dict) -> int:
     inventory_level of 3 confers admin level 3 by default (see WMS inventory
     roles below) — we read the raw field here (not get_inventory_level) to avoid
     bumping every ordinary admin."""
-    role = (user or {}).get("role")
-    if role == "supersu":
+    roles = user_roles(user)
+    if "supersu" in roles:
         return MAX_ADMIN_LEVEL
     lvl = 0
-    if role == "admin":
+    if "admin" in roles:
         try:
-            lvl = int(user.get("admin_level") or 1)
+            lvl = int((user or {}).get("admin_level") or 1)
         except (TypeError, ValueError):
             lvl = 1
         lvl = max(1, min(MAX_ADMIN_LEVEL, lvl))
@@ -752,7 +786,8 @@ async def require_admin_level(request: Request, min_level: int) -> Dict:
 
 async def require_role(request: Request, allowed_roles: List[str]) -> Dict:
     user = await require_auth(request)
-    if user.get("role") not in allowed_roles and user.get("role") not in SUPER_ROLES:
+    roles = user_roles(user)
+    if not (roles & set(allowed_roles)) and not (roles & SUPER_ROLES):
         raise HTTPException(status_code=403, detail=f"Access denied for role: {user.get('role')}")
     return user
 
@@ -775,8 +810,7 @@ MAX_INVENTORY_LEVEL = 3
 def get_inventory_level(user: Dict) -> int:
     """Effective inventory level. supersu/admin = MAX; otherwise the numeric
     inventory_level on the user doc (0 if unset), clamped 1..MAX."""
-    role = (user or {}).get("role")
-    if role in ("supersu", "admin"):
+    if user_roles(user) & {"supersu", "admin"}:
         return MAX_INVENTORY_LEVEL
     try:
         lvl = int((user or {}).get("inventory_level") or 0)

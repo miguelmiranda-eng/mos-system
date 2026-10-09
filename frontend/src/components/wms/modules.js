@@ -41,12 +41,18 @@ export const WMS_GROUPS = [
    (deps.py): supersu = MAX (5); admin = su admin_level (default 1, tope 5);
    inventory_level ≥ 3 confiere nivel 3. Se usa para gatear módulos por
    `minAdminLevel` sin que la UI y el backend puedan discrepar. */
+/* Conjunto de roles del usuario — multi-rol (2026-10-09). Soporta la lista
+   `roles` (nueva) y el `role` string (viejo) sin migrar. Espejo de user_roles()
+   del backend. */
+export const rolesOf = (u) => new Set([...(u?.roles || []), u?.role].filter(Boolean));
+
 export const adminLevelOf = (u) => {
   if (!u) return 0;
-  if (u.role === 'supersu') return 5;
+  const roles = rolesOf(u);
+  if (roles.has('supersu')) return 5;
   let lvl = 0;
-  if (u.role === 'admin') lvl = Math.max(1, Math.min(5, parseInt(u.admin_level, 10) || 1));
-  if (u.role === 'ceo') lvl = Math.max(lvl, 3);   // el CEO cuenta como admin-3 para el menú
+  if (roles.has('admin')) lvl = Math.max(1, Math.min(5, parseInt(u.admin_level, 10) || 1));
+  if (roles.has('ceo')) lvl = Math.max(lvl, 3);   // el CEO cuenta como admin-3 para el menú
   const inv = parseInt(u.inventory_level, 10) || 0;
   if (inv >= 3) lvl = Math.max(lvl, 3);
   return lvl;
@@ -128,38 +134,50 @@ export const buildModules = (t) => [
 // del backend) por si /module-access aún no cargó: la lista blanca histórica.
 const INVENTORY_LEVEL_DEFAULTS = { locations: 1, mover: 1, cycle_count: 1, inventory: 1, aging: 1, movements: 1, staging: 1 };
 
-export const filterModules = (modules, currentUser, moduleLevels = {}, inventoryLevels = null) => modules.filter(m => {
+// Roles SCOPEADOS en el frontend: no reciben el menú base; cada uno trae su
+// propia lista. `customer`/`shipping_guest`/`operator` son exclusivos (van
+// solos); `inventory`/`picker` son aditivos pero, SOLOS, sólo ven su lista —
+// combinados con un rol base, se UNIONA.
+const FRONTEND_SCOPED = new Set(['inventory', 'picker', 'customer', 'shipping_guest', 'operator']);
+
+export const filterModules = (modules, currentUser, moduleLevels = {}, inventoryLevels = null) => {
+  const roles = rolesOf(currentUser);
+  // Exclusivo: customer ve sólo el dashboard (va solo, nunca se combina).
+  if (roles.has('customer')) return modules.filter(m => m.id === 'dashboard');
+
   const invLevels = inventoryLevels || INVENTORY_LEVEL_DEFAULTS;
-  const invNeeded = invLevels[m.id];
   const invHave = parseInt(currentUser?.inventory_level, 10) || 0;
-  const invGrants = invNeeded != null && invHave >= invNeeded;
-  // Rol `inventory` del WMS: lo gobierna SOLO la escalera de inventarios por
-  // módulo (Configuración → Permisos → Acceso por módulo, columna Inventarios).
-  // Por default = la lista blanca de siempre: ubicaciones, mover, conteo,
-  // inventario, antigüedad y movimientos desde nivel 1; conciliación nunca.
-  if (currentUser?.role === 'inventory') return invGrants;
-  // Cualquier otro rol con inventory_level también entra por esa escalera.
-  if (invGrants) return true;
-  // Roles con lista blanca propia — su piso NO lo mueve el panel de accesos.
-  if (currentUser?.role === 'customer') return m.id === 'dashboard';
-  if (currentUser?.role === 'picker') return ['picking', 'transit', 'mover', 'staging'].includes(m.id);
+  const adminLvl = adminLevelOf(currentUser);
+  // ¿Tiene ALGÚN rol no scopeado (admin/general/ceo/qc/…)? Entonces aplica el
+  // menú base (escalera por módulo, incl. nivel 0 = todos). Si sus roles son
+  // SÓLO scopeados (p.ej. sólo inventory, sólo picker), ve únicamente su lista.
+  const hasBaseline = [...roles].some(r => !FRONTEND_SCOPED.has(r));
 
-  // Acceso configurable desde la app (Centro de usuarios / Configuración WMS).
-  // Rige el MENÚ de todos los módulos para admin/general/ceo/supersu. Escala:
-  //   0 = todos · 1..5 = nivel de admin mínimo · 6 = solo supersu.
-  const lvl = moduleLevels?.[m.id];
-  if (lvl != null) {
-    if (lvl <= 0) return true;
-    if (lvl >= 6) return currentUser?.role === 'supersu';
-    return adminLevelOf(currentUser) >= lvl;
-  }
+  return modules.filter(m => {
+    // ── Unión de concesiones por rol ──
+    // Escalera de inventarios por módulo (rol inventory o cualquiera con inventory_level).
+    const invNeeded = invLevels[m.id];
+    if (invNeeded != null && invHave >= invNeeded) return true;
+    // Lista blanca del picker.
+    if (roles.has('picker') && ['picking', 'transit', 'mover', 'staging'].includes(m.id)) return true;
+    // Sin rol base, no hay más que lo scopeado de arriba.
+    if (!hasBaseline) return false;
 
-  // Respaldo: flags hardcodeados (por si un módulo no está en la config).
-  if (m.supersuOnly && currentUser?.role !== 'supersu') return false;
-  if (m.minAdminLevel && adminLevelOf(currentUser) < m.minAdminLevel) return false;
-  if (m.adminOnly && !['admin', 'supersu', 'ceo'].includes(currentUser?.role)) return false;
-  return true;
-});
+    // Menú base (admin/general/ceo/supersu). Escala del módulo:
+    //   0 = todos · 1..5 = nivel de admin mínimo · 6 = solo supersu.
+    const lvl = moduleLevels?.[m.id];
+    if (lvl != null) {
+      if (lvl <= 0) return true;
+      if (lvl >= 6) return roles.has('supersu');
+      return adminLvl >= lvl;
+    }
+    // Respaldo: flags hardcodeados (por si un módulo no está en la config).
+    if (m.supersuOnly && !roles.has('supersu')) return false;
+    if (m.minAdminLevel && adminLvl < m.minAdminLevel) return false;
+    if (m.adminOnly && !(roles.has('admin') || roles.has('supersu') || roles.has('ceo'))) return false;
+    return true;
+  });
+};
 
 /* Reparte los módulos ya filtrados en sus grupos. Un grupo que se queda sin
    módulos para ese rol NO se pinta — el rol `inventory`, por ejemplo, sólo ve

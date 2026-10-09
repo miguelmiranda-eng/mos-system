@@ -1,9 +1,33 @@
 """Users management routes."""
 from fastapi import APIRouter, HTTPException, Request
-from deps import db, require_admin, require_auth, log_activity, ADMIN_EMAILS, SUPERSU_EMAILS
+from deps import (db, require_admin, require_auth, log_activity, ADMIN_EMAILS,
+                  SUPERSU_EMAILS, EXCLUSIVE_ROLES, primary_role, user_roles)
 from datetime import datetime, timezone
 
 router = APIRouter(prefix="/api")
+
+
+def _normalize_roles(body):
+    """(roles:list, primary:str) desde el body. Acepta `roles` (lista) o `role`
+    (string, back-compat). Exclusividad: un rol EXCLUSIVO (customer /
+    shipping_guest / operator / external_api) va SOLO, no se combina."""
+    raw = body.get("roles")
+    if raw is None:
+        r = body.get("role")
+        raw = [r] if r else []
+    roles, seen = [], set()
+    for r in raw:
+        r = str(r or "").strip()
+        if r and r not in seen:
+            seen.add(r)
+            roles.append(r)
+    if not roles:
+        roles = ["general"]
+    excl = [r for r in roles if r in EXCLUSIVE_ROLES]
+    if excl and len(roles) > 1:
+        raise HTTPException(status_code=400,
+                            detail=f"El rol '{excl[0]}' es exclusivo: no se combina con otros roles.")
+    return roles, primary_role(roles)
 
 @router.get("/users/list")
 async def list_users_for_mention(request: Request):
@@ -65,10 +89,9 @@ async def invite_user(request: Request):
     body = await request.json()
     email = body.get("email", "").strip().lower()
     # Admins can invite with any role; only a super admin may mint another supersu.
-    requested_role = body.get("role", "general")
-    if requested_role == "supersu" and user.get("role") != "supersu":
+    roles, role = _normalize_roles(body)
+    if "supersu" in roles and user.get("role") != "supersu":
         raise HTTPException(status_code=403, detail="Solo un super admin puede asignar el rol de super admin")
-    role = requested_role
     associated_customer = body.get("associated_customer", "")
     if not email or "@" not in email:
         raise HTTPException(status_code=400, detail="Email inválido")
@@ -76,7 +99,8 @@ async def invite_user(request: Request):
     if existing:
         raise HTTPException(status_code=400, detail="El usuario ya existe")
     new_user = {
-        "email": email, "name": email.split("@")[0], "picture": "", "role": role,
+        "email": email, "name": email.split("@")[0], "picture": "",
+        "role": role, "roles": roles,
         "associated_customer": associated_customer,
         "invited_by": user, "created_at": datetime.now(timezone.utc).isoformat()
     }
@@ -89,28 +113,28 @@ async def update_user_role(user_id: str, request: Request):
     # Admins can manage roles; only a super admin (supersu) may grant or revoke
     # the supersu role itself, and an admin can't modify an existing super admin.
     user = await require_admin(request)
-    caller_is_supersu = user.get("role") == "supersu"
+    caller_is_supersu = "supersu" in user_roles(user)
     body = await request.json()
-    new_role = body.get("role", "general")
+    roles, new_role = _normalize_roles(body)
     associated_customer = body.get("associated_customer", "")
 
     target = await db.users.find_one(
         {"$or": [{"user_id": user_id}, {"email": user_id}]},
-        {"_id": 0, "role": 1, "email": 1},
+        {"_id": 0, "role": 1, "roles": 1, "email": 1},
     )
     if not target:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
     if not caller_is_supersu:
-        if new_role == "supersu":
+        if "supersu" in roles:
             raise HTTPException(status_code=403, detail="Solo un super admin puede asignar el rol de super admin")
-        if target.get("role") == "supersu" or target.get("email") in SUPERSU_EMAILS:
+        if "supersu" in user_roles(target) or target.get("email") in SUPERSU_EMAILS:
             raise HTTPException(status_code=403, detail="No puedes modificar el rol de un super admin")
     # Machine operators get their default board assigned by admin. The
     # MachineOperatorView reads user.assigned_board on login and locks the
     # selector to it. When the role moves away from "operator" we leave the
     # field on the doc — idle metadata, no harm.
     assigned_board = body.get("assigned_board")
-    update_data = {"role": new_role}
+    update_data = {"role": new_role, "roles": roles}
     if associated_customer is not None:
         update_data["associated_customer"] = associated_customer
     if assigned_board is not None:

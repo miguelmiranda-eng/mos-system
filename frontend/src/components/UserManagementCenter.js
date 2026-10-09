@@ -21,6 +21,56 @@ const PERM_OPTIONS = [
 // reales (/config/boards), con respaldo estático mientras cargan.
 const operatorBoardsFrom = (boards) => [...machinesFrom(boards), 'NECK', 'BLANKS', 'SCREENS'];
 
+// ── Multi-rol (2026-10-09) ────────────────────────────────────────────────────
+// Roles del usuario como lista (soporta el doc nuevo `roles` y el viejo `role`).
+export const rolesList = (u) => (u?.roles && u.roles.length ? u.roles : (u?.role ? [u.role] : ['general']));
+// Exclusivos: van SOLOS (espejo de EXCLUSIVE_ROLES del backend).
+const EXCLUSIVE_SET = new Set(['operator', 'customer', 'shipping_guest', 'external_api']);
+// Aditivos combinables ([value, i18nKey|null]). supersu se filtra por isSupersu.
+const ADDITIVE_UI = [
+  ['general', 'general'], ['admin', 'users_role_admin'], ['supersu', 'users_role_supersu'],
+  ['inventory', 'users_role_inventory'], ['picker', null], ['inspector_qc', null], ['ceo', null],
+];
+const EXCLUSIVE_UI = [['operator', 'admin_operator'], ['customer', 'users_role_customer'], ['shipping_guest', 'users_role_shipping_guest']];
+
+// Selector de VARIOS roles. Los aditivos son checkboxes (unión); elegir un
+// exclusivo reemplaza todo (va solo). Usa <details> para el popover sin JS extra.
+const RolesMultiSelect = ({ roles, onChange, isSupersu, t }) => {
+  const rlabel = (v, k) => k ? t(k) : (v === 'picker' ? 'Picker' : v === 'inspector_qc' ? 'Inspector QC' : v === 'ceo' ? 'CEO' : v);
+  const has = (r) => roles.includes(r);
+  const toggleAdd = (r) => {
+    let next = roles.filter((x) => !EXCLUSIVE_SET.has(x));           // combinar quita cualquier exclusivo
+    next = has(r) ? next.filter((x) => x !== r) : [...next, r];
+    onChange(next.length ? next : ['general']);
+  };
+  const pickExc = (r) => onChange(has(r) ? ['general'] : [r]);        // exclusivo: va solo
+  return (
+    <details className="relative">
+      <summary className="list-none cursor-pointer w-40 min-h-9 px-2 py-1 bg-secondary/50 border border-border rounded-lg flex flex-wrap gap-1 items-center hover:bg-secondary">
+        {roles.length ? roles.map((r) => (
+          <span key={r} className="text-[9px] px-1.5 py-0.5 rounded bg-primary/15 text-primary font-black uppercase tracking-widest">{rlabel(r)}</span>
+        )) : <span className="text-[10px] text-muted-foreground">—</span>}
+        <ChevronDown className="w-3 h-3 ml-auto text-muted-foreground shrink-0" />
+      </summary>
+      <div className="absolute right-0 mt-1 w-52 bg-popover border border-border rounded-lg shadow-xl z-[300] p-1 max-h-80 overflow-auto">
+        <div className="text-[9px] font-black uppercase text-muted-foreground px-2 py-1">{t('users_roles_additive')}</div>
+        {ADDITIVE_UI.filter(([v]) => v !== 'supersu' || isSupersu).map(([v, k]) => (
+          <label key={v} className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-secondary cursor-pointer text-xs">
+            <input type="checkbox" checked={has(v)} onChange={() => toggleAdd(v)} /> {rlabel(v, k)}
+          </label>
+        ))}
+        <div className="text-[9px] font-black uppercase text-muted-foreground px-2 py-1 border-t border-border mt-1">{t('users_roles_exclusive')}</div>
+        {EXCLUSIVE_UI.map(([v, k]) => (
+          <button key={v} type="button" onClick={() => pickExc(v)}
+            className={`w-full text-left px-2 py-1.5 rounded hover:bg-secondary text-xs ${has(v) ? 'text-primary font-bold' : ''}`}>
+            {rlabel(v, k)} {has(v) && '✓'}
+          </button>
+        ))}
+      </div>
+    </details>
+  );
+};
+
 const UserManagementCenter = () => {
   const navigate = useNavigate();
   const { t } = useLang();
@@ -245,11 +295,11 @@ const UserManagementCenter = () => {
   // Persist a board assignment for an operator user. Used by the inline
   // dropdown next to the role select. We re-send role so the PUT shape
   // stays the same.
-  const handleAssignedBoardChange = async (userId, currentRole, newBoard) => {
+  const handleAssignedBoardChange = async (userId, currentRoles, newBoard) => {
     try {
       const res = await fetch(`${API}/users/${userId}/role`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
-        body: JSON.stringify({ role: currentRole, assigned_board: newBoard }),
+        body: JSON.stringify({ roles: currentRoles, assigned_board: newBoard }),
       });
       if (res.ok) {
         toast.success(t('users_operator_assigned', { board: newBoard }));
@@ -265,11 +315,11 @@ const UserManagementCenter = () => {
 
   // Persist a WMS inventory level (1-3). Any admin may set it; we re-send the
   // role so the PUT shape stays the same. Level 3 also grants admin level 3.
-  const handleInventoryLevelChange = async (userId, currentRole, newLevel) => {
+  const handleInventoryLevelChange = async (userId, currentRoles, newLevel) => {
     try {
       const res = await fetch(`${API}/users/${userId}/role`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
-        body: JSON.stringify({ role: currentRole, inventory_level: Number(newLevel) }),
+        body: JSON.stringify({ roles: currentRoles, inventory_level: Number(newLevel) }),
       });
       if (res.ok) {
         toast.success(t('users_inv_level_updated', { level: newLevel }));
@@ -285,11 +335,11 @@ const UserManagementCenter = () => {
 
   // Persist an admin's tiered level (1-5). Supersu only; we re-send the role so
   // the PUT shape stays the same. Backend ignores admin_level for non-supersu.
-  const handleAdminLevelChange = async (userId, currentRole, newLevel) => {
+  const handleAdminLevelChange = async (userId, currentRoles, newLevel) => {
     try {
       const res = await fetch(`${API}/users/${userId}/role`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
-        body: JSON.stringify({ role: currentRole, admin_level: Number(newLevel) }),
+        body: JSON.stringify({ roles: currentRoles, admin_level: Number(newLevel) }),
       });
       if (res.ok) {
         toast.success(t('users_admin_level_updated', { level: newLevel }));
@@ -305,11 +355,11 @@ const UserManagementCenter = () => {
 
   // Opt-in per usuario a una notificación push (packing cargado / descuadre de
   // stock). Supersu only; reenviamos el rol para conservar la forma del PUT.
-  const handleNotifyToggle = async (userId, currentRole, field, next, okMsg) => {
+  const handleNotifyToggle = async (userId, currentRoles, field, next, okMsg) => {
     try {
       const res = await fetch(`${API}/users/${userId}/role`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
-        body: JSON.stringify({ role: currentRole, [field]: next }),
+        body: JSON.stringify({ roles: currentRoles, [field]: next }),
       });
       if (res.ok) {
         toast.success(next ? okMsg : t('users_notify_off'));
@@ -321,6 +371,23 @@ const UserManagementCenter = () => {
     } catch {
       toast.error(t('ceo_err_connection'));
     }
+  };
+
+  const handleRolesChange = async (userId, roles, customer = undefined) => {
+    if (!window.confirm(t('users_confirm_roles_change', { roles: roles.join(', ') }))) {
+      fetchUsers();
+      return;
+    }
+    setLoading(true);
+    try {
+      const res = await fetch(`${API}/users/${userId}/role`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' }, credentials: 'include',
+        body: JSON.stringify({ roles, ...(customer !== undefined ? { associated_customer: customer } : {}) }),
+      });
+      if (res.ok) { toast.success(t('users_role_updated')); setTimeout(fetchUsers, 500); }
+      else { const err = await res.json().catch(() => ({})); toast.error(err.detail || t('role_update_err')); fetchUsers(); }
+    } catch { toast.error(t('ceo_err_connection')); fetchUsers(); }
+    finally { setLoading(false); }
   };
 
   const handleRoleChange = async (userId, newRole, customer = '') => {
@@ -669,22 +736,8 @@ const UserManagementCenter = () => {
 
                   <div className="flex items-center gap-2">
                     {(isSupersu || (isAdmin && u.role !== 'supersu')) ? (
-                      <Select value={u.role} onValueChange={(v) => handleRoleChange(u.user_id, v)}>
-                        <SelectTrigger className="w-32 h-9 bg-secondary/50 border-border rounded-lg text-[10px] font-black uppercase tracking-widest transition-all hover:bg-secondary">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent className="bg-popover border-border z-[300]">
-                          <SelectItem value="general">{t('general')}</SelectItem>
-                          <SelectItem value="admin">{t('users_role_admin')}</SelectItem>
-                          {isSupersu && <SelectItem value="supersu">{t('users_role_supersu')}</SelectItem>}
-                          <SelectItem value="inventory">{t('users_role_inventory')}</SelectItem>
-                          <SelectItem value="picker">Picker</SelectItem>
-                          <SelectItem value="operator">{t('admin_operator')}</SelectItem>
-                          <SelectItem value="inspector_qc">Inspector QC</SelectItem>
-                          <SelectItem value="user">{t('user')}</SelectItem>
-                          <SelectItem value="ceo">CEO</SelectItem>
-                        </SelectContent>
-                      </Select>
+                      <RolesMultiSelect roles={rolesList(u)} isSupersu={isSupersu} t={t}
+                        onChange={(rs) => handleRolesChange(u.user_id, rs)} />
                     ) : (
                       <span className="w-32 h-9 flex items-center px-3 bg-secondary/30 border border-border rounded-lg text-[10px] font-black uppercase tracking-widest text-muted-foreground">
                         {u.role}
@@ -697,7 +750,7 @@ const UserManagementCenter = () => {
                     {u.role === 'operator' && isSupersu && (
                       <Select
                         value={u.assigned_board || ''}
-                        onValueChange={(v) => handleAssignedBoardChange(u.user_id, u.role, v)}
+                        onValueChange={(v) => handleAssignedBoardChange(u.user_id, rolesList(u), v)}
                       >
                         <SelectTrigger className="w-32 h-9 bg-emerald-500/10 border border-emerald-500/40 rounded-lg text-[10px] font-mono font-black uppercase tracking-widest text-emerald-500 hover:bg-emerald-500/15">
                           <SelectValue placeholder={t('unassigned')} />
@@ -720,10 +773,10 @@ const UserManagementCenter = () => {
                           1 = conteos cíclicos
                           2 = + ajustes manuales de inventario
                           3 = + reportes de conteo (y permisos de admin nivel 3) */}
-                    {u.role === 'inventory' && (isSupersu || isAdmin) && (
+                    {rolesList(u).includes('inventory') && (isSupersu || isAdmin) && (
                       <Select
                         value={String(u.inventory_level || 1)}
-                        onValueChange={(v) => handleInventoryLevelChange(u.user_id, u.role, v)}
+                        onValueChange={(v) => handleInventoryLevelChange(u.user_id, rolesList(u), v)}
                       >
                         <SelectTrigger className="w-32 h-9 bg-lime-500/10 border border-lime-500/40 rounded-lg text-[10px] font-black uppercase tracking-widest text-lime-500 hover:bg-lime-500/15">
                           <SelectValue />
@@ -738,10 +791,10 @@ const UserManagementCenter = () => {
 
                     {/* Admin tier (1-5). Cumulative: a higher level can do
                         everything lower levels can. Only supersu may change it. */}
-                    {u.role === 'admin' && isSupersu && (
+                    {rolesList(u).includes('admin') && isSupersu && (
                       <Select
                         value={String(u.admin_level || 1)}
-                        onValueChange={(v) => handleAdminLevelChange(u.user_id, u.role, v)}
+                        onValueChange={(v) => handleAdminLevelChange(u.user_id, rolesList(u), v)}
                       >
                         <SelectTrigger className="w-28 h-9 bg-primary/10 border border-primary/40 rounded-lg text-[10px] font-black uppercase tracking-widest text-primary hover:bg-primary/15">
                           <SelectValue />
@@ -753,7 +806,7 @@ const UserManagementCenter = () => {
                         </SelectContent>
                       </Select>
                     )}
-                    {u.role === 'admin' && !isSupersu && (
+                    {rolesList(u).includes('admin') && !isSupersu && (
                       <span className="h-9 flex items-center px-3 bg-primary/10 border border-primary/40 rounded-lg text-[10px] font-black uppercase tracking-widest text-primary">
                         {t('users_level', { n: u.admin_level || 1 })}
                       </span>
@@ -765,7 +818,7 @@ const UserManagementCenter = () => {
                           ⚠ Descuadre = incidencias rojas + job nocturno del WMS */}
                     {isSupersu && (
                       <button
-                        onClick={() => handleNotifyToggle(u.user_id, u.role, 'notify_packing_loaded',
+                        onClick={() => handleNotifyToggle(u.user_id, rolesList(u), 'notify_packing_loaded',
                           !u.notify_packing_loaded, t('users_notify_packing_on'))}
                         title={u.notify_packing_loaded
                           ? t('users_notify_packing_title_on')
@@ -782,7 +835,7 @@ const UserManagementCenter = () => {
                     )}
                     {isSupersu && (
                       <button
-                        onClick={() => handleNotifyToggle(u.user_id, u.role, 'notify_inventory_discrepancy',
+                        onClick={() => handleNotifyToggle(u.user_id, rolesList(u), 'notify_inventory_discrepancy',
                           !u.notify_inventory_discrepancy, t('users_notify_discrepancy_on'))}
                         title={u.notify_inventory_discrepancy
                           ? t('users_notify_discrepancy_title_on')
