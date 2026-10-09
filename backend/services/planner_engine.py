@@ -62,6 +62,11 @@ DEFAULT_CONFIG = {
     # Test Orders (programa SPENCERS TEST): se identifican por el branding.
     # Se separan en el dashboard de producción. Patrón (contiene), editable.
     "test_branding_patterns": ["TEST"],
+    # Umbrales de la auditoría de producción (excepciones).
+    "audit_printed_pct": 90,        # impresa ≥ esto pero status sin avanzar = atrasada
+    "audit_no_movement_days": 3,    # orden en máquina sin registro en estos días
+    "audit_no_capture_hours": 24,   # máquina activa sin registro en estas horas
+    "audit_overprint_pct": 115,     # producido > esto % de lo requerido = sobreimpresión
     # production_status que significan "ya se imprimió" (sale de la demanda).
     "printed_statuses": [
         "NECESITA EMPACAR", "EN PROCESO DE EMPAQUE", "NECESITA QC", "CORRECIÓN DE QC",

@@ -201,6 +201,10 @@ async def main():
         check("dashboard 200 y forma", r.status_code == 200
               and all(k in dash for k in ("this_week", "next_week", "test_orders", "exceptions", "shipments_by_day"))
               and "status_behind" in dash["exceptions"], r.status_code)
+        r = await op.get("/api/planner/audit")
+        aud = r.json()
+        check("audit 200 y 4 checks", r.status_code == 200 and "checks" in aud
+              and all(k in aud["checks"] for k in ("status_behind", "no_movement", "machine_no_capture", "overprint")), r.status_code)
 
         print("\n== Calendario y proyección ==")
         r = await sup.get("/api/planner/projection")

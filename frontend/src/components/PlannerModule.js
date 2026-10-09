@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import {
   ArrowLeft, CalendarClock, Power, RefreshCw, Loader2, Cpu, TrendingUp,
   Settings2, CalendarDays, AlertTriangle, Trash2, Plus, Save, FlaskConical, Eye, Search,
-  Pin, ArrowUpDown, LogIn, PauseCircle, Undo2, X, SlidersHorizontal, BellRing, CheckCircle2, Download, PackageCheck, Gauge,
+  Pin, ArrowUpDown, LogIn, PauseCircle, Undo2, X, SlidersHorizontal, BellRing, CheckCircle2, Download, PackageCheck, Gauge, ClipboardCheck,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { saveAs } from "file-saver";
@@ -1964,6 +1964,10 @@ const RULE_FIELDS = [
   ["horizon_weeks", "plan_r_horizon"],
   ["printed_complete_pct", "plan_r_printed_pct"],
   ["printed_alert_days", "plan_r_alert_days"],
+  ["audit_printed_pct", "plan_r_audit_pct"],
+  ["audit_no_movement_days", "plan_r_audit_nomove"],
+  ["audit_no_capture_hours", "plan_r_audit_nocap"],
+  ["audit_overprint_pct", "plan_r_audit_over"],
 ];
 const LIST_FIELDS = [
   ["ready_blank_statuses", "plan_r_ready_blank"],
@@ -2301,6 +2305,108 @@ const DashboardTab = ({ tr }) => {
   );
 };
 
+/* ── Auditoría de producción ───────────────────────────────────────────────
+   Revisa lo que no cuadra entre producción y status; se auto-refresca cada
+   hora. Solo marca excepciones (no re-cuenta todo). Umbrales en Reglas. */
+const AuditTab = ({ tr }) => {
+  const [d, setD] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const load = useCallback(() => {
+    setLoading(true);
+    planner("/audit").then(setD).catch((e) => toast.error(e.message)).finally(() => setLoading(false));
+  }, []);
+  useEffect(() => { load(); const id = setInterval(load, 3600 * 1000); return () => clearInterval(id); }, [load]);
+  if (!d) return <div className="py-20 flex justify-center"><Loader2 className="w-7 h-7 animate-spin text-blue-600" /></div>;
+  const c = d.checks, th = d.thresholds;
+  const col = (n) => (n ? "text-red-600" : "text-emerald-600");
+  const th_ = "py-2 pr-3", td_ = "py-1.5 pr-3";
+  const Head = ({ cols }) => (
+    <thead className="planner-freeze"><tr className="text-left text-[11px] uppercase tracking-wider text-slate-400">
+      {cols.map((x, i) => <th key={i} className={i === 0 ? th_ : "pr-3"}>{x}</th>)}
+    </tr></thead>
+  );
+  return (
+    <div className="space-y-5">
+      <div className="flex items-center gap-3 text-sm text-slate-500">
+        <ClipboardCheck className="w-4 h-4 text-blue-600" />
+        <span>{tr("plan_audit_updated", { t: (d.generated_at || "").slice(11, 16) })}</span>
+        <button onClick={load} disabled={loading}
+          className="ml-auto h-8 px-3 rounded-lg border border-slate-200 text-xs font-bold inline-flex items-center gap-1.5 hover:border-blue-300">
+          {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}{tr("plan_audit_refresh")}
+        </button>
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <Stat label={tr("plan_audit_status_behind")} value={fmt(c.status_behind.count)} color={col(c.status_behind.count)} />
+        <Stat label={tr("plan_audit_no_movement")} value={fmt(c.no_movement.count)} color={col(c.no_movement.count)} />
+        <Stat label={tr("plan_audit_no_capture")} value={fmt(c.machine_no_capture.count)} color={col(c.machine_no_capture.count)} />
+        <Stat label={tr("plan_audit_overprint")} value={fmt(c.overprint.count)} color={col(c.overprint.count)} />
+      </div>
+
+      <Card className="p-4">
+        <SectionTitle hint={tr("plan_audit_sb_hint", { p: th.printed_pct })}>{tr("plan_audit_status_behind")} ({c.status_behind.count})</SectionTitle>
+        {c.status_behind.count === 0 ? <Empty>{tr("plan_audit_ok")}</Empty> : (
+          <div className="overflow-auto max-h-[45vh]"><table className="min-w-full text-sm">
+            <Head cols={[tr("plan_order"), tr("plan_client"), tr("plan_status"), tr("plan_board"), tr("plan_audit_pct"), tr("plan_dash_produced")]} />
+            <tbody className="divide-y divide-slate-100">
+              {c.status_behind.items.map((o) => (
+                <tr key={o.order_number}><td className={`${td_} font-black`}>{o.order_number}</td>
+                  <td className="pr-3 text-xs text-slate-500">{o.client}</td><td className="pr-3 text-xs">{o.production_status}</td>
+                  <td className="pr-3 text-xs">{o.board}</td><td className="pr-3 tabular-nums">{o.printed_pct}%</td>
+                  <td className="pr-3 tabular-nums">{fmt(o.produced)}/{fmt(o.required)}</td></tr>
+              ))}
+            </tbody></table></div>
+        )}
+      </Card>
+
+      <Card className="p-4">
+        <SectionTitle hint={tr("plan_audit_nm_hint", { d: th.no_movement_days })}>{tr("plan_audit_no_movement")} ({c.no_movement.count})</SectionTitle>
+        {c.no_movement.count === 0 ? <Empty>{tr("plan_audit_ok")}</Empty> : (
+          <div className="overflow-auto max-h-[45vh]"><table className="min-w-full text-sm">
+            <Head cols={[tr("plan_order"), tr("plan_client"), tr("plan_board"), tr("plan_status"), tr("plan_audit_days")]} />
+            <tbody className="divide-y divide-slate-100">
+              {c.no_movement.items.map((o) => (
+                <tr key={o.order_number}><td className={`${td_} font-black`}>{o.order_number}</td>
+                  <td className="pr-3 text-xs text-slate-500">{o.client}</td><td className="pr-3 text-xs">{o.board}</td>
+                  <td className="pr-3 text-xs">{o.production_status}</td><td className="pr-3 text-right tabular-nums">{o.days ?? "—"}</td></tr>
+              ))}
+            </tbody></table></div>
+        )}
+      </Card>
+
+      <Card className="p-4">
+        <SectionTitle hint={tr("plan_audit_nc_hint", { h: th.no_capture_hours })}>{tr("plan_audit_no_capture")} ({c.machine_no_capture.count})</SectionTitle>
+        {c.machine_no_capture.count === 0 ? <Empty>{tr("plan_audit_ok")}</Empty> : (
+          <div className="flex flex-wrap gap-2">
+            {c.machine_no_capture.items.map((m) => (
+              <div key={m.machine} className="px-3 py-2 rounded-lg border border-amber-200 bg-amber-50 text-sm">
+                <b>{m.machine.replace("MAQUINA", "M")}</b>
+                <span className="text-xs text-slate-500 ml-2">{m.last ? m.last.slice(0, 16).replace("T", " ") : tr("plan_audit_never")}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
+
+      <Card className="p-4">
+        <SectionTitle hint={tr("plan_audit_op_hint", { p: th.overprint_pct })}>{tr("plan_audit_overprint")} ({c.overprint.count})</SectionTitle>
+        {c.overprint.count === 0 ? <Empty>{tr("plan_audit_ok")}</Empty> : (
+          <div className="overflow-auto max-h-[45vh]"><table className="min-w-full text-sm">
+            <Head cols={[tr("plan_order"), tr("plan_client"), tr("plan_board"), tr("plan_dash_produced"), tr("plan_audit_over")]} />
+            <tbody className="divide-y divide-slate-100">
+              {c.overprint.items.map((o) => (
+                <tr key={o.order_number}><td className={`${td_} font-black`}>{o.order_number}</td>
+                  <td className="pr-3 text-xs text-slate-500">{o.client}</td><td className="pr-3 text-xs">{o.board}</td>
+                  <td className="pr-3 tabular-nums">{fmt(o.produced)}/{fmt(o.required)}</td>
+                  <td className="pr-3 text-right tabular-nums font-bold text-red-600">{o.over_pct}%</td></tr>
+              ))}
+            </tbody></table></div>
+        )}
+      </Card>
+    </div>
+  );
+};
+
 /* ── Terminadas de pintar (seguimiento) ────────────────────────────────────
    Órdenes que ya se imprimieron (production_status EN PROCESO DE EMPAQUE) y
    siguen en proceso; se ven con su board/fecha para darles seguimiento. */
@@ -2499,6 +2605,7 @@ const TABS = [
   ["calendar", "plan_tab_calendar", CalendarDays],
   ["rules", "plan_tab_rules", Settings2],
   ["dashboard", "plan_tab_dashboard", Gauge],
+  ["audit", "plan_tab_audit", ClipboardCheck],
   ["data", "plan_tab_data", AlertTriangle],
   ["alerts", "plan_tab_alerts", BellRing],
   ["paint", "plan_tab_paint", PackageCheck],
@@ -2745,6 +2852,7 @@ const PlannerModule = () => {
             {tab === "calendar" && <CalendarTab cfgData={cfgData} canEdit={canEdit} onSaved={afterConfigChange} tr={tr} />}
             {tab === "rules" && <RulesTab cfgData={cfgData} canEdit={canEdit} onSaved={afterConfigChange} tr={tr} />}
             {tab === "dashboard" && <DashboardTab tr={tr} />}
+            {tab === "audit" && <AuditTab tr={tr} />}
             {tab === "data" && <DataTab tr={tr} />}
             {tab === "alerts" && <AlertsTab data={alertData} tr={tr} />}
             {tab === "paint" && <PaintFollowupTab tr={tr} />}

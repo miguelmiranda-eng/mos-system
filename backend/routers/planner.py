@@ -865,6 +865,82 @@ async def dashboard(request: Request):
     }
 
 
+# ── Auditoría de producción (excepciones; se corre cada hora) ───────────────
+@router.get("/audit")
+async def audit(request: Request):
+    """Revisa lo que NO cuadra entre producción (registros) y MOS: (1) impresas
+    sin avanzar status, (2) órdenes sin movimiento, (3) máquinas sin captura,
+    (4) sobreimpresión. Solo lectura; umbrales en Reglas."""
+    await require_auth(request)
+    ctx = await _context()
+    cfg, now = ctx["cfg"], ctx["now"]
+    pct = float(cfg.get("audit_printed_pct", 90)) / 100.0
+    over_pct = float(cfg.get("audit_overprint_pct", 115)) / 100.0
+    nm_days = int(cfg.get("audit_no_movement_days", 3))
+    nc_hours = int(cfg.get("audit_no_capture_hours", 24))
+    PRINTED = {s.upper() for s in cfg["printed_statuses"]}
+    orders = {o["order_id"]: o for o in ctx["orders"]}
+    machine_names = {m["machine"] for m in ctx["machines"]}
+
+    oids = [oid for oid in orders if oid]
+    produced, last_order = {}, {}
+    for i in range(0, len(oids), 400):
+        async for r in db.production_logs.aggregate([
+                {"$match": {"order_id": {"$in": oids[i:i + 400]}}},
+                {"$group": {"_id": "$order_id", "n": {"$sum": "$quantity_produced"},
+                            "last": {"$max": "$created_at"}}}]):
+            produced[r["_id"]] = r["n"]
+            last_order[r["_id"]] = r["last"]
+    last_machine = {}
+    async for r in db.production_logs.aggregate([
+            {"$group": {"_id": "$machine", "last": {"$max": "$created_at"}}}]):
+        last_machine[r["_id"]] = r["last"]
+
+    def req(o):
+        pos = len([x for x in (o.get("print_positions") or []) if x]) or 1
+        return int(o.get("quantity") or 0) * pos
+
+    status_behind, overprint, no_movement = [], [], []
+    cut_nm = (now - timedelta(days=nm_days)).astimezone(timezone.utc).isoformat()
+    for oid, o in orders.items():
+        r = req(o)
+        p = produced.get(oid, 0)
+        st = (o.get("production_status") or "").upper()
+        row = {"order_number": o.get("order_number"), "client": o.get("client"),
+               "board": o.get("board"), "production_status": o.get("production_status"),
+               "produced": p, "required": r}
+        if r and p / r >= pct and st not in PRINTED and st != "CANCELLED":
+            status_behind.append({**row, "printed_pct": round(p / r * 100)})
+        if r and p > r * over_pct and st != "CANCELLED":
+            overprint.append({**row, "over_pct": round(p / r * 100)})
+        if o.get("board") in machine_names and str(last_order.get(oid, "")) < cut_nm and st not in PRINTED:
+            last = last_order.get(oid)
+            days = round((now - datetime.fromisoformat(last).astimezone(TZ)).total_seconds() / 86400) if last else None
+            no_movement.append({**row, "days": days, "last": last})
+    status_behind.sort(key=lambda x: -x["produced"])
+    overprint.sort(key=lambda x: -x["over_pct"])
+    no_movement.sort(key=lambda x: (x["days"] is None, -(x["days"] or 0)))
+
+    cut_nc = (now - timedelta(hours=nc_hours)).astimezone(timezone.utc).isoformat()
+    machine_no_capture = [{"machine": m["machine"], "last": last_machine.get(m["machine"])}
+                          for m in ctx["active"] if str(last_machine.get(m["machine"], "")) < cut_nc]
+
+    return {
+        "generated_at": now.isoformat(),
+        "thresholds": {"printed_pct": cfg.get("audit_printed_pct", 90),
+                       "no_movement_days": nm_days, "no_capture_hours": nc_hours,
+                       "overprint_pct": cfg.get("audit_overprint_pct", 115)},
+        "checks": {
+            "status_behind": {"count": len(status_behind),
+                              "impressions": sum(x["produced"] for x in status_behind),
+                              "items": status_behind[:200]},
+            "no_movement": {"count": len(no_movement), "items": no_movement[:200]},
+            "machine_no_capture": {"count": len(machine_no_capture), "items": machine_no_capture},
+            "overprint": {"count": len(overprint), "items": overprint[:200]},
+        },
+    }
+
+
 # ── Ajustes manuales ───────────────────────────────────────────────────────
 @router.get("/overrides")
 async def list_overrides(request: Request):
