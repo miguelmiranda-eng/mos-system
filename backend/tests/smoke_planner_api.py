@@ -308,6 +308,8 @@ async def main():
               and cards.get("ord_g", {}).get("style") == "GI5000", cards.get("ord_g"))
         check("tarjetas: mock = imagen de Printavo, no la foto del piso",
               cards.get("ord_g", {}).get("mock") == "/api/uploads/mock.png", cards.get("ord_g"))
+        check("tarjetas: lista de mocks para el visor (sin la foto del piso)",
+              cards.get("ord_g", {}).get("mocks") == ["/api/uploads/mock.png"], cards.get("ord_g"))
         check("tarjetas: sin mock -> None", "ord_d" in cards and cards["ord_d"]["mock"] is None, cards.get("ord_d"))
         check("tarjetas: orden inexistente no aparece", "no_existe" not in cards)
         r = await op.post("/api/planner/cards", json={})

@@ -1,4 +1,5 @@
 import { Fragment, useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { createPortal } from "react-dom";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   ArrowLeft, CalendarClock, Power, RefreshCw, Loader2, Cpu, TrendingUp,
@@ -626,9 +627,58 @@ const GarmentDrawing = ({ color, position }) => {
   );
 };
 
+// Las URLs de order.images pueden ser relativas ('/api/uploads/…'): se arman con API.
+const mockSrc = (u) => (u && u.startsWith("/api/") ? `${API}${u.slice(4)}` : u);
+
+// Visor de mocks: la imagen en grande; con varios (frente, espalda…) se
+// recorren con las flechas. Esc o clic fuera cierra.
+const MockViewer = ({ urls, title, subtitle, onClose, tr }) => {
+  const [i, setI] = useState(0);
+  const n = urls.length;
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === "Escape") onClose();
+      else if (e.key === "ArrowRight") setI((x) => (x + 1) % n);
+      else if (e.key === "ArrowLeft") setI((x) => (x - 1 + n) % n);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [n, onClose]);
+  const nav = "absolute top-1/2 -translate-y-1/2 h-10 w-10 rounded-full bg-white/90 text-slate-800 text-2xl font-bold shadow hover:bg-white";
+  return createPortal(
+    <div className="fixed inset-0 z-[100] bg-black/75 flex items-center justify-center p-4"
+      onClick={(e) => { e.stopPropagation(); onClose(); }}>
+      <div className="relative bg-white rounded-xl shadow-2xl max-w-[92vw] max-h-[92vh] flex flex-col"
+        onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center gap-3 px-4 py-2.5 border-b border-slate-100">
+          <div className="min-w-0">
+            <div className="text-sm font-black text-slate-900">{title}</div>
+            {subtitle && <div className="text-xs text-slate-500 truncate">{subtitle}</div>}
+          </div>
+          {n > 1 && <span className="text-xs text-slate-500 tabular-nums">{i + 1} / {n}</span>}
+          <a href={mockSrc(urls[i])} target="_blank" rel="noreferrer"
+            className="ml-auto text-xs font-bold text-blue-600 hover:underline">{tr("plan_board_mock_open")}</a>
+          <button onClick={onClose} className="h-8 w-8 grid place-items-center rounded-lg hover:bg-slate-100"
+            title={tr("plan_board_close")}><X className="w-4 h-4" /></button>
+        </div>
+        <div className="relative p-3 flex items-center justify-center bg-slate-50 rounded-b-xl">
+          <img src={mockSrc(urls[i])} alt="" className="max-w-[88vw] max-h-[78vh] object-contain" />
+          {n > 1 && (
+            <>
+              <button className={`${nav} left-2`} onClick={() => setI((i - 1 + n) % n)}>‹</button>
+              <button className={`${nav} right-2`} onClick={() => setI((i + 1) % n)}>›</button>
+            </>
+          )}
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+};
+
 const GarmentThumb = ({ color, position, mock, pending, tr }) => {
   const [broken, setBroken] = useState(false);
-  const src = mock && !broken ? (mock.startsWith("/api/") ? `${API}${mock.slice(4)}` : mock) : null;
+  const src = mock && !broken ? mockSrc(mock) : null;
   if (src) {
     return <img src={src} alt="" loading="lazy" onError={() => setBroken(true)}
       className="w-full h-full object-contain" />;
@@ -674,13 +724,23 @@ const BoardCard = ({ job, segs, seq, live, today, onAdjust, tr, lang }) => {
     { contado: "plan_req_counted", cuadros: "plan_req_screens", label: "plan_req_label", ejemplo: "plan_req_sample" }[k] || k));
   const others = (job.machines || []).filter((m) => m !== first.machine).map((m) => m.replace("MAQUINA", "M"));
   const garment = [job.color, live?.style].filter(Boolean).join(" · ");
+  const mocks = live?.mocks?.length ? live.mocks : (live?.mock ? [live.mock] : []);
+  const [viewing, setViewing] = useState(false);
   return (
     <div onClick={() => onAdjust && onAdjust(job)}
       className={`group relative flex gap-3 p-3 rounded-xl border bg-white transition ${
         onAdjust ? "cursor-pointer hover:border-blue-300 hover:shadow-md" : ""} ${
         job.status === "VENCIDA" ? "border-red-200" : job.status === "EN_RIESGO" ? "border-amber-200" : "border-slate-200"}`}>
-      <div className="relative shrink-0 w-[72px] h-[84px] rounded-lg border border-slate-100 bg-slate-50 p-1.5">
+      <div className={`relative shrink-0 w-[72px] h-[84px] rounded-lg border border-slate-100 bg-slate-50 p-1.5 ${
+        mocks.length ? "cursor-zoom-in hover:ring-2 hover:ring-blue-300" : ""}`}
+        title={mocks.length ? tr("plan_board_mock_view") : undefined}
+        onClick={mocks.length ? (e) => { e.stopPropagation(); setViewing(true); } : undefined}>
         <GarmentThumb color={job.color} position={pos} mock={live?.mock} pending={live?.mock_pending} tr={tr} />
+        {mocks.length > 1 && (
+          <span className="absolute bottom-0.5 right-0.5 px-1 rounded bg-slate-800/80 text-white text-[9px] font-black tabular-nums">
+            {mocks.length}
+          </span>
+        )}
         <span className="absolute -top-2 -left-2 min-w-[22px] h-[22px] px-1 rounded-full bg-slate-800 text-white text-[11px] font-black grid place-items-center tabular-nums">
           {seq}
         </span>
@@ -760,6 +820,11 @@ const BoardCard = ({ job, segs, seq, live, today, onAdjust, tr, lang }) => {
           )}
         </div>
       </div>
+      {viewing && (
+        <MockViewer urls={mocks} tr={tr} onClose={() => setViewing(false)}
+          title={`${job.order_number}${job.customer_po ? ` · PO ${job.customer_po}` : ""}`}
+          subtitle={[job.branding || job.client, job.design, posLabel].filter(Boolean).join(" · ")} />
+      )}
     </div>
   );
 };

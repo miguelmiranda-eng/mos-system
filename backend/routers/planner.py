@@ -589,6 +589,7 @@ async def latest_run(request: Request):
 
 
 CARDS_MAX = 600
+MOCKS_PER_CARD = 8
 
 
 @router.post("/cards")
@@ -613,23 +614,25 @@ async def board_cards(request: Request):
         {"$match": {"order_id": {"$in": ids}}},
         {"$project": {"_id": 0, "order_id": 1, "production_status": 1, "style": 1,
                       "printavo_invoice_id": 1, "printavo_mocks_v": 1, "printavo_mocks_fail_at": 1,
-                      "mock": {"$first": {"$filter": {
+                      "mocks": {"$slice": [{"$filter": {
                           "input": {"$ifNull": ["$images", []]}, "as": "im",
                           "cond": {"$or": [{"$eq": ["$$im.source", "printavo"]},
-                                           {"$eq": ["$$im.kind", "mock"]}]}}}}}},
+                                           {"$eq": ["$$im.kind", "mock"]}]}}}, MOCKS_PER_CARD]}}},
     ]
     fail_cut = (datetime.now(timezone.utc) - timedelta(seconds=mock_trickle.RETRY_FAIL_S)).isoformat()
     cards = {}
     async for o in db.orders.aggregate(pipe):
-        mock = o.get("mock") or {}
-        url = mock.get("thumbnail_url") or mock.get("url")
-        if url and str(url).lower().endswith(".pdf"):
-            url = None
+        # Todos los mocks de la orden (frente, espalda…) para el visor; el
+        # primero es la miniatura de la tarjeta.
+        mocks = [m.get("url") for m in (o.get("mocks") or [])
+                 if m.get("url") and not str(m["url"]).lower().endswith(".pdf")]
+        url = mocks[0] if mocks else None
         pending = (not url and bool(o.get("printavo_invoice_id"))
                    and int(o.get("printavo_mocks_v") or 0) < MOCKS_VERSION
                    and not (o.get("printavo_mocks_fail_at") or "") >= fail_cut)
         cards[o["order_id"]] = {"production_status": o.get("production_status") or "",
-                                "style": o.get("style") or "", "mock": url, "mock_pending": pending}
+                                "style": o.get("style") or "", "mock": url, "mocks": mocks,
+                                "mock_pending": pending}
     mock_trickle.enqueue([i for i in ids if cards.get(i, {}).get("mock_pending")])
     if not mock_trickle.enabled():
         # Sin goteo (pruebas, sin credenciales): nada queda "buscando".
