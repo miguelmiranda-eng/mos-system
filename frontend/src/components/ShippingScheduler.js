@@ -145,8 +145,8 @@ const Cell = ({ value, onSave, type = 'text', list, placeholder, className = '',
 // selección + manija de arrastre (SEL_W).
 // SHIPPING# ya no es columna: es del envío y va en el encabezado del export.
 // El Excel la conserva (XL_COLS), llena con el valor del encabezado.
-const COLS = ['ORDER', 'CUSTOMER', 'DELIVER TO', 'BRANDING', 'CUSTOMER PO.', 'DESIGN #', 'PCS', 'STATUS', 'PRIORITY', 'NOTES', 'SHIPPING DATE', 'CARRIER'];
-const COL_W = [125, 110, 120, 130, 150, 150, 80, 190, 80, 190, 120, 120, 120];
+const COLS = ['ORDER', 'CUSTOMER', 'DELIVER TO', 'BRANDING', 'CUSTOMER PO.', 'STORE PO', 'DESIGN #', 'PCS', 'STATUS', 'PRIORITY', 'NOTES', 'SHIPPING DATE', 'CARRIER'];
+const COL_W = [125, 110, 120, 130, 150, 150, 150, 80, 190, 80, 190, 120, 120, 120];
 const XL_COLS = ['ORDER', 'CUSTOMER', 'SHIPPING#', ...COLS.slice(2)];
 const XL_W = [125, 110, 90, ...COL_W.slice(2, COLS.length)];
 const SEL_W = 46;
@@ -758,12 +758,14 @@ const ShippingScheduler = () => {
     head.push(showCrm ? [...XL_COLS, ...CRM_COLS] : XL_COLS);
     const body = ls.map((l) => [
       `${l.order_number}${l.late ? ' (LATE)' : ''}`, l.client || '', exp.shipping_no || '', l.delivery_to || '',
-      l.branding || '', l.customer_po || '', l.design_num || '',
+      l.branding || '', l.customer_po || '', l.store_po || '', l.design_num || '',
       l.pcs ?? '', `${l.status_effective || ''}${l.cancel_moved ? ' · SE MUEVE FECHA' : ''}`, l.priority ? `${PRIORITY_LABEL[l.priority]} PRIORIDAD` : '',
       l.ship_notes || '', l.shipping_date || '', l.carrier || '',
       ...(showCrm ? crmValues(l) : []),
     ]);
-    return [...head, ...body, ['', '', '', '', '', '', '', sumPcs(ls)], []];
+    // Total de piezas bajo la columna PCS (por nombre: las columnas cambian).
+    const total = XL_COLS.map((c) => (c === 'PCS' ? sumPcs(ls) : ''));
+    return [...head, ...body, total, []];
   };
   const writeXlsx = (aoa, sheet, file) => {
     const ws = XLSX.utils.aoa_to_sheet(aoa);
@@ -1149,8 +1151,8 @@ const ShippingScheduler = () => {
                     ref={(el) => { if (el) el.indeterminate = someSel && !allSel; }}
                     onChange={(e) => toggleAllIn(exp, e.target.checked)} className="cursor-pointer align-middle" />}
                 </th>
-                {COLS.map((c, i) => (
-                  <th key={c} className={`px-2 py-1.5 border-r border-slate-200 ${i === 7 ? 'text-right' : 'text-center'}`}>{c === 'PRIORITY' ? t('sch_priority') : c}</th>
+                {COLS.map((c) => (
+                  <th key={c} className={`px-2 py-1.5 border-r border-slate-200 ${c === 'PCS' ? 'text-right' : 'text-center'}`}>{c === 'PRIORITY' ? t('sch_priority') : c}</th>
                 ))}
                 {showCrm && CRM_COLS.map((c) => (
                   <th key={c} title={t('sch_crm_hint')} className="sch-crm px-2 py-1.5 border-r border-slate-200 text-center">{c}</th>
@@ -1204,6 +1206,7 @@ const ShippingScheduler = () => {
                     <td className="border-r border-slate-200"><Cell value={l.delivery_to} list="sch-deliver" className="text-center" onSave={(v) => updateLine(l, { delivery_to: v })} /></td>
                     <td className="border-r border-slate-200 text-center">{man ? <Cell value={l.branding} onSave={saveManual('branding')} className="text-center" /> : ro(l.branding)}</td>
                     <td className="border-r border-slate-200 text-center">{man ? <Cell value={l.customer_po} onSave={saveManual('customer_po')} className="text-center" /> : ro(l.customer_po)}</td>
+                    <td className="border-r border-slate-200 text-center">{ro(l.store_po)}</td>
                     <td className="border-r border-slate-200 text-center">{man ? <Cell value={l.design_num} onSave={saveManual('design_num')} className="text-center" /> : ro(l.design_num)}</td>
                     <td className="border-r border-slate-200"><Cell value={l.pcs} numeric className="font-bold"
                       title={l.quantity != null ? t('sch_ordered_qty', { n: fmtNum(l.qty_ordered ?? l.quantity) }) : undefined}
@@ -1269,7 +1272,7 @@ const ShippingScheduler = () => {
               {/* Renglón de captura: pega una o varias órdenes y Enter */}
               <tr className="bg-slate-50/60"
                 style={{ boxShadow: isDropBlock && dropHint.index === ls.length ? 'inset 0 3px 0 #2563eb' : undefined }}>
-                <td colSpan={7} className="px-2 py-1.5">
+                <td colSpan={8} className="px-2 py-1.5">
                   {!readOnly && <div className="flex items-center gap-2">
                     <Plus className="w-4 h-4 text-blue-600 flex-shrink-0" />
                     <input value={addText[exp.export_id] || ''}

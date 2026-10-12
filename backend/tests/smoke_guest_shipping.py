@@ -66,6 +66,7 @@ def sembrar():
     sdb.orders.insert_many([
         {"order_id": "o1", "order_number": "3301", "client": "GTS", "branding": "SPENCER", "customer_po": "23237",
          "board": "COMPLETOS", "production_status": "LISTO PARA ENVIO", "notes": "NOTA INTERNA SECRETA",
+         "store_po": "P026847", "store_po#": "P026847 - 323546",
          "packing_link": "https://docs.google.com/x", "quantity": 100},
         {"order_id": "o2", "order_number": "3302", "client": "GTS", "customer_po": "23237", "board": "COMPLETOS",
          "production_status": "LISTO PARA ENVIO", "quantity": 100},
@@ -150,6 +151,7 @@ async def main():
         check("sin enlaces, notas internas, bulk ni qty embarcada",
               not ({"pl_url", "pl_number", "notes", "bulk", "qty_shipped", "qty_ordered"} & set(x)), sorted(x))
         check("trae shipping_date (y ya no ship_from)", "shipping_date" in x and "ship_from" not in x, sorted(x))
+        check("STORE PO = el del CRM (store_po#)", x["store_po"] == "P026847 - 323546", x.get("store_po"))
         check("trae las columnas de la fila", x["client"] == "GTS" and x["customer_po"] == "23237"
               and x["status_effective"] == "ENVIADO" and x["pcs"] == 100, x)  # 3301 ya tiene packing sembrado
         check("la que no tiene packing muestra el status de MOS",

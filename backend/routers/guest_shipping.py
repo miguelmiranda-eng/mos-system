@@ -28,7 +28,7 @@ router = APIRouter(prefix="/api/guest-shipping", tags=["guest-shipping"])
 
 GUEST_EDITABLE = {"shipping_date": "SHIPPING DATE", "carrier": "CARRIER"}
 LINE_FIELDS = ("shipment_id", "export_id", "ship_date", "position", "order_number", "client", "branding",
-               "customer_po", "design_num", "pcs", "status_effective", "priority", "ship_notes",
+               "customer_po", "store_po", "design_num", "pcs", "status_effective", "priority", "ship_notes",
                "delivery_to", "shipping_date", "carrier", "late", "cancel_date")
 EXPORT_FIELDS = ("export_id", "date", "position", "export_no", "shipping_no", "pl_numbers", "truck",
                  "cutoff_time", "export_time")

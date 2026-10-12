@@ -111,7 +111,8 @@ MANUAL_KEYS = ("client", "branding", "customer_po", "design_num", "quantity")
 
 # Campos de la orden que la tabla necesita mostrar (unidos al leer).
 _ORDER_PROJ = {
-    "_id": 0, "order_id": 1, "order_number": 1, "customer_po": 1, "design_#": 1, "design_num": 1,
+    "_id": 0, "order_id": 1, "order_number": 1, "customer_po": 1, "store_po#": 1, "store_po": 1,
+    "design_#": 1, "design_num": 1,
     "cancel_date": 1, "ship_by": 1, "client": 1, "branding": 1, "quantity": 1,
     "production_status": 1, "board": 1, "notes": 1, "blank_status": 1,
     "packing_link": 1, "packing_link_label": 1, "packing_link_at": 1,
@@ -285,6 +286,9 @@ def _row(sched: dict, order: dict | None, pl_seed: dict | None = None,
         "status": sched.get("status"),
         # Unidos de la orden (fuente de verdad viva); línea manual = sus propios datos.
         "customer_po": o.get("customer_po") or mf.get("customer_po"),
+        # STORE PO: el mismo campo que la columna del CRM (`store_po#`, más
+        # completo: "P026847 - 323546"); `store_po` sólo si falta.
+        "store_po": o.get("store_po#") or o.get("store_po") or mf.get("store_po"),
         "design_num": o.get("design_#") or o.get("design_num") or mf.get("design_num"),
         "cancel_date": o.get("cancel_date"),
         # Tarea 3.1: fecha limite de ENVIO, independiente de cancel_date.

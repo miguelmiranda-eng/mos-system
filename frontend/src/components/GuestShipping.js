@@ -180,7 +180,7 @@ const GuestShipping = ({ user, onLogout }) => {
                   <table className="w-full border-collapse text-[12px]">
                     <thead>
                       <tr className="text-[10px] font-black uppercase tracking-wider">
-                        {['ORDER', 'CUSTOMER', 'DELIVER TO', 'BRANDING', 'CUSTOMER PO.', 'DESIGN #', 'PCS', 'STATUS', t('sch_priority'), 'NOTES'].map((c) => (
+                        {['ORDER', 'CUSTOMER', 'DELIVER TO', 'BRANDING', 'CUSTOMER PO.', 'STORE PO', 'DESIGN #', 'PCS', 'STATUS', t('sch_priority'), 'NOTES'].map((c) => (
                           <th key={c} className="px-2 py-1.5 text-left border-r border-slate-200 whitespace-nowrap">{c}</th>
                         ))}
                         <th className="px-2 py-1.5 text-left border-r border-slate-200 whitespace-nowrap">SHIPPING DATE ✎</th>
@@ -198,6 +198,7 @@ const GuestShipping = ({ user, onLogout }) => {
                           <td className="px-2 py-1.5">{l.delivery_to || '—'}</td>
                           <td className="px-2 py-1.5">{l.branding || '—'}</td>
                           <td className="px-2 py-1.5">{l.customer_po || '—'}</td>
+                          <td className="px-2 py-1.5">{l.store_po || '—'}</td>
                           <td className="px-2 py-1.5">{l.design_num || '—'}</td>
                           <td className="px-2 py-1.5 text-right font-bold tabular-nums">{l.pcs != null ? Number(l.pcs).toLocaleString('en-US') : '—'}</td>
                           <td className="px-2 py-1.5">
