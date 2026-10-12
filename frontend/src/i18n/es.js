@@ -3037,6 +3037,8 @@ const es = {
   sch_bulk_ready_col: "Listas",
   sch_bulk_state: "Estado",
   sch_status_shipped_hint: "ENVIADO: ya se sembró el packing de esta orden. En MOS sigue como {mos}.",
+  sch_repeat_hint: "Orden repetida (¿parcial o error?): va en {n} línea(s) más → {list}",
+  sch_repeat_same: "este mismo envío",
   sch_status_mos_hint: "Production status de la orden en MOS (sólo lectura: se cambia en la orden)",
   // Color de fila (relleno tipo Excel)
   sch_row_color: "Color",

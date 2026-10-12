@@ -120,6 +120,29 @@ async def main():
         check("PO 23239 completo al estar las 3 aquí y listas", L["3740"]["bulk"]["complete"] is True, L["3740"]["bulk"])
         check("PO 23300 completo al mover la hermana", L["3750"]["bulk"]["complete"] is True, L["3750"]["bulk"])
 
+        print("\n== Orden repetida (marca \"!\") ==")
+        L = {l["order_number"]: l for l in (await c.get(f"{API}/week?start=2026-10-05")).json()["lines"]}
+        check("orden en una sola línea → sin repeats", not L["3736"].get("repeats"), L["3736"].get("repeats"))
+        r = await c.post(f"{API}/lines", json={"export_id": "eB", "order_numbers": "3736"})
+        check("capturarla en otro export sigue avisando also_in", "3736" in (r.json().get("also_in") or {}), r.text[:200])
+        lines = (await c.get(f"{API}/week?start=2026-10-05")).json()["lines"]
+        mine = [l for l in lines if l["order_number"] == "3736"]
+        check("las DOS líneas de la orden quedan marcadas", len(mine) == 2 and all(len(l.get("repeats") or []) == 1 for l in mine), mine)
+        a = next(l for l in mine if l["export_id"] == "eA")
+        check("cada una dice dónde va la otra (EXP#91)", a["repeats"][0]["export_no"] == 91
+              and a["repeats"][0]["same_export"] is False, a["repeats"])
+        r = await c.post(f"{API}/lines/{a['shipment_id']}/duplicate")
+        lines = (await c.get(f"{API}/week?start=2026-10-05")).json()["lines"]
+        mine = [l for l in lines if l["order_number"] == "3736"]
+        check("parcial en el mismo envío también cuenta (3 líneas, 2 otras cada una)",
+              len(mine) == 3 and all(len(l["repeats"]) == 2 for l in mine)
+              and any(x["same_export"] for x in a and next(l for l in mine if l["shipment_id"] == a["shipment_id"])["repeats"]), mine)
+        for l in mine:
+            if l["shipment_id"] != a["shipment_id"]:
+                await c.delete(f"{API}/{l['shipment_id']}")
+        L = {l["order_number"]: l for l in (await c.get(f"{API}/week?start=2026-10-05")).json()["lines"]}
+        check("al quedar en una sola línea la marca se quita sola", not L["3736"].get("repeats"), L["3736"].get("repeats"))
+
         print("\n== ENVIADO al sembrar el packing (sólo en el programador) ==")
         sdb.orders.update_one({"order_number": "3741"}, {"$set": {"production_status": "EN PRODUCCION"}})
         L = {l["order_number"]: l for l in (await c.get(f"{API}/week?start=2026-10-05")).json()["lines"]}

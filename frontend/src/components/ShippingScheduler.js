@@ -947,6 +947,16 @@ const ShippingScheduler = () => {
       return `${e.export_no ? `EXP#${e.export_no}` : t('sch_block')}${d ? ` · ${pad(d.getDate())} ${MONTHS[L][d.getMonth()]}` : ''}`;
     }).join(', ');
   };
+  // ORDEN REPETIDA (backend _attach_repeats): dónde más va y con cuántas piezas.
+  const repeatHint = (l) => t('sch_repeat_hint', {
+    n: l.repeats.length,
+    list: l.repeats.map((x) => {
+      const d = x.date ? parseIso(x.date) : null;
+      const where = x.same_export ? t('sch_repeat_same')
+        : `${x.export_no ? `EXP#${x.export_no}` : t('sch_block')}${d ? ` · ${pad(d.getDate())} ${MONTHS[L][d.getMonth()]}` : ''}`;
+      return `${where}${x.pcs != null ? ` (${fmtNum(x.pcs)} pzs)` : ''}`;
+    }).join(', '),
+  });
   const bulkReasons = (l) => {
     const b = l.bulk;
     const head = t('sch_bulk_progress', { po: b.po, here: b.in_export, ready: b.ready, n: b.n });
@@ -1191,6 +1201,10 @@ const ShippingScheduler = () => {
                       <span className="inline-flex items-center gap-1 px-1 font-black text-slate-800 whitespace-nowrap">
                         {l.order_number}
                         {l.late && <span className="px-1 rounded bg-red-600 text-white text-[9px] no-underline" title={t('sch_late_hint', { d: l.ship_by || l.cancel_date || '' })}>LATE</span>}
+                        {l.repeats?.length > 0 && (
+                          <span title={repeatHint(l)}
+                            className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-red-600 text-white text-[10px] font-black cursor-help">!</span>
+                        )}
                         {l.bulk && (
                           <button onClick={() => setBulkSid(l.shipment_id)} title={bulkReasons(l)}
                             className="px-1 rounded text-white text-[9px] font-black whitespace-nowrap hover:opacity-80"

@@ -358,7 +358,39 @@ async def _rows(scheds, by_num=None, pl_by_num=None):
                  qty_shipped=embarcado.get(s.get("order_number"), 0))
             for s in scheds]
     await _attach_bulk(rows, by_num)
+    await _attach_repeats(rows)
     return rows
+
+
+# ── ORDEN REPETIDA: la misma orden en más de una línea ───────────────────────
+# Al capturarla sólo salía un aviso pasajero ("¿parcial?"); ahora cada línea
+# trae `repeats` = las OTRAS líneas de la misma orden (en este u otro export),
+# para marcarla con "!" mientras siga repetida (parcial o error). Se calcula al
+# leer: desaparece sola cuando la orden queda en una sola línea.
+async def _attach_repeats(rows: list) -> None:
+    nums = list({r["order_number"] for r in rows if r.get("export_id") and r.get("order_number")})
+    if not nums:
+        return
+    by_num = {}
+    async for s in db.scheduled_shipments.find(
+            {"order_number": {"$in": nums}, "export_id": {"$nin": [None, ""]}},
+            {"_id": 0, "shipment_id": 1, "order_number": 1, "export_id": 1, "ship_date": 1, "pcs": 1}):
+        by_num.setdefault(s["order_number"], []).append(s)
+    many = {n: v for n, v in by_num.items() if len(v) > 1}
+    if not many:
+        return
+    exp_ids = list({s["export_id"] for v in many.values() for s in v})
+    exps = {e["export_id"]: e async for e in db.shipping_exports.find(
+        {"export_id": {"$in": exp_ids}}, {"_id": 0, "export_id": 1, "export_no": 1, "date": 1})}
+    for r in rows:
+        others = [s for s in many.get(r.get("order_number"), []) if s["shipment_id"] != r.get("shipment_id")]
+        if r.get("export_id") and others:
+            r["repeats"] = [{
+                "shipment_id": s["shipment_id"], "export_id": s["export_id"],
+                "export_no": (exps.get(s["export_id"]) or {}).get("export_no"),
+                "date": (exps.get(s["export_id"]) or {}).get("date") or s.get("ship_date"),
+                "pcs": s.get("pcs"), "same_export": s["export_id"] == r["export_id"],
+            } for s in sorted(others, key=lambda s: str(s.get("ship_date") or ""))]
 
 
 # ── BULK PACK: órdenes hermanas del mismo PO ─────────────────────────────────

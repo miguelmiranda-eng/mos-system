@@ -3223,6 +3223,8 @@ const en = {
   sch_bulk_ready_col: "Ready",
   sch_bulk_state: "State",
   sch_status_shipped_hint: "SHIPPED: this order's packing was already seeded. In MOS it is still {mos}.",
+  sch_repeat_hint: "Repeated order (partial or mistake?): it is in {n} more line(s) → {list}",
+  sch_repeat_same: "this same shipment",
   sch_status_mos_hint: "Order production status in MOS (read-only: change it on the order)",
   // Row color (Excel-like fill)
   sch_row_color: "Color",
