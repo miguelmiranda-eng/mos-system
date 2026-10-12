@@ -784,7 +784,7 @@ const BoardCard = ({ job, segs, seq, live, today, onAdjust, tr, lang }) => {
           <span className="px-1.5 py-0.5 rounded-md bg-slate-100 text-slate-700 text-[11px] font-bold">{posLabel}</span>
           <span className={`px-1.5 py-0.5 rounded-md text-[11px] font-bold ${job.colors_known === false
             ? "bg-amber-50 text-amber-700" : "bg-slate-100 text-slate-700"}`}
-            title={job.colors_known === false ? tr("plan_board_colors_default") : ""}>
+            title={job.colors_known === false ? tr("plan_board_colors_default", { n: job.colors }) : ""}>
             {tr(job.colors_known === false ? "plan_board_colors_unknown" : "plan_board_colors", { n: job.colors })}
           </span>
           {garment && (
