@@ -9,7 +9,7 @@ import * as XLSX from "xlsx";
 import { saveAs } from "file-saver";
 import { toast } from "sonner";
 import { useAuth } from "../App";
-import { API } from "../lib/constants";
+import { API, getStatusColor } from "../lib/constants";
 
 const WS_URL = `${process.env.REACT_APP_BACKEND_URL || "http://localhost:8000"}`.replace(/^http/, "ws") + "/api/ws";
 import { useLang } from "../contexts/LanguageContext";
@@ -567,6 +567,314 @@ const MachineGrid = ({ run, onAdjust, tr }) => {
   );
 };
 
+/* ── Tablero visual por máquina ────────────────────────────────────────────
+   La cola de cada máquina como tarjetas, en el orden en que el motor la
+   programó. Lo que envejece (production_status) y el mock se piden EN VIVO a
+   /planner/cards; lo demás sale de la corrida. Sin mock (casi siempre: las
+   fotos de order.images son del piso), se dibuja la prenda con su color y la
+   zona de impresión de la posición. */
+const GARMENT_HEX = [
+  [/OFF ?WHITE|NATURAL|CREAM|IVORY|BONE|OATMEAL/, "#ece4d2"],
+  [/WHITE/, "#ffffff"],
+  [/BLACK/, "#1f1f22"],
+  [/CHARCOAL|DARK HEATHER|GRAPHITE|SMOKE/, "#3f4248"],
+  [/HEATHER|GREY|GRAY|ASH|SILVER/, "#a3a7ae"],
+  [/NAVY|MIDNIGHT/, "#1e2a4a"],
+  [/ROYAL/, "#2346a8"],
+  [/LIGHT BLUE|SKY|CAROLINA|BABY BLUE/, "#8fbfe6"],
+  [/TEAL|TURQ|AQUA/, "#14838a"],
+  [/BLUE|DENIM/, "#2f6fb0"],
+  [/MAROON|BURGUNDY|CARDINAL|WINE/, "#6b1f2c"],
+  [/RED/, "#c4282d"],
+  [/PINK|ROSE|BLUSH|FUCHSIA/, "#efa3bc"],
+  [/PURPLE|VIOLET|LAVENDER|LILAC/, "#6b4aa0"],
+  [/ORANGE|CORAL/, "#e8742a"],
+  [/YELLOW|GOLD|DAISY|MUSTARD|BANANA/, "#efc23a"],
+  [/OLIVE|MILITARY|ARMY/, "#5b5f3a"],
+  [/FOREST|KELLY|GREEN|SAGE|MINT|LIME/, "#2f7a45"],
+  [/BROWN|COFFEE|CHOCOLATE|MOCHA/, "#5a3b2a"],
+  [/KHAKI|TAN|CAMEL|SAND|BEIGE/, "#c2a878"],
+];
+const garmentHex = (color) => {
+  const c = String(color || "").toUpperCase();
+  if (!c) return null;
+  const hit = GARMENT_HEX.find(([re]) => re.test(c));
+  return hit ? hit[1] : null;
+};
+const isLight = (hex) => {
+  const n = parseInt(hex.slice(1), 16);
+  return ((n >> 16) * 299 + ((n >> 8) & 255) * 587 + (n & 255) * 114) / 1000 > 150;
+};
+// Zona de impresión dentro de la prenda (viewBox 64×64).
+const PRINT_ZONE = { FRENTE: [25, 20, 14, 12], ESPALDA: [21, 18, 22, 24], MANGA: [52, 15, 6, 6] };
+
+const GarmentDrawing = ({ color, position }) => {
+  const hex = garmentHex(color);
+  const fill = hex || "#e2e8f0";
+  const light = isLight(fill);
+  const zone = PRINT_ZONE[String(position || "").toUpperCase()];
+  return (
+    <svg viewBox="0 0 64 64" className="w-full h-full" aria-hidden="true">
+      <path d="M22 7 L11 11 L3 21 L10 29 L15 25 L15 58 L49 58 L49 25 L54 29 L61 21 L53 11 L42 7 C40 11 36 13 32 13 C28 13 24 11 22 7 Z"
+        fill={fill} stroke={light ? "#94a3b8" : "rgba(0,0,0,.35)"} strokeWidth="1.2" strokeLinejoin="round"
+        strokeDasharray={hex ? undefined : "3 2"} />
+      {zone && (
+        <rect x={zone[0]} y={zone[1]} width={zone[2]} height={zone[3]} rx="1.5" fill="none"
+          stroke={light ? "#64748b" : "rgba(255,255,255,.75)"} strokeWidth="1.1" strokeDasharray="2.5 1.8" />
+      )}
+    </svg>
+  );
+};
+
+const GarmentThumb = ({ color, position, mock, pending, tr }) => {
+  const [broken, setBroken] = useState(false);
+  const src = mock && !broken ? (mock.startsWith("/api/") ? `${API}${mock.slice(4)}` : mock) : null;
+  if (src) {
+    return <img src={src} alt="" loading="lazy" onError={() => setBroken(true)}
+      className="w-full h-full object-contain" />;
+  }
+  const drawn = <GarmentDrawing color={color} position={position} />;
+  if (!pending) return drawn;
+  return (
+    <div className="relative w-full h-full" title={tr("plan_board_mock_pending")}>
+      {drawn}
+      <Loader2 className="absolute bottom-0 right-0 w-3.5 h-3.5 text-slate-400 animate-spin" />
+    </div>
+  );
+};
+
+const fmtDate = (iso, lang, withYear = true) => {
+  if (!iso) return "";
+  const [y, m, d] = iso.slice(0, 10).split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString(lang === "en" ? "en-US" : "es-MX",
+    { day: "numeric", month: "short", ...(withYear ? { year: "numeric" } : {}), timeZone: "UTC" });
+};
+// "mar 13 oct": el día abreviado completo (L/M/Mi confunde martes con miércoles).
+const fmtDay = (iso, lang) => {
+  const [y, m, d] = iso.slice(0, 10).split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString(lang === "en" ? "en-US" : "es-MX",
+    { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" }).replace(/\./g, "").replace(",", "").replace(/ de /g, " ");
+};
+
+const BoardCard = ({ job, segs, seq, live, today, onAdjust, tr, lang }) => {
+  const first = segs[0];
+  const last = segs[segs.length - 1];
+  const when = (s) => `${s.date === today ? tr("plan_board_today") : fmtDay(s.date, lang)} · ${
+    s.shift === "DIA" ? tr("plan_shift_day") : tr("plan_shift_night")}`;
+  const pos = String(job.position || "").toUpperCase();
+  const posLabel = tr(`plan_pos_${pos}`) === `plan_pos_${pos}` ? job.position : tr(`plan_pos_${pos}`);
+  const status = live?.production_status || "";
+  const sc = getStatusColor(status);
+  const printed = Math.max(0, (job.hits || 0) - (job.remaining || 0));
+  const pctDone = job.hits ? Math.min(100, Math.round((printed / job.hits) * 100)) : 0;
+  // Lo que falta para arrancar sólo importa si todavía no arranca: con la orden
+  // ya imprimiéndose, "Falta label" es ruido.
+  const started = job.started || printed > 0;
+  const missing = started ? [] : Object.entries(job.ready || {}).filter(([, ok]) => !ok).map(([k]) => tr(
+    { contado: "plan_req_counted", cuadros: "plan_req_screens", label: "plan_req_label", ejemplo: "plan_req_sample" }[k] || k));
+  const others = (job.machines || []).filter((m) => m !== first.machine).map((m) => m.replace("MAQUINA", "M"));
+  const garment = [job.color, live?.style].filter(Boolean).join(" · ");
+  return (
+    <div onClick={() => onAdjust && onAdjust(job)}
+      className={`group relative flex gap-3 p-3 rounded-xl border bg-white transition ${
+        onAdjust ? "cursor-pointer hover:border-blue-300 hover:shadow-md" : ""} ${
+        job.status === "VENCIDA" ? "border-red-200" : job.status === "EN_RIESGO" ? "border-amber-200" : "border-slate-200"}`}>
+      <div className="relative shrink-0 w-[72px] h-[84px] rounded-lg border border-slate-100 bg-slate-50 p-1.5">
+        <GarmentThumb color={job.color} position={pos} mock={live?.mock} pending={live?.mock_pending} tr={tr} />
+        <span className="absolute -top-2 -left-2 min-w-[22px] h-[22px] px-1 rounded-full bg-slate-800 text-white text-[11px] font-black grid place-items-center tabular-nums">
+          {seq}
+        </span>
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-start gap-2">
+          <div className="min-w-0">
+            <div className="flex items-baseline gap-1.5 flex-wrap">
+              <span className="text-base font-black text-slate-900 tabular-nums">{job.order_number}</span>
+              {job.customer_po && <span className="text-[11px] text-slate-400 tabular-nums">PO {job.customer_po}</span>}
+              <OverrideBadges manual={job.manual} warnings={job.warnings} tr={tr} />
+            </div>
+            <div className="text-xs text-slate-500 break-words leading-snug" title={job.client}>
+              {[job.branding || job.client, job.design].filter(Boolean).join(" · ")}
+            </div>
+          </div>
+          <div className="ml-auto text-right shrink-0">
+            <div className="text-[11px] font-bold text-slate-600 whitespace-nowrap">{when(first)}</div>
+            {last !== first && (last.date !== first.date || last.shift !== first.shift) && (
+              <div className="text-[10px] text-slate-400 whitespace-nowrap">→ {when(last)}</div>
+            )}
+          </div>
+        </div>
+
+        <div className="mt-1 flex items-baseline gap-1.5">
+          <span className="text-lg font-black text-slate-900 tabular-nums">{fmt(job.quantity)}</span>
+          <span className="text-xs text-slate-500">{tr("plan_board_pieces")}</span>
+        </div>
+        {printed > 0 && (
+          <div className="mt-0.5">
+            <div className="h-1.5 rounded-full bg-slate-100 overflow-hidden">
+              <div className="h-full bg-emerald-500" style={{ width: `${pctDone}%` }} />
+            </div>
+            <div className="text-[10px] text-slate-500 tabular-nums mt-0.5">
+              {tr("plan_board_printed", { a: fmt(printed), b: fmt(job.hits) })}
+            </div>
+          </div>
+        )}
+
+        <div className="mt-1.5 flex flex-wrap gap-1">
+          <span className="px-1.5 py-0.5 rounded-md bg-slate-100 text-slate-700 text-[11px] font-bold">{posLabel}</span>
+          <span className={`px-1.5 py-0.5 rounded-md text-[11px] font-bold ${job.colors_known === false
+            ? "bg-amber-50 text-amber-700" : "bg-slate-100 text-slate-700"}`}
+            title={job.colors_known === false ? tr("plan_board_colors_default") : ""}>
+            {tr(job.colors_known === false ? "plan_board_colors_unknown" : "plan_board_colors", { n: job.colors })}
+          </span>
+          {garment && (
+            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-slate-100 text-slate-700 text-[11px] font-bold">
+              <span className="w-2.5 h-2.5 rounded-full border border-slate-300" style={{ background: garmentHex(job.color) || "transparent" }} />
+              {garment}
+            </span>
+          )}
+          <KindBadge kind={job.kind === "NUEVA" ? job.kind : null} state={job.sample_state} tr={tr} />
+          <ExtraWorkBadge extra={job.extra_work} tr={tr} />
+          {others.length > 0 && (
+            <span className="px-1.5 py-0.5 rounded-md bg-sky-50 text-sky-700 text-[11px] font-bold">
+              {tr("plan_board_shared", { m: others.join(", ") })}
+            </span>
+          )}
+          {missing.map((m) => (
+            <span key={m} className="px-1.5 py-0.5 rounded-md bg-red-50 text-red-600 text-[11px] font-bold">
+              {tr("plan_board_missing", { x: m })}
+            </span>
+          ))}
+        </div>
+
+        <div className="mt-2 flex items-center gap-2 flex-wrap">
+          <span className={`px-1.5 py-0.5 rounded border text-[11px] font-bold ${STATUS_STYLE[job.status] || STATUS_STYLE.SIN_FECHA}`}
+            title={tr(`plan_status_${job.status}`)}>
+            {job.cancel_date ? tr("plan_board_cancel", { d: fmtDate(job.cancel_date, lang) }) : tr("plan_board_no_cancel")}
+          </span>
+          {status && (
+            <span className="ml-auto px-2 py-0.5 rounded-md text-[11px] font-black uppercase tracking-wide"
+              style={sc ? { background: sc.bg, color: sc.text } : undefined}>
+              {status}
+            </span>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const BOARD_VIEW_KEY = "mos_plan_board_view";
+
+const MachineBoard = ({ run, onAdjust, tr }) => {
+  const { lang } = useLang();
+  const [machineF, setMachineF] = useState("");
+  const [q, setQ] = useState("");
+  const [live, setLive] = useState({});
+  const today = (run.now_local || "").slice(0, 10);
+
+  // Cola por máquina: cada trabajo aparece en cada máquina donde tiene
+  // segmentos, ordenado por su primer segmento ahí.
+  const columns = useMemo(() => {
+    const by = {};
+    (run.jobs || []).forEach((j) => {
+      const per = {};
+      (j.segments || []).forEach((s) => { (per[s.machine] = per[s.machine] || []).push(s); });
+      Object.entries(per).forEach(([m, segs]) => {
+        segs.sort((a, b) => (a.start || "").localeCompare(b.start || ""));
+        (by[m] = by[m] || []).push({ job: j, segs, hits: segs.reduce((a, s) => a + (s.hits || 0), 0) });
+      });
+    });
+    return (run.active_machines || Object.keys(by)).map((m) => {
+      const items = (by[m] || []).sort((a, b) => (a.segs[0].start || "").localeCompare(b.segs[0].start || ""));
+      const lastSeg = items.length ? items[items.length - 1].segs.slice(-1)[0] : null;
+      return { machine: m, items, hits: items.reduce((a, x) => a + x.hits, 0), until: lastSeg?.date };
+    });
+  }, [run]);
+
+  const orderIds = useMemo(() => [...new Set((run.jobs || []).map((j) => j.order_id).filter(Boolean))], [run]);
+  // Los mocks que faltan los trae el SERVIDOR en goteo (1 consulta a Printavo
+  // cada 30 s, una sola vez por orden); aquí sólo se vuelve a preguntar a MOS
+  // cada minuto mientras quede alguno pendiente, con tope de 45 vueltas.
+  useEffect(() => {
+    if (!orderIds.length) return undefined;
+    let alive = true;
+    let timer;
+    let rounds = 0;
+    const load = () => planner("/cards", { method: "POST", body: JSON.stringify({ order_ids: orderIds }) })
+      .then((r) => {
+        if (!alive) return;
+        const cards = r.cards || {};
+        setLive(cards);
+        rounds += 1;
+        if (rounds < 45 && Object.values(cards).some((c) => c.mock_pending)) timer = setTimeout(load, 60000);
+      })
+      .catch(() => { /* sin datos en vivo la tarjeta sale igual, sin status ni mock */ });
+    load();
+    return () => { alive = false; clearTimeout(timer); };
+  }, [orderIds]);
+
+  const needle = q.trim().toUpperCase();
+  const match = (j) => !needle || [j.order_number, j.customer_po, j.branding, j.client, j.design, j.color]
+    .some((v) => String(v || "").toUpperCase().includes(needle));
+  const shown = columns.filter((c) => !machineF || c.machine === machineF)
+    .map((c) => ({ ...c, visible: c.items.filter((x) => match(x.job)) }));
+  const single = !!machineF;
+
+  if (!(run.jobs || []).length) return <Empty>{tr("plan_grid_empty")}</Empty>;
+
+  return (
+    <div>
+      <div className="flex flex-wrap items-center gap-1.5 mb-3">
+        {[{ machine: "" }, ...columns].map((c) => (
+          <button key={c.machine || "all"} onClick={() => setMachineF(c.machine)}
+            className={`h-8 px-2.5 rounded-lg border text-xs font-bold tabular-nums ${machineF === c.machine
+              ? "bg-slate-800 border-slate-800 text-white" : "bg-white border-slate-200 text-slate-600 hover:border-slate-300"}`}>
+            {c.machine ? c.machine.replace("MAQUINA", "M") : tr("plan_board_all")}
+            {c.machine && <span className="ml-1 opacity-60">{c.items.length}</span>}
+          </button>
+        ))}
+        <div className="relative ml-auto">
+          <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={tr("plan_board_search")}
+            className="h-8 pl-8 pr-2 w-60 rounded-lg border border-slate-200 text-xs" />
+        </div>
+      </div>
+
+      <div className={single ? "" : "flex gap-3 overflow-x-auto pb-2"}>
+        {shown.map((c) => (
+          <div key={c.machine} className={single ? "" : "w-[340px] shrink-0"}>
+            <div className="flex items-baseline gap-2 px-1 mb-2">
+              <span className="text-sm font-black text-slate-800">{c.machine.replace("MAQUINA", tr("plan_board_machine_prefix"))}</span>
+              <span className="text-[11px] text-slate-500 tabular-nums">
+                {tr("plan_board_orders", { n: c.items.length })} · {fmt(c.hits)} {tr("plan_hits").toLowerCase()}
+              </span>
+              {c.until && (
+                <span className="ml-auto text-[11px] text-slate-400 whitespace-nowrap">
+                  {tr("plan_board_until", { d: fmtDate(c.until, lang, false) })}
+                </span>
+              )}
+            </div>
+            <div className={single
+              ? "grid gap-3 sm:grid-cols-2 xl:grid-cols-3"
+              : "space-y-2.5 max-h-[70vh] overflow-y-auto pr-1 pt-2 pl-2"}>
+              {c.visible.length === 0 ? (
+                <div className="py-8 text-center text-xs text-slate-400 border border-dashed border-slate-200 rounded-xl">
+                  {c.items.length ? tr("plan_board_no_match") : tr("plan_board_empty_machine")}
+                </div>
+              ) : c.visible.map((x) => (
+                <BoardCard key={`${x.job.job_id}|${c.machine}`} job={x.job} segs={x.segs}
+                  seq={c.items.indexOf(x) + 1} live={live[x.job.order_id]} today={today}
+                  onAdjust={onAdjust} tr={tr} lang={lang} />
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
+
 /* ── Autorizar movimientos ─────────────────────────────────────────────────
    El motor propone; un administrador autoriza. Autorizar mueve la orden a su
    tablero MAQUINA por el mismo camino que un movimiento manual del CRM
@@ -743,6 +1051,14 @@ const ScheduleTab = ({ config, efficiency, run, running, onRun, canEdit, onToggl
   const [miss, setMiss] = useState("");
   const [onlyThat, setOnlyThat] = useState(false);
   const [blockedSearch, setBlockedSearch] = useState("");
+  // Vista del programa por máquina (tarjetas o rejilla por turno), recordada por usuario.
+  const [boardView, setBoardViewState] = useState(() => {
+    try { return localStorage.getItem(BOARD_VIEW_KEY) || "board"; } catch { return "board"; }
+  });
+  const setBoardView = (v) => {
+    setBoardViewState(v);
+    try { localStorage.setItem(BOARD_VIEW_KEY, v); } catch { /* sin storage, sólo esta sesión */ }
+  };
   // Rango por CANCEL DATE (YYYY-MM-DD, se compara como texto).
   const [dFrom, setDFrom] = useState("");
   const [dTo, setDTo] = useState("");
@@ -915,8 +1231,20 @@ const ScheduleTab = ({ config, efficiency, run, running, onRun, canEdit, onToggl
       <AppliedMovesCard rows={applied} canEdit={canEdit} onRevert={onRevertMove} lastResults={lastApply} tr={tr} />
 
       <Card className="p-4">
-        <SectionTitle hint={tr("plan_grid_hint")}>{tr("plan_grid_title")}</SectionTitle>
-        <MachineGrid run={run} onAdjust={canEdit ? onAdjust : null} tr={tr} />
+        <div className="flex flex-wrap items-start gap-2">
+          <SectionTitle hint={boardView === "board" ? tr("plan_board_hint") : tr("plan_grid_hint")}>{tr("plan_grid_title")}</SectionTitle>
+          <div className="ml-auto inline-flex rounded-lg border border-slate-200 p-0.5">
+            {[["board", tr("plan_view_board")], ["grid", tr("plan_view_grid")]].map(([k, label]) => (
+              <button key={k} onClick={() => setBoardView(k)}
+                className={`h-7 px-3 rounded-md text-xs font-bold ${boardView === k ? "bg-slate-800 text-white" : "text-slate-600"}`}>
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+        {boardView === "board"
+          ? <MachineBoard run={run} onAdjust={canEdit ? onAdjust : null} tr={tr} />
+          : <MachineGrid run={run} onAdjust={canEdit ? onAdjust : null} tr={tr} />}
       </Card>
 
       <Card className="p-4">

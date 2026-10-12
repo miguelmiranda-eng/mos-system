@@ -1798,9 +1798,16 @@ async def traer_mocks_printavo(order_id: str, request: Request):
     no depende de que Printavo la siga sirviendo. Idempotente: un mockup ya
     traido (printavo_mockup_id) no se repite. Solo imagenes: un PDF adjunto (p.ej.
     el PO escaneado que a veces se pega como mockup) no es el arte."""
+    user = await require_auth(request)
+    return await traer_mocks_de_orden(order_id, user)
+
+
+async def traer_mocks_de_orden(order_id: str, user: dict) -> dict:
+    """Núcleo de POST /{order_id}/images/printavo, sin la sesión: lo comparten la
+    ficha del work order y el goteo del tablero de Planeación
+    (services/mock_trickle.py). UNA consulta a Printavo por llamada."""
     import httpx
     import printavo_client
-    user = await require_auth(request)
     order = await db.orders.find_one({"order_id": order_id}, {"_id": 0, "printavo_invoice_id": 1, "images": 1})
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")

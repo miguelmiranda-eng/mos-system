@@ -588,6 +588,56 @@ async def latest_run(request: Request):
     return run or {}
 
 
+CARDS_MAX = 600
+
+
+@router.post("/cards")
+async def board_cards(request: Request):
+    """Datos EN VIVO para las tarjetas del tablero visual por máquina: lo que la
+    corrida guardada no trae o envejece (production_status, style) y el mock.
+    Mock = sólo imágenes marcadas como mock (source=printavo o kind=mock): las
+    demás de order.images son fotos del piso (QC, comentarios) y no sirven de
+    miniatura. Este endpoint NUNCA llama a Printavo: las órdenes que aún no se
+    revisan se encolan en el goteo (services/mock_trickle.py, una consulta cada
+    30 s, una sola vez por orden) y salen con mock_pending=True; el frontend
+    vuelve a preguntar más tarde. El orden de order_ids es la prioridad del goteo
+    (el tablero los manda en orden de arranque)."""
+    from routers.orders import MOCKS_VERSION
+    from services import mock_trickle
+    await require_auth(request)
+    body = await request.json()
+    ids = [str(i) for i in (body.get("order_ids") or []) if i][:CARDS_MAX]
+    if not ids:
+        return {"cards": {}, "mocks": mock_trickle.status()}
+    pipe = [
+        {"$match": {"order_id": {"$in": ids}}},
+        {"$project": {"_id": 0, "order_id": 1, "production_status": 1, "style": 1,
+                      "printavo_invoice_id": 1, "printavo_mocks_v": 1, "printavo_mocks_fail_at": 1,
+                      "mock": {"$first": {"$filter": {
+                          "input": {"$ifNull": ["$images", []]}, "as": "im",
+                          "cond": {"$or": [{"$eq": ["$$im.source", "printavo"]},
+                                           {"$eq": ["$$im.kind", "mock"]}]}}}}}},
+    ]
+    fail_cut = (datetime.now(timezone.utc) - timedelta(seconds=mock_trickle.RETRY_FAIL_S)).isoformat()
+    cards = {}
+    async for o in db.orders.aggregate(pipe):
+        mock = o.get("mock") or {}
+        url = mock.get("thumbnail_url") or mock.get("url")
+        if url and str(url).lower().endswith(".pdf"):
+            url = None
+        pending = (not url and bool(o.get("printavo_invoice_id"))
+                   and int(o.get("printavo_mocks_v") or 0) < MOCKS_VERSION
+                   and not (o.get("printavo_mocks_fail_at") or "") >= fail_cut)
+        cards[o["order_id"]] = {"production_status": o.get("production_status") or "",
+                                "style": o.get("style") or "", "mock": url, "mock_pending": pending}
+    mock_trickle.enqueue([i for i in ids if cards.get(i, {}).get("mock_pending")])
+    if not mock_trickle.enabled():
+        # Sin goteo (pruebas, sin credenciales): nada queda "buscando".
+        for c in cards.values():
+            c["mock_pending"] = False
+    return {"cards": cards, "mocks": mock_trickle.status()}
+
+
 @router.get("/lookup")
 async def lookup(request: Request, q: str = ""):
     """Buscador global del módulo: órdenes por número, PO de cliente, cliente,

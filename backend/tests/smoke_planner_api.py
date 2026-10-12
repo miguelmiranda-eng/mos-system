@@ -91,7 +91,11 @@ def sembrar():
         {**base, "order_id": "ord_f", "order_number": "9006", "board": "BLANKS", "quantity": 400,
          "colors": None, "hits_impresiones": None, "print_positions": None},
         {**base, "order_id": "ord_g", "order_number": "9007", "board": "MAQUINA1", "quantity": 500,
-         "print_positions": ["FRENTE"], "hits_impresiones": 1, "production_status": "EN PRODUCCION"},
+         "print_positions": ["FRENTE"], "hits_impresiones": 1, "production_status": "EN PRODUCCION",
+         "style": "GI5000",
+         # Foto del piso primero y luego el mock de Printavo: la tarjeta toma SOLO el mock.
+         "images": [{"filename": "image.jpg", "url": "/api/uploads/foto_piso.jpg"},
+                    {"filename": "printavo_mock_0.png", "url": "/api/uploads/mock.png", "source": "printavo"}]},
     ])
     # ord_h: NUEVA con ejemplo aprobado en el módulo de Ejemplos; ord_i: NUEVA sin aprobar.
     sdb.orders.insert_many([
@@ -295,6 +299,21 @@ async def main():
               and bi["kind"] == "NUEVA", bi)
         r = await sup.get("/api/planner/shadow-run/latest")
         check("última corrida guardada", r.json().get("run_id") == timer_run_id)
+
+        print("\n== Tarjetas del tablero visual ==")
+        r = await op.post("/api/planner/cards", json={"order_ids": ["ord_g", "ord_d", "no_existe"]})
+        cards = r.json().get("cards", {}) if r.status_code == 200 else {}
+        check("tarjetas: cualquiera con sesión las lee", r.status_code == 200, r.status_code)
+        check("tarjetas: status y style en vivo", cards.get("ord_g", {}).get("production_status") == "EN PRODUCCION"
+              and cards.get("ord_g", {}).get("style") == "GI5000", cards.get("ord_g"))
+        check("tarjetas: mock = imagen de Printavo, no la foto del piso",
+              cards.get("ord_g", {}).get("mock") == "/api/uploads/mock.png", cards.get("ord_g"))
+        check("tarjetas: sin mock -> None", "ord_d" in cards and cards["ord_d"]["mock"] is None, cards.get("ord_d"))
+        check("tarjetas: orden inexistente no aparece", "no_existe" not in cards)
+        r = await op.post("/api/planner/cards", json={})
+        check("tarjetas: lista vacía -> vacío", r.status_code == 200 and r.json().get("cards") == {}, r.text[:80])
+        check("tarjetas: sin goteo (pruebas) nada queda 'buscando mock'",
+              not any(c.get("mock_pending") for c in cards.values()), cards)
 
         print("\n== Ajustes manuales ==")
         r = await op.post("/api/planner/overrides", json={"order_id": "ord_b", "position": "FRENTE",
