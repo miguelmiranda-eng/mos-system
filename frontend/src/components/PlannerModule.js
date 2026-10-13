@@ -4,7 +4,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   ArrowLeft, CalendarClock, Power, RefreshCw, Loader2, Cpu, TrendingUp,
   Settings2, CalendarDays, AlertTriangle, Trash2, Plus, Save, FlaskConical, Eye, Search,
-  Pin, ArrowUpDown, LogIn, PauseCircle, Undo2, X, Tv, Target, SlidersHorizontal, BellRing, CheckCircle2, Download, PackageCheck, Gauge, ClipboardCheck,
+  Pin, ArrowUpDown, LogIn, PauseCircle, Undo2, X, Tv, SlidersHorizontal, BellRing, CheckCircle2, Download, PackageCheck, Gauge, ClipboardCheck,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { saveAs } from "file-saver";
@@ -2235,448 +2235,6 @@ const OvertimeCell = ({ w, savedEntries, simEntries, onOpen, onRemove, busy, tr 
   );
 };
 
-/* ── Plan comprometido: parámetros vs. real y compromiso semanal ──────────────
-   Para la junta del viernes. El plan de Proyección sale de parámetros
-   manuales; el panel los pone al lado de lo que dicen las capturas, y
-   "Comprometer" deja la FOTO por día y turno contra la que se califica
-   (planner_commitments + metas de producción TURNO 1/TURNO 2). */
-const shiftName = (key, tr) => (key === "DIA" ? tr("plan_shift_day") : key === "NOCHE" ? tr("plan_shift_night") : key);
-const pctColor = (p) => (p == null ? "text-slate-400" : p >= 100 ? "text-emerald-600" : p >= 80 ? "text-amber-600" : "text-red-600");
-
-const ParamsPanel = ({ data, tr }) => {
-  if (!data) return null;
-  const rw = data.regular_week || {};
-  const wpct = rw.plan ? Math.round((rw.real / rw.plan) * 100) : null;
-  return (
-    <Card className="p-4">
-      <SectionTitle hint={tr("plan_pv_hint", { from: data.window?.from, to: data.window?.to })}>{tr("plan_pv_title")}</SectionTitle>
-      <div className="overflow-x-auto">
-        <table className="min-w-full text-sm">
-          <thead><tr className="text-left text-[11px] uppercase tracking-wider text-slate-400">
-            <th className="py-2 pr-4">{tr("plan_pv_shift")}</th>
-            <th className="pr-4 text-right">{tr("plan_pv_crews")}</th>
-            <th className="pr-4 text-right">{tr("plan_pv_ops")}</th>
-            <th className="pr-4 text-right">{tr("plan_pv_machines")}</th>
-            <th className="pr-4 text-right">{tr("plan_pv_per_crew")}</th>
-            <th className="pr-4 text-right">{tr("plan_pv_total")}</th>
-            <th className="text-right">{tr("plan_pv_hours")}</th>
-          </tr></thead>
-          <tbody className="divide-y divide-slate-100">
-            {(data.shifts || []).map((sh) => {
-              const r = sh.real || {};
-              const p = sh.plan_total ? Math.round(((r.total_median || 0) / sh.plan_total) * 100) : null;
-              return (
-                <tr key={sh.key}>
-                  <td className="py-2 pr-4 font-bold">{shiftName(sh.key, tr)} <span className="text-[11px] font-normal text-slate-400">{sh.goal_key}</span></td>
-                  <td className="pr-4 text-right tabular-nums">{sh.crews_cfg}</td>
-                  <td className="pr-4 text-right tabular-nums text-violet-700">{r.operators_median ?? "—"}</td>
-                  <td className="pr-4 text-right tabular-nums text-violet-700">{r.machines_median ?? "—"}</td>
-                  <td className="pr-4 text-right tabular-nums whitespace-nowrap">
-                    {fmt(sh.hits_per_crew_cfg)}{sh.efficiency !== 1 ? <span className="text-[11px] text-slate-400"> ×{Math.round(sh.efficiency * 100)}%</span> : null}
-                    <span className="text-slate-300"> / </span><b className="text-violet-700">{fmt(r.per_crew)}</b>
-                  </td>
-                  <td className="pr-4 text-right tabular-nums whitespace-nowrap">
-                    {fmt(sh.plan_total)}<span className="text-slate-300"> / </span><b className="text-violet-700">{fmt(r.total_median)}</b>
-                    {p != null && <b className={`ml-1.5 ${pctColor(p)}`}>{p}%</b>}
-                  </td>
-                  <td className="text-right tabular-nums">{sh.hours}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-      <div className="mt-2 text-xs text-slate-600">
-        {tr("plan_pv_week", { plan: fmt(rw.plan), real: fmt(rw.real), pct: wpct ?? "—", avg: fmt(data.weekly_avg), w: data.weeks || 0 })}
-      </div>
-      <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
-        <span className="font-bold text-slate-500">{tr("plan_pv_scores")}:</span>
-        {(data.scores || []).filter((x) => x.days_closed).length === 0
-          ? <span className="text-slate-400">{tr("plan_pv_no_scores")}</span>
-          : (data.scores || []).filter((x) => x.days_closed).map((x) => (
-            <span key={x.week_start} className="px-2 py-0.5 rounded-md bg-slate-50 border border-slate-200 tabular-nums">
-              {x.week_start}: {fmt(x.actual)} / {fmt(x.committed)} <b className={pctColor(x.pct)}>{x.pct}%</b>
-            </span>
-          ))}
-      </div>
-    </Card>
-  );
-};
-
-const CommitModal = ({ weekStart, onClose, onDone, tr }) => {
-  const { lang } = useLang();
-  const [basis, setBasis] = useState("params");
-  const [pv, setPv] = useState(null);
-  const [cells, setCells] = useState({});
-  const [note, setNote] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState("");
-
-  useEffect(() => {
-    let alive = true;
-    setErr("");
-    planner(`/commitments/preview?week=${weekStart}&basis=${basis}`).then((r) => {
-      if (!alive) return;
-      setPv(r);
-      // Editables: lo ya comprometido si existe y no se cambió la base; si no, el plan calculado.
-      const next = {};
-      r.days.forEach((d) => {
-        const src = d.committed && basis === (r.existing?.basis || "params") ? d.committed : d.plan;
-        next[d.date] = Object.fromEntries(r.shifts.map((s) => [s.key, String(src?.[s.key] ?? 0)]));
-      });
-      setCells(next);
-    }).catch((e) => { if (alive) setErr(e.message); });
-    return () => { alive = false; };
-  }, [weekStart, basis]);
-
-  const num = (v) => Math.max(0, Math.round(Number(v) || 0));
-  const total = pv ? pv.days.reduce((a, d) => a + (d.locked
-    ? Number(d.committed?.total || 0)
-    : pv.shifts.reduce((b, s) => b + num(cells[d.date]?.[s.key]), 0)), 0) : 0;
-
-  const save = async () => {
-    setBusy(true);
-    try {
-      const days = pv.days.filter((d) => !d.locked).map((d) => ({
-        date: d.date, shifts: Object.fromEntries(pv.shifts.map((s) => [s.key, num(cells[d.date]?.[s.key])])),
-      }));
-      const r = await planner("/commitments", { method: "POST", body: JSON.stringify({ week_start: weekStart, basis, days, note }) });
-      toast.success(tr("plan_cm_done", { n: fmt(r.commitment.total) }));
-      onDone();
-    } catch (e) { toast.error(e.message); } finally { setBusy(false); }
-  };
-
-  const pcDay = pv?.per_crew?.DIA;
-  const pcNight = pv?.per_crew?.NOCHE;
-  return createPortal(
-    <div className="fixed inset-0 z-[90] bg-black/40 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-white rounded-xl shadow-2xl w-full max-w-3xl max-h-[92vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center gap-2 px-5 py-3 border-b border-slate-100">
-          <ClipboardCheck className="w-5 h-5 text-blue-600" />
-          <h3 className="text-base font-black text-slate-900">{tr("plan_cm_title", { w: pv?.iso_week ?? "", from: weekStart })}</h3>
-          <button onClick={onClose} className="ml-auto h-8 w-8 grid place-items-center rounded-lg hover:bg-slate-100"><X className="w-4 h-4" /></button>
-        </div>
-        <div className="px-5 py-3 overflow-y-auto space-y-3">
-          <p className="text-xs text-slate-500">{tr("plan_cm_hint")}</p>
-          {pv?.existing && (
-            <div className="text-xs px-3 py-2 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800">
-              {tr("plan_cm_prev", { v: pv.existing.version, by: pv.existing.committed_by_name || pv.existing.committed_by,
-                at: new Date(pv.existing.committed_at).toLocaleString(lang === "en" ? "en-US" : "es-MX"), n: fmt(pv.existing.total) })}
-            </div>
-          )}
-          <div className="flex flex-wrap items-center gap-2 text-xs">
-            <span className="font-bold text-slate-500">{tr("plan_cm_basis")}</span>
-            {[["params", tr("plan_cm_basis_params", { n: fmt(pcDay) })], ["real", tr("plan_cm_basis_real")]].map(([k, label]) => (
-              <button key={k} onClick={() => setBasis(k)}
-                className={`h-8 px-3 rounded-lg border font-bold ${basis === k ? "bg-slate-800 border-slate-800 text-white" : "bg-white border-slate-200 text-slate-600"}`}>
-                {label}
-              </button>
-            ))}
-            {pv && basis === "real" && (
-              <span className="text-violet-700">{tr("plan_cm_real_rates", { d: fmt(pcDay), n: fmt(pcNight) })}</span>
-            )}
-          </div>
-          {err && <div className="text-sm text-red-600">{err}</div>}
-          {!pv ? <div className="py-10 flex justify-center"><Loader2 className="w-6 h-6 animate-spin text-blue-600" /></div> : (
-            <table className="min-w-full text-sm">
-              <thead><tr className="text-left text-[11px] uppercase tracking-wider text-slate-400">
-                <th className="py-2 pr-3">{tr("plan_cm_day")}</th>
-                {pv.shifts.map((s) => (
-                  <th key={s.key} className="pr-3 text-right">{shiftName(s.key, tr)} <span className="normal-case font-normal">({s.goal_key})</span></th>
-                ))}
-                <th className="text-right">{tr("plan_cm_total")}</th>
-              </tr></thead>
-              <tbody className="divide-y divide-slate-100">
-                {pv.days.map((d) => {
-                  const rowTotal = d.locked ? Number(d.committed?.total || 0)
-                    : pv.shifts.reduce((a, s) => a + num(cells[d.date]?.[s.key]), 0);
-                  return (
-                    <tr key={d.date} className={d.locked ? "bg-slate-50 text-slate-400" : ""}>
-                      <td className="py-1.5 pr-3 whitespace-nowrap">
-                        <b className={d.locked ? "" : "text-slate-800"}>{fmtDay(d.date, lang)}</b>
-                        {d.holiday && <span className="ml-1 text-[11px] text-red-500">{d.holiday}</span>}
-                        {d.locked && <span className="ml-1 text-[10px] uppercase">{tr("plan_cm_locked")}</span>}
-                      </td>
-                      {pv.shifts.map((s) => (
-                        <td key={s.key} className="pr-3 text-right">
-                          {d.locked ? <span className="tabular-nums">{d.committed ? fmt(d.committed[s.key]) : "—"}</span> : (
-                            <span className="inline-flex items-center gap-1.5">
-                              <span className="text-[10px] text-slate-400 tabular-nums" title={tr("plan_cm_crews_hint")}>
-                                {d.crews[s.key]} {tr("plan_cm_crews")}
-                              </span>
-                              <input type="number" min={0} value={cells[d.date]?.[s.key] ?? ""}
-                                onChange={(e) => setCells({ ...cells, [d.date]: { ...cells[d.date], [s.key]: e.target.value } })}
-                                className="h-8 w-24 px-2 rounded-md border border-slate-200 text-sm text-right tabular-nums" />
-                            </span>
-                          )}
-                        </td>
-                      ))}
-                      <td className="text-right tabular-nums font-bold">{rowTotal ? fmt(rowTotal) : <span className="text-slate-300">0</span>}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-              <tfoot><tr>
-                <td className="pt-2 font-black">{tr("plan_cm_total")}</td>
-                <td colSpan={pv.shifts.length} />
-                <td className="pt-2 text-right text-lg font-black tabular-nums">{fmt(total)}</td>
-              </tr></tfoot>
-            </table>
-          )}
-          <p className="text-[11px] text-amber-700">{tr("plan_cm_zero_hint")}</p>
-          <label className="block text-xs text-slate-500">{tr("plan_cm_note")}
-            <input value={note} onChange={(e) => setNote(e.target.value)} maxLength={300}
-              className="mt-1 h-9 w-full px-2 rounded-lg border border-slate-200 text-sm" />
-          </label>
-        </div>
-        <div className="flex items-center gap-2 px-5 py-3 border-t border-slate-100">
-          <button onClick={onClose} className="h-9 px-3 rounded-lg border border-slate-200 text-sm font-bold">{tr("plan_cm_cancel")}</button>
-          <button onClick={save} disabled={busy || !pv || !pv.days.some((d) => !d.locked)}
-            className="ml-auto h-9 px-4 rounded-lg bg-blue-600 text-white text-sm font-black inline-flex items-center gap-2 disabled:opacity-50">
-            {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <ClipboardCheck className="w-4 h-4" />} {tr("plan_cm_confirm")}
-          </button>
-        </div>
-      </div>
-    </div>,
-    document.body,
-  );
-};
-
-/* ── Plan vs Real ───────────────────────────────────────────────────────────
-   La semana COMPROMETIDA contra lo real por día y turno (GET /plan-vs-actual).
-   Sólo se califica lo cerrado; el día en curso se ve "en curso" y la
-   producción sin meta va aparte. Clic en una celda = detalle por máquina. */
-const PvaPct = ({ p, risk }) => (p == null ? <span className="text-slate-300">—</span> : (
-  <b className={`px-1.5 py-0.5 rounded text-[11px] tabular-nums ${p >= 100 ? "bg-emerald-50 text-emerald-700"
-    : p >= risk ? "bg-amber-50 text-amber-700" : "bg-red-50 text-red-700"}`}>{p}%</b>
-));
-
-const PlanVsActualTab = ({ tr, onGoTab }) => {
-  const { lang } = useLang();
-  const [week, setWeek] = useState("");
-  const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [sel, setSel] = useState(null);           // {date, shift}
-
-  useEffect(() => {
-    let alive = true;
-    setLoading(true);
-    planner(`/plan-vs-actual${week ? `?week=${week}` : ""}`)
-      .then((r) => { if (alive) { setData(r); setSel(null); } })
-      .catch((e) => toast.error(e.message))
-      .finally(() => { if (alive) setLoading(false); });
-    return () => { alive = false; };
-  }, [week]);
-
-  if (loading && !data) return <div className="py-20 flex justify-center"><Loader2 className="w-7 h-7 animate-spin text-blue-600" /></div>;
-  if (!data) return null;
-  const wk = data.week;
-  if (!wk) {
-    return (
-      <Card className="p-8 text-center">
-        <p className="text-sm text-slate-600">{tr("plan_pva_empty")}</p>
-        <button onClick={() => onGoTab && onGoTab("projection")}
-          className="mt-3 h-9 px-4 rounded-lg bg-blue-600 text-white text-sm font-bold">{tr("plan_pva_go_projection")}</button>
-      </Card>
-    );
-  }
-  const risk = data.risk_pct || 80;
-  const keys = data.shifts || ["DIA", "NOCHE"];
-  const selDay = sel && wk.days.find((d) => d.date === sel.date);
-  const selCell = selDay && selDay.shifts[sel.shift];
-
-  const exportXlsx = () => {
-    const rows = [[tr("plan_cm_day"), tr("plan_pv_shift"), tr("plan_pva_goal"), tr("plan_pva_actual"), "%", tr("plan_pva_state")]];
-    wk.days.forEach((d) => keys.forEach((k) => {
-      const c = d.shifts[k];
-      rows.push([d.date, shiftName(k, tr), c.goal || 0, c.actual || 0, c.pct ?? "", tr(`plan_pva_state_${d.state}`)]);
-    }));
-    rows.push([], [tr("plan_pva_score"), "", wk.committed_closed, wk.actual_closed, wk.score ?? ""]);
-    rows.push([tr("plan_pva_unplanned"), "", "", wk.unplanned]);
-    const hist = [[tr("plan_week"), tr("plan_pva_goal"), tr("plan_pva_actual"), "%"],
-      ...(data.history || []).map((h) => [h.week_start, h.committed_closed, h.actual_closed, h.score ?? ""])];
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rows), `S${wk.iso_week}`.slice(0, 31));
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(hist), tr("plan_pva_history").slice(0, 31));
-    const buf = XLSX.write(wb, { bookType: "xlsx", type: "array" });
-    saveAs(new Blob([buf], { type: "application/octet-stream" }), `Plan_vs_Real_S${wk.iso_week}_${wk.week_start}.xlsx`);
-  };
-
-  return (
-    <div className="space-y-5">
-      <Card className="p-4">
-        <div className="flex flex-wrap items-center gap-2">
-          <SectionTitle hint={tr("plan_pva_hint", { r: risk })}>{tr("plan_pva_title")}</SectionTitle>
-          <select value={wk.week_start} onChange={(e) => setWeek(e.target.value)}
-            className="ml-auto h-9 px-2 rounded-lg border border-slate-200 text-sm bg-white">
-            {(data.weeks || []).map((w) => (
-              <option key={w.week_start} value={w.week_start}>S{w.iso_week} · {w.week_start} · {fmt(w.total)}</option>
-            ))}
-          </select>
-          <button onClick={exportXlsx} className="h-9 px-3 rounded-lg border border-slate-200 text-sm font-bold inline-flex items-center gap-1.5">
-            <Download className="w-4 h-4" /> Excel
-          </button>
-          {loading && <Loader2 className="w-4 h-4 animate-spin text-blue-600" />}
-        </div>
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mt-1">
-          <Stat label={tr("plan_pva_committed")} value={fmt(wk.committed_total)} />
-          <Stat label={tr("plan_pva_actual_to_date")} value={fmt(wk.actual_to_date)} color="text-violet-700" />
-          <Card className="px-4 py-3">
-            <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400">{tr("plan_pva_score")}</div>
-            <div className={`text-2xl font-black tabular-nums ${pctColor(wk.score)}`}>{wk.score == null ? "—" : `${wk.score}%`}</div>
-            <div className="text-[11px] text-slate-500 tabular-nums">{fmt(wk.actual_closed)} / {fmt(wk.committed_closed)}</div>
-          </Card>
-          <Card className="px-4 py-3">
-            <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400">{tr("plan_pva_projected")}</div>
-            <div className={`text-2xl font-black tabular-nums ${pctColor(wk.projected_pct)}`}>{fmt(wk.projected_end)}</div>
-            <div className="text-[11px] text-slate-500">{wk.projected_pct == null ? "" : `${wk.projected_pct}%`}</div>
-          </Card>
-          <Stat label={tr("plan_pva_unplanned")} value={fmt(wk.unplanned)} color={wk.unplanned ? "text-amber-600" : "text-slate-400"} />
-        </div>
-        <div className="mt-2 text-xs text-slate-500">
-          {tr("plan_pva_meta", { v: wk.version, by: wk.committed_by || "—",
-            at: wk.committed_at ? new Date(wk.committed_at).toLocaleString(lang === "en" ? "en-US" : "es-MX") : "—",
-            b: tr(wk.basis === "real" ? "plan_cm_basis_real" : wk.basis === "params" ? "plan_pva_basis_params" : "plan_pva_basis_manual") })}
-          {wk.note ? <> · <i>“{wk.note}”</i></> : null}
-        </div>
-      </Card>
-
-      <Card className="p-4">
-        <SectionTitle hint={tr("plan_pva_grid_hint")}>{tr("plan_pva_grid_title")}</SectionTitle>
-        <div className="overflow-x-auto">
-          <table className="min-w-full text-sm">
-            <thead><tr className="text-left text-[11px] uppercase tracking-wider text-slate-400">
-              <th className="py-2 pr-4">{tr("plan_cm_day")}</th>
-              {keys.map((k) => <th key={k} className="pr-4">{shiftName(k, tr)} <span className="normal-case font-normal">({tr("plan_pva_goal_actual")})</span></th>)}
-              <th className="text-right">{tr("plan_cm_total")}</th>
-            </tr></thead>
-            <tbody className="divide-y divide-slate-100">
-              {wk.days.map((d) => (
-                <tr key={d.date} className={d.state === "future" ? "text-slate-400" : d.state === "today" ? "bg-blue-50/40" : ""}>
-                  <td className="py-2 pr-4 whitespace-nowrap">
-                    <b>{fmtDay(d.date, lang)}</b>
-                    {d.state === "today" && <span className="ml-1.5 px-1.5 py-0.5 rounded text-[10px] font-bold bg-blue-100 text-blue-700">{tr("plan_pva_state_today")}</span>}
-                    {d.no_shift ? <div className="text-[10px] text-amber-600">{tr("plan_pva_no_shift", { n: fmt(d.no_shift) })}</div> : null}
-                  </td>
-                  {keys.map((k) => {
-                    const c = d.shifts[k];
-                    const on = sel && sel.date === d.date && sel.shift === k;
-                    const clickable = d.state !== "future" && (c.goal || c.actual);
-                    return (
-                      <td key={k} className="pr-4">
-                        <button disabled={!clickable} onClick={() => setSel(on ? null : { date: d.date, shift: k })}
-                          className={`w-full text-left px-2 py-1 rounded-lg border tabular-nums ${on ? "border-blue-400 ring-2 ring-blue-200" : "border-transparent"} ${clickable ? "hover:border-slate-300" : "cursor-default"}`}>
-                          {c.goal ? (
-                            <span className="inline-flex items-center gap-2">
-                              <span className="text-slate-500">{fmt(c.goal)}</span>
-                              <span className="text-slate-300">/</span>
-                              <b className={d.state === "future" ? "" : "text-slate-900"}>{d.state === "future" ? "—" : fmt(c.actual)}</b>
-                              {d.state === "closed" ? <PvaPct p={c.pct} risk={risk} /> : null}
-                            </span>
-                          ) : c.actual ? (
-                            <span className="inline-flex items-center gap-2">
-                              <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-50 text-amber-700">{tr("plan_pva_no_goal")}</span>
-                              <b>{fmt(c.actual)}</b>
-                            </span>
-                          ) : <span className="text-slate-300">—</span>}
-                        </button>
-                      </td>
-                    );
-                  })}
-                  <td className="text-right tabular-nums whitespace-nowrap">
-                    {d.committed ? <span className="text-slate-500">{fmt(d.committed)} / </span> : null}
-                    <b>{d.state === "future" ? "—" : fmt(d.actual)}</b>
-                    {d.state === "closed" && d.pct != null ? <span className="ml-2"><PvaPct p={d.pct} risk={risk} /></span> : null}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-            <tfoot><tr className="border-t border-slate-200">
-              <td className="pt-2 font-black">{tr("plan_pva_closed_total")}</td>
-              {keys.map((k) => {
-                const ps = wk.per_shift?.[k] || {};
-                return (
-                  <td key={k} className="pt-2 pr-4 tabular-nums">
-                    <span className="text-slate-500">{fmt(ps.committed)}</span> <span className="text-slate-300">/</span> <b>{fmt(ps.actual)}</b>{" "}
-                    <PvaPct p={ps.pct} risk={risk} />
-                  </td>
-                );
-              })}
-              <td className="pt-2 text-right tabular-nums">
-                <span className="text-slate-500">{fmt(wk.committed_closed)} / </span><b>{fmt(wk.actual_closed)}</b>{" "}
-                <PvaPct p={wk.score} risk={risk} />
-              </td>
-            </tr></tfoot>
-          </table>
-        </div>
-
-        {selCell && (
-          <div className="mt-4 rounded-xl border border-slate-200 p-3">
-            <div className="flex items-center gap-2 mb-2">
-              <b className="text-sm">{fmtDay(sel.date, lang)} · {shiftName(sel.shift, tr)}</b>
-              <span className="text-xs text-slate-500 tabular-nums">{tr("plan_pva_detail_line", { a: fmt(selCell.actual), g: fmt(selCell.goal) })}</span>
-              <button onClick={() => setSel(null)} className="ml-auto h-7 w-7 grid place-items-center rounded-md hover:bg-slate-100"><X className="w-4 h-4" /></button>
-            </div>
-            {(selCell.machines || []).length === 0 ? <p className="text-xs text-slate-400">{tr("plan_pva_no_captures")}</p> : (
-              <table className="min-w-full text-sm">
-                <thead><tr className="text-left text-[11px] uppercase tracking-wider text-slate-400">
-                  <th className="py-1 pr-4">{tr("plan_machine")}</th><th className="pr-4 text-right">{tr("plan_hits")}</th><th>{tr("plan_pva_operators")}</th>
-                </tr></thead>
-                <tbody className="divide-y divide-slate-100">
-                  {selCell.machines.map((m) => (
-                    <tr key={m.machine}>
-                      <td className="py-1 pr-4 font-bold">{m.machine.replace("MAQUINA", "M")}</td>
-                      <td className="pr-4 text-right tabular-nums">{fmt(m.hits)}</td>
-                      <td className="text-xs text-slate-600">{(m.operators || []).join(", ") || "—"}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-            {(selCell.no_capture || []).length > 0 && (
-              <div className="mt-2 flex flex-wrap items-center gap-1 text-xs">
-                <span className="font-bold text-amber-700">{tr("plan_pva_no_capture")}:</span>
-                {selCell.no_capture.map((m) => (
-                  <span key={m} className="px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200">{m.replace("MAQUINA", "M")}</span>
-                ))}
-                <span className="text-slate-400">{tr("plan_pva_no_capture_hint")}</span>
-              </div>
-            )}
-          </div>
-        )}
-      </Card>
-
-      <Card className="p-4">
-        <SectionTitle hint={tr("plan_pva_history_hint")}>{tr("plan_pva_history")}</SectionTitle>
-        <div className="space-y-2">
-          {(data.history || []).map((h) => (
-            <div key={h.week_start} className="grid grid-cols-[110px_1fr_auto] items-center gap-3 text-sm">
-              <button onClick={() => setWeek(h.week_start)} className="text-left font-bold text-blue-700 hover:underline tabular-nums">
-                S{h.iso_week} <span className="text-[11px] font-normal text-slate-400">{h.week_start}</span>
-              </button>
-              <div className="h-3 rounded-full bg-slate-100 overflow-hidden relative">
-                <div className="absolute top-0 bottom-0 border-l-2 border-dashed border-slate-400" style={{ left: `${100 / 1.2}%` }} />
-                <div className={`h-full ${h.score == null ? "" : h.score >= 100 ? "bg-emerald-500" : h.score >= risk ? "bg-amber-400" : "bg-red-500"}`}
-                  style={{ width: `${Math.min(100, ((h.score || 0) / 120) * 100)}%` }} />
-              </div>
-              <div className="text-xs tabular-nums whitespace-nowrap text-right">
-                <b className={pctColor(h.score)}>{h.score == null ? "—" : `${h.score}%`}</b>
-                {keys.map((k) => (
-                  <span key={k} className="ml-2 text-slate-500">{shiftName(k, tr)} {h.per_shift?.[k]?.pct == null ? "—" : `${h.per_shift[k].pct}%`}</span>
-                ))}
-                {keys.some((k) => h.per_crew_real?.[k]) && (
-                  <span className="ml-2 text-violet-700">{tr("plan_pva_per_crew", {
-                    d: fmt(h.per_crew_real?.DIA), n: fmt(h.per_crew_real?.NOCHE), p: fmt(h.hits_per_crew_param) })}</span>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
-      </Card>
-    </div>
-  );
-};
-
 const ProjectionTab = ({ canEdit, run, onCalendarSaved, calendar, hitsPerShift, tr }) => {
   const [otModal, setOtModal] = useState(null);
   const [otBusy, setOtBusy] = useState(false);
@@ -2689,16 +2247,6 @@ const ProjectionTab = ({ canEdit, run, onCalendarSaved, calendar, hitsPerShift, 
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [scenario, setScenario] = useState([]);
-  // Plan comprometido: panel de parámetros vs. real y semanas comprometidas.
-  const [pvData, setPvData] = useState(null);
-  const [commits, setCommits] = useState({});
-  const [commitWeek, setCommitWeek] = useState(null);
-  const loadCommits = useCallback(() => {
-    planner("/params-vs-actual").then(setPvData).catch(() => {});
-    planner("/commitments").then((r) => setCommits(Object.fromEntries((r.rows || []).map((x) => [x.week_start, x])))).catch(() => {});
-  }, []);
-  useEffect(() => { loadCommits(); }, [loadCommits]);
-  const todayIsoLocal = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
   const [draft, setDraft] = useState({ kind: "overtime", date_from: "", date_to: "", shift: "DIA", crews: 9 });
 
   const load = useCallback(async (entries) => {
@@ -2806,8 +2354,6 @@ const ProjectionTab = ({ canEdit, run, onCalendarSaved, calendar, hitsPerShift, 
         </div>
       )}
 
-      <ParamsPanel data={pvData} tr={tr} />
-
       <Card className="p-4">
         <SectionTitle hint={tr("plan_proj_hint")}>{tr("plan_proj_title")}</SectionTitle>
         {scenario.length > 0 && (
@@ -2867,29 +2413,6 @@ const ProjectionTab = ({ canEdit, run, onCalendarSaved, calendar, hitsPerShift, 
                           </span>
                         )}
                       </div>
-                      {(() => {
-                        const cm = commits[w.week_start];
-                        const open = addDays(w.week_start, 6) > todayIsoLocal;
-                        if (!cm && !(canEdit && open)) return null;
-                        return (
-                          <div className="mt-1 flex flex-wrap items-center gap-1">
-                            {cm && (
-                              <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200"
-                                title={tr("plan_cm_prev", { v: cm.version, by: cm.committed_by_name || cm.committed_by,
-                                  at: (cm.committed_at || "").slice(0, 16).replace("T", " "), n: fmt(cm.total) })}>
-                                {tr("plan_cm_badge", { n: fmt(cm.total) })}
-                                {cm.score?.days_closed ? <b className={`ml-1 ${pctColor(cm.score.pct)}`}>{cm.score.pct}%</b> : null}
-                              </span>
-                            )}
-                            {canEdit && open && (
-                              <button onClick={(e) => { e.stopPropagation(); setCommitWeek(w.week_start); }}
-                                className="px-1.5 py-0.5 rounded text-[10px] font-black bg-blue-600 text-white hover:bg-blue-700">
-                                {cm ? tr("plan_cm_recommit") : tr("plan_cm_button")}
-                              </button>
-                            )}
-                          </div>
-                        );
-                      })()}
                     </td>
                     <td className="pr-3 text-right tabular-nums">{fmt(w.capacity)}</td>
                     {hasReal && (
@@ -2928,11 +2451,6 @@ const ProjectionTab = ({ canEdit, run, onCalendarSaved, calendar, hitsPerShift, 
           </table>
         </div>
       </Card>
-
-      {commitWeek && (
-        <CommitModal weekStart={commitWeek} tr={tr} onClose={() => setCommitWeek(null)}
-          onDone={() => { setCommitWeek(null); loadCommits(); }} />
-      )}
 
       {otModal && (
         <OvertimeModal initial={otModal.entry} mode={otModal.mode} weekStart={otModal.weekStart}
@@ -4032,7 +3550,6 @@ const GlobalSearch = ({ run, alerts, canEdit, onAdjust, onApply, onGoTab, tr }) 
 const TABS = [
   ["schedule", "plan_tab_schedule", CalendarClock],
   ["projection", "plan_tab_projection", TrendingUp],
-  ["plan_vs_actual", "plan_tab_pva", Target],
   ["machines", "plan_tab_machines", Cpu],
   ["calendar", "plan_tab_calendar", CalendarDays],
   ["rules", "plan_tab_rules", Settings2],
@@ -4314,7 +3831,6 @@ const PlannerModule = () => {
             {tab === "calendar" && <CalendarTab cfgData={cfgData} canEdit={canEdit} onSaved={afterConfigChange} tr={tr} />}
             {tab === "rules" && <RulesTab cfgData={cfgData} canEdit={canEdit} onSaved={afterConfigChange} tr={tr} />}
             {tab === "dashboard" && <DashboardTab tr={tr} cfgData={cfgData} canEdit={canEdit} onSaved={afterConfigChange} />}
-            {tab === "plan_vs_actual" && <PlanVsActualTab tr={tr} onGoTab={setTab} />}
             {tab === "audit" && <AuditTab tr={tr} />}
             {tab === "data" && <DataTab tr={tr} />}
             {tab === "alerts" && <AlertsTab data={alertData} tr={tr} />}

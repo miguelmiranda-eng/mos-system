@@ -40,6 +40,17 @@ Endpoints (prefijo /api/executive):
                    con las órdenes. Máximo LISTO_MAX_DAYS días.
   GET /kpis      → lo mismo que el Reporte Ejecutivo por correo
                    (production_kpis.build_executive), caché de 60 s.
+  GET /plan      → plan vs real de una semana (pestaña Programación): meta por
+                   día y turno, real, %, riesgo (<80%) y la capacidad que
+                   calcula Planeación como sugerencia para llenar metas.
+  PUT /plan      → guarda las metas de la semana (de mañana en adelante).
+
+Plan vs real: la META la ponen las personas (junta del viernes, o un día
+antes) y vive en production_goals (TURNO 1 = día, TURNO 2 = noche), la misma
+que lee el Reporte Ejecutivo por correo y el módulo de Producción. Lo real es
+la misma cuenta del correo (production_kpis). Sólo se califica lo CERRADO
+(antes del día operativo en curso); hoy y los días pasados no se editan, así el
+% no se puede acomodar después.
 """
 import asyncio
 import time
@@ -305,3 +316,161 @@ async def kpis(request: Request):
             raise HTTPException(status_code=500, detail="No se pudieron calcular los indicadores")
         _kpis_cache.update(data=data, ts=time.time())
         return data
+
+
+
+# ── Plan vs real (pestaña Programación) ────────────────────────────────────
+PLAN_RISK_PCT = 80
+GOAL_SHIFTS = ("TURNO 1", "TURNO 2")
+PLAN_MAX_CELL = 1_000_000
+
+
+def _plan_week(value):
+    from datetime import date as _date
+    if not value:
+        return pe.week_start(op_today(datetime.now(TZ)))
+    try:
+        d = _date.fromisoformat(str(value)[:10])
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Semana inválida (YYYY-MM-DD)")
+    if d.weekday() != 0:
+        raise HTTPException(status_code=400, detail="La semana se indica con su lunes")
+    return d
+
+
+async def _suggested_capacity(days):
+    """Capacidad que calcula Planeación por día y turno (cuadrillas del
+    calendario × hits por cuadrilla × eficiencia × horas): sólo una SUGERENCIA
+    para llenar metas; la meta la deciden las personas."""
+    from routers import planner as pl
+    cfg = await pl._config()
+    eff = (await pl._efficiency(cfg))["applied"]
+    active = [m for m in await pl._machines() if m.get("active")]
+    cal = pe.Calendar(cfg, await pl._calendar_entries(), max_machines=len(active))
+    goal_of = {v: k for k, v in pl.SHIFT_FROM_LOG.items()}          # DIA → TURNO 1
+    out = {}
+    for d in days:
+        row = {}
+        for sh in cfg["shifts"]:
+            gk = goal_of.get(sh["key"])
+            if not gk:
+                continue
+            full = float(sh.get("hours") or 12)
+            c = cal.crews(d, sh["key"])
+            _, hrs = cal.window(d, sh["key"], sh.get("start") or "07:00", full)
+            row[gk] = round(c * cfg["hits_per_shift"] * eff * (hrs / full)) if c else 0
+        out[d.isoformat()] = row
+    return out
+
+
+@router.get("/plan")
+async def plan_week(request: Request, week: str = None):
+    """Plan vs real de una semana (lunes `week`; por omisión la actual)."""
+    await require_exec(request)
+    from routers.production import _goals_for_days
+    from services import production_kpis as k
+    ws = _plan_week(week)
+    today = op_today(datetime.now(TZ))
+    days = [ws + timedelta(days=i) for i in range(7)]
+    iso = [d.isoformat() for d in days]
+    goals = await _goals_for_days(iso)
+    own = {g["date"]: g async for g in db.production_goals.find({"date": {"$in": iso}}, {"_id": 0})}
+    last = min(days[-1], today)
+    actual = {}
+    if last >= ws:
+        window = await k.produced_window(ws, last)
+        for r in window["rows"]:
+            key = r["shift"] if r["shift"] in GOAL_SHIFTS else ""
+            actual.setdefault(r["date"], {}).setdefault(key, 0)
+            actual[r["date"]][key] += r["n"]
+    capacity = await _suggested_capacity(days)
+    out_days = []
+    plan_week_total = plan_closed = actual_closed = actual_to_date = 0
+    risk = 0
+    for d in days:
+        ds = d.isoformat()
+        state = "closed" if d < today else "today" if d == today else "future"
+        g = goals.get(ds) or {}
+        gsh = g.get("shifts") or {}
+        act = actual.get(ds, {}) if state != "future" else {}
+        shifts = {}
+        for sk in GOAL_SHIFTS:
+            gv = int(gsh.get(sk) or 0)
+            av = int(act.get(sk) or 0)
+            pct = round(av / gv * 100, 1) if gv and state != "future" else None
+            at_risk = state == "closed" and gv > 0 and pct is not None and pct < PLAN_RISK_PCT
+            risk += 1 if at_risk else 0
+            shifts[sk] = {"goal": gv, "actual": av, "pct": pct, "risk": at_risk}
+        day_goal = int(g.get("day") or 0)
+        day_act = sum(act.values())
+        plan_week_total += day_goal
+        actual_to_date += day_act
+        if state == "closed" and day_goal:
+            plan_closed += day_goal
+            actual_closed += day_act
+        out_days.append({
+            "date": ds, "state": state, "editable": d > today,
+            "goal": day_goal, "goal_source": g.get("source"),          # day | default | None
+            "own_goal": bool(own.get(ds, {}).get("day")),
+            "actual": day_act, "no_shift": int(act.get("") or 0),
+            "pct": round(day_act / day_goal * 100, 1) if day_goal and state != "future" else None,
+            "shifts": shifts, "capacity": capacity.get(ds, {}),
+        })
+    return {"week_start": ws.isoformat(), "iso_week": ws.isocalendar()[1], "op_today": today.isoformat(),
+            "risk_pct": PLAN_RISK_PCT, "shifts": list(GOAL_SHIFTS), "days": out_days,
+            "totals": {"plan_week": plan_week_total, "plan_closed": plan_closed, "actual_closed": actual_closed,
+                       "actual_to_date": actual_to_date,
+                       "score": round(actual_closed / plan_closed * 100, 1) if plan_closed else None,
+                       "capacity_week": sum(sum(v.values()) for v in capacity.values()), "risk": risk}}
+
+
+@router.put("/plan")
+async def save_plan_week(request: Request):
+    """Guarda las metas de la semana: body {week_start, days: [{date, shifts:
+    {"TURNO 1": n, "TURNO 2": n}}]}. Sólo días de mañana en adelante (la meta
+    se fija antes; hoy y lo pasado ya se están calificando). Un día en 0 queda
+    sin meta propia. Mismo registro que la meta de Producción."""
+    from deps import log_activity
+    from routers.production import invalidate_cache
+    user = await require_exec(request)
+    body = await request.json() or {}
+    ws = _plan_week(body.get("week_start"))
+    today = op_today(datetime.now(TZ))
+    week = {(ws + timedelta(days=i)).isoformat() for i in range(7)}
+    now = datetime.now(timezone.utc).isoformat()
+    saved, skipped = [], []
+    clean = []
+    for dd in body.get("days") or []:
+        ds = str((dd or {}).get("date") or "")
+        if ds not in week:
+            raise HTTPException(status_code=400, detail=f"El día {ds or '(vacío)'} no es de esa semana")
+        cell = {}
+        for sk in GOAL_SHIFTS:
+            try:
+                v = int((dd.get("shifts") or {}).get(sk) or 0)
+            except (TypeError, ValueError):
+                raise HTTPException(status_code=400, detail=f"Meta inválida en {ds} {sk}")
+            if v < 0 or v > PLAN_MAX_CELL:
+                raise HTTPException(status_code=400, detail=f"Meta fuera de rango en {ds} {sk}")
+            cell[sk] = v
+        clean.append((ds, cell))
+    for ds, cell in clean:
+        if ds <= today.isoformat():
+            skipped.append(ds)
+            continue
+        shifts = {k: v for k, v in cell.items() if v}
+        total = sum(shifts.values())
+        if total:
+            await db.production_goals.update_one(
+                {"date": ds},
+                {"$set": {"date": ds, "day": total, "shifts": shifts, "source": "executive_plan",
+                          "updated_by": user.get("email") or user.get("name"), "updated_at": now}},
+                upsert=True)
+        else:
+            await db.production_goals.delete_one({"date": ds})
+        saved.append(ds)
+        await log_activity(user, "set_production_goal", {"date": ds, "day": total or None, "shifts": shifts,
+                                                         "source": "executive_plan"})
+    invalidate_cache("prod_")
+    _kpis_cache.update(data=None, ts=0.0)      # el resumen y el correo leen la meta nueva
+    return {"saved": saved, "skipped": skipped}
