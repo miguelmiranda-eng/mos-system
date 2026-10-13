@@ -436,6 +436,13 @@ async def main():
         check("plan: día cerrado, no editable", d0.get("state") == "closed" and d0.get("editable") is False, d0.get("state"))
         check("plan: cumplimiento de la semana = 13,000 / 15,000 = 86.7%, 1 turno en riesgo",
               ep["totals"]["score"] == 86.7 and ep["totals"]["risk"] == 1, ep.get("totals"))
+        # Meta sólo por día (sin turnos) el martes: 10,000 y real 0 -> el día cuenta en riesgo.
+        sdb.production_goals.insert_one({"date": (lun_pas + timedelta(days=1)).isoformat(), "day": 10000, "shifts": {}})
+        r = await sup.get("/api/executive/plan", params={"week": lun_pas.isoformat()})
+        mar = r.json()["days"][1]
+        check("plan: meta sólo por día bajo el 80% cuenta como riesgo",
+              mar.get("risk") is True and r.json()["totals"]["risk"] == 2, (mar.get("risk"), r.json().get("totals")))
+        sdb.production_goals.delete_one({"date": (lun_pas + timedelta(days=1)).isoformat()})
         r = await sup.get("/api/executive/plan", params={"week": lun_sig.isoformat()})
         nx = r.json()
         check("plan: semana próxima editable con capacidad sugerida",

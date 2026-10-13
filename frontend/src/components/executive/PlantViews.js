@@ -115,6 +115,12 @@ const PlanWeek = () => {
   return (
     <Panel title={t('exe_plan_title')} subtitle={t('exe_plan_sub', { w: data.iso_week, d: fmtDay(data.week_start, lang), r: riskPct })}
       right={<div className="flex items-center gap-1.5">
+        {/* Semanas pasadas: ‹ retrocede una semana (ya cerradas, sólo lectura). */}
+        <button onClick={() => setWeek(plusDays(week, -7))} title={t('exe_plan_prev_week')}
+          className="h-8 w-8 rounded-md text-sm font-bold border border-border text-muted-foreground hover:text-foreground">‹</button>
+        {week < curWeek && (
+          <span className="px-2 text-xs font-semibold tabular-nums">{t('exe_plan_week_n', { w: data.iso_week })}</span>
+        )}
         {weekBtn(curWeek, t('exe_this_week'))}
         {weekBtn(plusDays(curWeek, 7), t('exe_next_week'))}
         {!edit && anyEditable && (

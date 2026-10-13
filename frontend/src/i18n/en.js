@@ -6284,6 +6284,8 @@ const en = {
   exe_capacity_left: "Capacity left (from today)",
   exe_demand_left: "Still to produce",
   exe_capacity_split_week: "Week: regular {reg} + overtime {ot}. {left} left from today.",
+  exe_plan_prev_week: "Previous week",
+  exe_plan_week_n: "Week {w}",
   exe_title: "Executive view",
   exe_subtitle: "Prosper Manufacturing · read-only",
   exe_back: "Back to home",

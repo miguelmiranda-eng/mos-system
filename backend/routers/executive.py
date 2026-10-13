@@ -403,6 +403,11 @@ async def plan_week(request: Request, week: str = None):
             shifts[sk] = {"goal": gv, "actual": av, "pct": pct, "risk": at_risk}
         day_goal = int(g.get("day") or 0)
         day_act = sum(act.values())
+        # Meta capturada sólo por día (sin desglose por turno): el día entero
+        # cuenta como una unidad en riesgo si cerró bajo el umbral.
+        day_risk = (state == "closed" and day_goal > 0 and not any(int(gsh.get(sk) or 0) for sk in GOAL_SHIFTS)
+                    and day_act / day_goal * 100 < PLAN_RISK_PCT)
+        risk += 1 if day_risk else 0
         plan_week_total += day_goal
         actual_to_date += day_act
         if state == "closed" and day_goal:
@@ -414,6 +419,7 @@ async def plan_week(request: Request, week: str = None):
             "own_goal": bool(own.get(ds, {}).get("day")),
             "actual": day_act, "no_shift": int(act.get("") or 0),
             "pct": round(day_act / day_goal * 100, 1) if day_goal and state != "future" else None,
+            "risk": day_risk,
             "shifts": shifts, "capacity": capacity.get(ds, {}),
         })
     return {"week_start": ws.isoformat(), "iso_week": ws.isocalendar()[1], "op_today": today.isoformat(),

@@ -6098,6 +6098,8 @@ const es = {
   exe_capacity_left: "Capacidad que queda (desde hoy)",
   exe_demand_left: "Falta producir",
   exe_capacity_split_week: "Semana: regular {reg} + tiempo extra {ot}. Desde hoy quedan {left}.",
+  exe_plan_prev_week: "Semana anterior",
+  exe_plan_week_n: "Semana {w}",
   exe_title: "Vista ejecutiva",
   exe_subtitle: "Prosper Manufacturing · sólo lectura",
   exe_back: "Regresar al inicio",
