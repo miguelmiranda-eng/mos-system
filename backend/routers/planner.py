@@ -232,6 +232,302 @@ async def _client_names() -> list:
     return sorted(out, key=str.upper)
 
 
+# ── Plan comprometido (junta semanal) y parámetros vs. real ─────────────────
+# El plan de Proyección sale de PARÁMETROS MANUALES (cuadrillas por turno, hits
+# por cuadrilla, horas, eficiencia, calendario) y se recalcula solo. Para medir
+# "plan vs. real" hace falta una FOTO acordada: en la junta del viernes se
+# compromete la semana siguiente por día y turno. Esa foto (planner_commitments)
+# es contra lo que se califica; además se copia a las metas de producción
+# (production_goals, TURNO 1 = día / TURNO 2 = noche) para que el módulo de
+# Producción y el Reporte Ejecutivo muestren meta vs. real sin cambiarles nada.
+# Regla de cierre: se puede re-comprometer hasta el DÍA ANTERIOR; el día
+# operativo en curso y los pasados conservan lo que ya estaba comprometido.
+GOAL_SHIFT_OF = {v: k for k, v in SHIFT_FROM_LOG.items()}       # DIA → TURNO 1
+PARAMS_WEEKS = 8
+COMMIT_MAX_CELL = 1_000_000
+
+
+def _op_today() -> date:
+    return kpis.op_today(datetime.now(TZ))
+
+
+async def _real_by_shift(cfg: dict) -> dict:
+    """Lo que de verdad pasa por turno (DIA/NOCHE), días base de las últimas
+    PARAMS_WEEKS semanas sin el día en curso: medianas del total del turno, de
+    operadores distintos y de máquinas distintas que capturaron. Misma cuenta
+    que el Reporte Ejecutivo (día operativo, sin pruebas de máquina)."""
+    today = _op_today()
+    since = pe.week_start(today) - timedelta(weeks=PARAMS_WEEKS)
+    base_days = set(cfg["base_weekdays"])
+    per = {}
+    weeks = {}
+    async for lg in db.production_logs.find(
+            {"created_at": {"$gte": kpis._utc(since), "$lt": kpis._utc(today, kpis.NIGHT_CUTOFF_HOUR)}},
+            {"_id": 0, "created_at": 1, "shift": 1, "machine": 1, "operator": 1, "order_number": 1,
+             "quantity_produced": 1}).batch_size(500):
+        try:
+            dt = datetime.fromisoformat(str(lg["created_at"])).astimezone(TZ)
+        except (KeyError, ValueError):
+            continue
+        raw = lg.get("shift") or ""
+        d = kpis.op_date(dt, raw)
+        if d >= today or d < since or kpis.is_machine_test(lg.get("order_number")):
+            continue
+        n = int(lg.get("quantity_produced") or 0)
+        weeks[pe.week_start(d)] = weeks.get(pe.week_start(d), 0) + n
+        shift = SHIFT_FROM_LOG.get(raw)
+        if not shift or d.weekday() not in base_days:
+            continue
+        a = per.setdefault((d, shift), {"hits": 0, "ops": set(), "machines": set()})
+        a["hits"] += n
+        if lg.get("operator"):
+            a["ops"].add(str(lg["operator"]).strip().upper())
+        if lg.get("machine"):
+            a["machines"].add(lg["machine"])
+    import statistics
+    out = {}
+    for s in cfg["shifts"]:
+        rows = [v for (d, sh), v in per.items() if sh == s["key"]]
+        if not rows:
+            continue
+        out[s["key"]] = {
+            "samples": len(rows),
+            "total_median": round(statistics.median(r["hits"] for r in rows)),
+            "operators_median": statistics.median(len(r["ops"]) for r in rows),
+            "machines_median": statistics.median(len(r["machines"]) for r in rows),
+            "per_machine_median": round(statistics.median(r["hits"] / len(r["machines"]) for r in rows if r["machines"]))
+                                  if any(r["machines"] for r in rows) else None,
+        }
+    full = [v for ws, v in weeks.items() if ws + timedelta(days=6) < today]
+    return {"shifts": out, "weekly_avg": round(sum(full) / len(full)) if full else None,
+            "weeks": len(full), "since": since.isoformat(), "until": (today - timedelta(days=1)).isoformat()}
+
+
+def _per_crew(cfg: dict, eff: float, real: dict, basis: str) -> dict:
+    """Hits por cuadrilla por turno completo, según la base elegida: los
+    PARÁMETROS (hits_per_shift × eficiencia aplicada, lo mismo que Proyección)
+    o lo REAL medido (total mediano del turno ÷ cuadrillas configuradas)."""
+    out = {}
+    for s in cfg["shifts"]:
+        crews = int(s.get("crews") or 0)
+        r = (real.get("shifts") or {}).get(s["key"])
+        if basis == "real" and r and crews:
+            out[s["key"]] = r["total_median"] / crews
+        else:
+            out[s["key"]] = cfg["hits_per_shift"] * eff
+    return out
+
+
+async def _plan_calendar(cfg: dict) -> "pe.Calendar":
+    machines = await _machines()
+    active = [m for m in machines if m.get("active")]
+    return pe.Calendar(cfg, await _calendar_entries(), max_machines=len(active))
+
+
+def _week_cells(cfg: dict, cal, week_start: date, per_crew: dict) -> list:
+    """Plan por día × turno de una semana: cuadrillas del calendario (base,
+    más/menos gente, tiempo extra, festivos) × hits por cuadrilla × la parte
+    del turno que se trabaja (tiempo extra con horas propias). Misma fórmula
+    que la capacidad de Proyección."""
+    days = []
+    for k in range(7):
+        d = week_start + timedelta(days=k)
+        crews, plan = {}, {}
+        for s in cfg["shifts"]:
+            full_h = float(s.get("hours") or 12)
+            c = cal.crews(d, s["key"])
+            _, hrs = cal.window(d, s["key"], s.get("start") or "07:00", full_h)
+            crews[s["key"]] = c
+            plan[s["key"]] = round(c * per_crew.get(s["key"], 0) * (hrs / full_h)) if c else 0
+        days.append({"date": d.isoformat(), "crews": crews, "plan": plan,
+                     "holiday": cal.holiday_name(d), "base": d.weekday() in cal.base_weekdays})
+    return days
+
+
+def _parse_week(value) -> date:
+    d = pe.parse_date(value)
+    if not d or d.weekday() != 0:
+        raise HTTPException(400, "La semana debe indicarse con su lunes (YYYY-MM-DD)")
+    return d
+
+
+async def _commit_scores(docs: list) -> list:
+    """Cumplimiento de cada semana comprometida, sólo con los días ya cerrados
+    (antes del día operativo en curso): comprometido vs. real por día y turno."""
+    today = _op_today()
+    closed = [(doc, [dd for dd in sorted(doc.get("days") or {}) if dd < today.isoformat()]) for doc in docs]
+    dates = [dd for _, ds in closed for dd in ds]
+    if not dates:
+        return [{"week_start": doc["week_start"], "days_closed": 0, "committed": 0, "actual": 0, "pct": None}
+                for doc, _ in closed]
+    window = await kpis.produced_window(date.fromisoformat(min(dates)), date.fromisoformat(max(dates)))
+    actual = {}
+    for r in window["rows"]:
+        k = (r["date"], SHIFT_FROM_LOG.get(r["shift"]))
+        actual[k] = actual.get(k, 0) + r["n"]
+    out = []
+    for doc, ds in closed:
+        com = act = 0
+        for dd in ds:
+            for sh, v in (doc["days"][dd] or {}).items():
+                if sh == "total":
+                    continue
+                com += int(v or 0)
+                act += actual.get((dd, sh), 0)
+        out.append({"week_start": doc["week_start"], "days_closed": len(ds), "committed": com, "actual": act,
+                    "pct": round(act / com * 100, 1) if com else None})
+    return out
+
+
+@router.get("/params-vs-actual")
+async def params_vs_actual(request: Request):
+    """Panel de la junta: cada parámetro manual al lado de lo que dicen las
+    capturas, y el cumplimiento de las últimas semanas comprometidas. Sólo
+    lectura: no cambia ningún parámetro."""
+    await require_auth(request)
+    cfg = await _config()
+    eff = (await _efficiency(cfg))["applied"]
+    real = await _real_by_shift(cfg)
+    shifts = []
+    for s in cfg["shifts"]:
+        crews = int(s.get("crews") or 0)
+        r = real["shifts"].get(s["key"]) or {}
+        plan_crew = cfg["hits_per_shift"] * eff
+        shifts.append({
+            "key": s["key"], "goal_key": GOAL_SHIFT_OF.get(s["key"]), "hours": s.get("hours"),
+            "crews_cfg": crews, "hits_per_crew_cfg": cfg["hits_per_shift"], "efficiency": eff,
+            "plan_total": round(crews * plan_crew),
+            "real": {**r, "per_crew": round(r["total_median"] / crews) if r and crews else None},
+        })
+    base_n = len(cfg["base_weekdays"])
+    docs = [d async for d in db.planner_commitments.find({}, {"_id": 0}).sort("week_start", -1).limit(6)]
+    return {"shifts": shifts, "efficiency": eff,
+            "regular_week": {"plan": sum(x["plan_total"] for x in shifts) * base_n,
+                             "real": sum((x["real"].get("total_median") or 0) for x in shifts) * base_n,
+                             "base_days": base_n},
+            "weekly_avg": real["weekly_avg"], "weeks": real["weeks"],
+            "window": {"from": real["since"], "to": real["until"]},
+            "scores": await _commit_scores(docs)}
+
+
+@router.get("/commitments")
+async def list_commitments(request: Request):
+    await require_auth(request)
+    docs = [d async for d in db.planner_commitments.find({}, {"_id": 0}).sort("week_start", -1).limit(20)]
+    scores = {x["week_start"]: x for x in await _commit_scores(docs)}
+    return {"rows": [{**d, "score": scores.get(d["week_start"])} for d in docs]}
+
+
+@router.get("/commitments/preview")
+async def commitment_preview(request: Request, week: str, basis: str = "params"):
+    """Lo que se comprometería para la semana (lunes `week`): por día y turno,
+    con la base `params` (parámetros) o `real` (lo medido). `locked` = días que
+    ya no se pueden cambiar (día en curso y pasados)."""
+    await require_auth(request)
+    ws = _parse_week(week)
+    if basis not in ("params", "real"):
+        basis = "params"
+    cfg = await _config()
+    eff = (await _efficiency(cfg))["applied"]
+    real = await _real_by_shift(cfg) if basis == "real" else {}
+    per_crew = _per_crew(cfg, eff, real, basis)
+    days = _week_cells(cfg, await _plan_calendar(cfg), ws, per_crew)
+    today = _op_today()
+    existing = await db.planner_commitments.find_one({"week_start": ws.isoformat()}, {"_id": 0})
+    for dday in days:
+        dday["locked"] = dday["date"] <= today.isoformat()
+        dday["committed"] = ((existing or {}).get("days") or {}).get(dday["date"])
+    return {"week_start": ws.isoformat(), "iso_week": ws.isocalendar()[1], "basis": basis,
+            "per_crew": {k: round(v) for k, v in per_crew.items()},
+            "shifts": [{"key": s["key"], "goal_key": GOAL_SHIFT_OF.get(s["key"]), "hours": s.get("hours"),
+                        "crews": int(s.get("crews") or 0)} for s in cfg["shifts"]],
+            "hits_per_shift": cfg["hits_per_shift"], "efficiency": eff,
+            "days": days, "existing": existing, "op_today": today.isoformat()}
+
+
+@router.post("/commitments")
+async def commit_week(request: Request):
+    """Compromete (o re-compromete) la semana. body: {week_start, basis,
+    days: [{date, shifts: {DIA: n, NOCHE: n}}], note}. Los días cerrados (el
+    día operativo en curso y los pasados) conservan lo que ya tenían: no se
+    pueden mover después de empezar. Copia cada día a production_goals."""
+    from routers.production import invalidate_cache
+    user = await require_admin(request)
+    body = await request.json() or {}
+    ws = _parse_week(body.get("week_start"))
+    cfg = await _config()
+    keys = [s["key"] for s in cfg["shifts"]]
+    week_dates = [(ws + timedelta(days=k)).isoformat() for k in range(7)]
+    today = _op_today().isoformat()
+    incoming = {}
+    for dd in body.get("days") or []:
+        dt = str((dd or {}).get("date") or "")
+        if dt not in week_dates:
+            raise HTTPException(400, f"El día {dt or '(vacío)'} no es de esa semana")
+        cell = {}
+        for k in keys:
+            try:
+                v = int((dd.get("shifts") or {}).get(k) or 0)
+            except (TypeError, ValueError):
+                raise HTTPException(400, f"Meta inválida en {dt} {k}")
+            if v < 0 or v > COMMIT_MAX_CELL:
+                raise HTTPException(400, f"Meta fuera de rango en {dt} {k}")
+            cell[k] = v
+        incoming[dt] = cell
+    prev = await db.planner_commitments.find_one({"week_start": ws.isoformat()}, {"_id": 0})
+    prev_days = (prev or {}).get("days") or {}
+    days, written, kept = {}, [], []
+    for dt in week_dates:
+        if dt <= today:                       # cerrado: se queda lo que había
+            if dt in prev_days:
+                days[dt] = prev_days[dt]
+                kept.append(dt)
+            continue
+        if dt in incoming:
+            cell = incoming[dt]
+            days[dt] = {**cell, "total": sum(cell.values())}
+            written.append(dt)
+    if not written:
+        raise HTTPException(400, "No hay días por comprometer: la semana ya empezó o ya pasó")
+    eff = (await _efficiency(cfg))["applied"]
+    now = datetime.now(timezone.utc).isoformat()
+    doc = {"week_start": ws.isoformat(), "iso_week": ws.isocalendar()[1], "days": days,
+           "total": sum(d["total"] for d in days.values()),
+           "basis": body.get("basis") if body.get("basis") in ("params", "real") else "manual",
+           "params": {"hits_per_shift": cfg["hits_per_shift"], "efficiency": eff,
+                      "shifts": [{"key": s["key"], "crews": int(s.get("crews") or 0), "hours": s.get("hours")}
+                                 for s in cfg["shifts"]]},
+           "note": str(body.get("note") or "").strip()[:300],
+           "version": int((prev or {}).get("version") or 0) + 1,
+           "committed_at": now, "committed_by": user.get("email"), "committed_by_name": user.get("name")}
+    if prev:
+        await db.planner_commitments_history.insert_one({**prev, "replaced_at": now, "replaced_by": user.get("email")})
+    await db.planner_commitments.replace_one({"week_start": ws.isoformat()}, doc, upsert=True)
+    # Metas de producción (TURNO 1 / TURNO 2). Un día comprometido en 0 (p. ej.
+    # viernes sin tiempo extra) queda SIN meta propia.
+    for dt in written:
+        cell = days[dt]
+        shifts = {GOAL_SHIFT_OF[k]: v for k, v in cell.items() if k in GOAL_SHIFT_OF and v}
+        if cell["total"]:
+            await db.production_goals.update_one(
+                {"date": dt},
+                {"$set": {"date": dt, "day": cell["total"], "shifts": shifts, "source": "planner_commitment",
+                          "updated_by": user.get("email") or user.get("name"), "updated_at": now}},
+                upsert=True)
+        else:
+            await db.production_goals.delete_one({"date": dt})
+    # Días abiertos que ya no vienen: salen del compromiso y su meta (sólo si la
+    # puso un compromiso; una meta capturada a mano en Producción se respeta).
+    for dt in week_dates:
+        if dt > today and dt not in incoming:
+            await db.production_goals.delete_one({"date": dt, "source": "planner_commitment"})
+    invalidate_cache("prod_")
+    await log_activity(user, "planner_commit_week",
+                       {"week_start": ws.isoformat(), "total": doc["total"], "written": written, "kept": kept,
+                        "basis": doc["basis"], "version": doc["version"]}, prev)
+    return {"commitment": doc, "written": written, "kept": kept}
+
+
 def _validate_config(body: dict) -> dict:
     clean = {}
     for k, v in body.items():

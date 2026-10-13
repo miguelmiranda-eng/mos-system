@@ -396,6 +396,129 @@ async def main():
         sdb.config_options.delete_many({"config_id": "main"})
         sdb.orders.delete_one({"order_id": "ord_sin_cliente"})
 
+        print("\n== Plan comprometido: parámetros vs. real ==")
+        import zoneinfo as _zi
+        from services import planner_engine as _pe
+        from services import production_kpis as _kp
+        _tz = _zi.ZoneInfo("America/Tijuana")
+        hoy_op = _kp.op_today(datetime.now(_tz))
+        w3 = _pe.week_start(hoy_op) - timedelta(weeks=3)          # lunes de hace 3 semanas
+        def _at(d, h):
+            return datetime(d.year, d.month, d.day, h, 0, tzinfo=_tz).astimezone(timezone.utc).isoformat()
+        logs = []
+        for k in range(3):                                           # lun, mar, mié de esa semana
+            d = w3 + timedelta(days=k)
+            for op_name, m in (("Ana", "MAQUINA1"), ("Beto", "MAQUINA2")):
+                logs.append({"log_id": f"pc_d{k}{m}", "order_id": "ord_pc", "order_number": "9950", "machine": m,
+                             "operator": op_name, "shift": "TURNO 1", "design_type": "FRENTE",
+                             "quantity_produced": 500, "created_at": _at(d, 10)})
+            logs.append({"log_id": f"pc_n{k}", "order_id": "ord_pc", "order_number": "9950", "machine": "MAQUINA3",
+                         "operator": "Ceci", "shift": "TURNO 2", "design_type": "FRENTE",
+                         "quantity_produced": 600, "created_at": _at(d, 22)})
+        # captura de PRUEBA de máquina: no cuenta
+        logs.append({"log_id": "pc_test", "order_id": "ord_t", "order_number": "TEST-1", "machine": "MAQUINA1",
+                     "operator": "Ana", "shift": "TURNO 1", "quantity_produced": 99999, "created_at": _at(w3, 11)})
+        sdb.production_logs.insert_many(logs)
+        r = await op.get("/api/planner/params-vs-actual")
+        pv = r.json()
+        dia = next((x for x in pv.get("shifts", []) if x["key"] == "DIA"), {})
+        noche = next((x for x in pv.get("shifts", []) if x["key"] == "NOCHE"), {})
+        check("parámetros vs real: cualquier sesión lo lee", r.status_code == 200, r.status_code)
+        check("día: total mediano 1,000 (sin la captura de prueba), 2 operadores, 2 máquinas",
+              dia.get("real", {}).get("total_median") == 1000 and dia["real"]["operators_median"] == 2
+              and dia["real"]["machines_median"] == 2, dia.get("real"))
+        check("noche: total mediano 600, 1 operador", noche.get("real", {}).get("total_median") == 600
+              and noche["real"]["operators_median"] == 1, noche.get("real"))
+        check("plan del turno = cuadrillas × hits por cuadrilla × eficiencia",
+              dia.get("plan_total") == round(dia.get("crews_cfg", 0) * dia.get("hits_per_crew_cfg", 0) * dia.get("efficiency", 0)), dia)
+        check("real por cuadrilla = total ÷ cuadrillas configuradas",
+              dia["real"].get("per_crew") == round(1000 / dia["crews_cfg"]), dia["real"])
+
+        print("\n== Plan comprometido: vista previa y compromiso ==")
+        nxt = _pe.week_start(hoy_op) + timedelta(weeks=1)
+        r = await op.get("/api/planner/commitments/preview", params={"week": nxt.isoformat()})
+        pr = r.json()
+        lun = pr["days"][0] if r.status_code == 200 else {}
+        check("vista previa 200 y 7 días", r.status_code == 200 and len(pr.get("days", [])) == 7, r.text[:200])
+        check("plan del lunes (parámetros) = cuadrillas × hits por cuadrilla",
+              lun.get("plan", {}).get("DIA") == round(lun.get("crews", {}).get("DIA", 0) * pr["per_crew"]["DIA"]), lun)
+        check("semana próxima: ningún día cerrado", not any(d["locked"] for d in pr.get("days", [])))
+        r = await op.get("/api/planner/commitments/preview", params={"week": (nxt + timedelta(days=1)).isoformat()})
+        check("semana que no empieza en lunes -> 400", r.status_code == 400, r.status_code)
+        r = await op.get("/api/planner/commitments/preview", params={"week": nxt.isoformat(), "basis": "real"})
+        check("base real: por cuadrilla de día = real medido",
+              r.json()["per_crew"]["DIA"] == round(1000 / dia["crews_cfg"]), r.json().get("per_crew"))
+
+        body = {"week_start": nxt.isoformat(), "basis": "params", "note": "junta viernes", "days": [
+            {"date": (nxt + timedelta(days=0)).isoformat(), "shifts": {"DIA": 40000, "NOCHE": 20000}},
+            {"date": (nxt + timedelta(days=1)).isoformat(), "shifts": {"DIA": 38000, "NOCHE": 0}},
+            {"date": (nxt + timedelta(days=4)).isoformat(), "shifts": {"DIA": 0, "NOCHE": 0}},
+        ]}
+        r = await op.post("/api/planner/commitments", json=body)
+        check("operador NO compromete", r.status_code == 403, r.status_code)
+        r = await sup.post("/api/planner/commitments", json={**body, "days": [{"date": "2020-01-01", "shifts": {"DIA": 1}}]})
+        check("día fuera de la semana -> 400", r.status_code == 400, r.status_code)
+        r = await sup.post("/api/planner/commitments", json={**body, "days": [{"date": nxt.isoformat(), "shifts": {"DIA": -5}}]})
+        check("meta negativa -> 400", r.status_code == 400, r.status_code)
+        antes = {o["order_id"]: o for o in sdb.orders.find({}, {"_id": 0})}
+        r = await sup.post("/api/planner/commitments", json=body)
+        res = r.json()
+        check("comprometer 200: total 98,000, versión 1", r.status_code == 200
+              and res["commitment"]["total"] == 98000 and res["commitment"]["version"] == 1, r.text[:300])
+        g_lun = sdb.production_goals.find_one({"date": nxt.isoformat()}, {"_id": 0})
+        check("meta de producción del lunes: 60,000 = TURNO 1 40,000 + TURNO 2 20,000",
+              g_lun and g_lun["day"] == 60000 and g_lun["shifts"] == {"TURNO 1": 40000, "TURNO 2": 20000}, g_lun)
+        g_mar = sdb.production_goals.find_one({"date": (nxt + timedelta(days=1)).isoformat()}, {"_id": 0})
+        check("turno en 0 no se guarda como meta de turno", g_mar and g_mar["shifts"] == {"TURNO 1": 38000}, g_mar)
+        check("día comprometido en 0 queda sin meta",
+              sdb.production_goals.count_documents({"date": (nxt + timedelta(days=4)).isoformat()}) == 0)
+        check("comprometer no toca ninguna orden",
+              antes == {o["order_id"]: o for o in sdb.orders.find({}, {"_id": 0})})
+        body2 = {**body, "days": [{"date": nxt.isoformat(), "shifts": {"DIA": 30000, "NOCHE": 20000}}]}
+        r = await sup.post("/api/planner/commitments", json=body2)
+        c2 = r.json().get("commitment", {})
+        check("re-comprometer: versión 2, el lunes cambia y el martes que no se mandó sale",
+              c2.get("version") == 2 and c2["days"].get(nxt.isoformat(), {}).get("total") == 50000
+              and (nxt + timedelta(days=1)).isoformat() not in c2["days"], c2.get("days"))
+        check("el martes que salió del compromiso pierde su meta de producción",
+              sdb.production_goals.count_documents({"date": (nxt + timedelta(days=1)).isoformat()}) == 0)
+        check("la versión anterior queda en el historial", sdb.planner_commitments_history.count_documents(
+            {"week_start": nxt.isoformat(), "version": 1}) == 1)
+        check("bitácora del compromiso", sdb.activity_logs.count_documents({"action": "planner_commit_week"}) == 2)
+
+        print("\n== Plan comprometido: regla de cierre ==")
+        cur = _pe.week_start(hoy_op)
+        prev_doc = {"week_start": cur.isoformat(), "iso_week": 1, "version": 1, "total": 7,
+                    "days": {hoy_op.isoformat(): {"DIA": 7, "NOCHE": 0, "total": 7}}}
+        sdb.planner_commitments.insert_one(dict(prev_doc))
+        r = await sup.post("/api/planner/commitments", json={"week_start": cur.isoformat(), "days": [
+            {"date": (cur + timedelta(days=k)).isoformat(), "shifts": {"DIA": 1234, "NOCHE": 0}} for k in range(7)]})
+        if hoy_op.weekday() == 6:
+            check("domingo: la semana en curso ya no tiene días por comprometer -> 400", r.status_code == 400, r.status_code)
+        else:
+            cc = r.json().get("commitment", {})
+            check("día en curso: conserva lo comprometido antes (7, no 1234)",
+                  cc.get("days", {}).get(hoy_op.isoformat(), {}).get("DIA") == 7, cc.get("days"))
+            check("días pasados no se comprometen después",
+                  all(dd >= hoy_op.isoformat() for dd in cc.get("days", {})), list(cc.get("days", {})))
+            check("días futuros sí", (hoy_op + timedelta(days=1)).isoformat() in cc.get("days", {}), list(cc.get("days", {})))
+            check("el día en curso no reescribe su meta de producción",
+                  sdb.production_goals.count_documents({"date": hoy_op.isoformat()}) == 0)
+
+        print("\n== Plan comprometido: cumplimiento ==")
+        sdb.planner_commitments.insert_one({"week_start": w3.isoformat(), "iso_week": 1, "version": 1, "total": 6000,
+            "days": {w3.isoformat(): {"DIA": 2000, "NOCHE": 1000, "total": 3000},
+                     (w3 + timedelta(days=1)).isoformat(): {"DIA": 2000, "NOCHE": 1000, "total": 3000}}})
+        r = await op.get("/api/planner/commitments")
+        row = next((x for x in r.json().get("rows", []) if x["week_start"] == w3.isoformat()), {})
+        check("cumplimiento: real 3,200 de 6,000 comprometido = 53.3%",
+              row.get("score", {}).get("committed") == 6000 and row["score"]["actual"] == 3200
+              and row["score"]["pct"] == 53.3, row.get("score"))
+        sdb.production_logs.delete_many({"log_id": {"$regex": "^pc_"}})
+        sdb.planner_commitments.delete_many({})
+        sdb.planner_commitments_history.delete_many({})
+        sdb.production_goals.delete_many({})
+
         print("\n== Modo TV: operador por máquina ==")
         ahora = datetime.now(timezone.utc)
         sdb.production_logs.insert_many([
