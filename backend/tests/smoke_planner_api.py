@@ -365,6 +365,55 @@ async def main():
         check("historial conserva lo deshecho",
               sdb.planner_overrides.count_documents({"active": False}) == 2)
 
+        print("\n== Prioridad dentro de la máquina (arrastrar y soltar) ==")
+
+        def fila(run):
+            """{máquina: [job_id…]} en el orden del tablero visual (primer segmento ahí)."""
+            por = {}
+            for j in run["jobs"]:
+                prim = {}
+                for sg in j.get("segments") or []:
+                    if sg["machine"] not in prim or sg["start"] < prim[sg["machine"]]:
+                        prim[sg["machine"]] = sg["start"]
+                for m, st in prim.items():
+                    por.setdefault(m, []).append((st, j["job_id"]))
+            return {m: [jid for _, jid in sorted(v)] for m, v in por.items()}
+
+        filas = fila(run3)
+        maq = next((m for m, v in filas.items() if len(v) >= 2), None)
+        check("hay una máquina con 2+ trabajos para reordenar", maq is not None, filas)
+        a, b = filas[maq][0], filas[maq][1]
+        it = lambda jid: {"order_id": jid.split(":")[0], "position": jid.split(":")[1]}
+        r = await op.post("/api/planner/overrides/reorder", json={"machine": maq, "items": [it(b), it(a)]})
+        check("operador NO reordena", r.status_code == 403, r.status_code)
+        r = await sup.post("/api/planner/overrides/reorder", json={"machine": "MAQUINA99", "items": [it(b)]})
+        check("máquina inexistente -> 400", r.status_code == 400, r.status_code)
+        r = await sup.post("/api/planner/overrides/reorder", json={"machine": maq, "items": [it(b), it(b)]})
+        check("trabajo repetido -> 400", r.status_code == 400, r.status_code)
+        r = await sup.post("/api/planner/overrides/reorder", json={"machine": maq, "items": [{"order_id": "nope", "position": "FRENTE"}]})
+        check("orden inexistente -> 404", r.status_code == 404, r.status_code)
+        # Un "no antes de" previo de `a` se conserva al reordenar.
+        hoy_iso = date.today().isoformat()
+        await sup.post("/api/planner/overrides", json={"order_id": it(a)["order_id"], "position": it(a)["position"],
+                                                       "kind": "assign", "params": {"not_before": hoy_iso}})
+        r = await sup.post("/api/planner/overrides/reorder", json={"machine": maq, "items": [it(b), it(a)]})
+        res = r.json()
+        check("reordenar 200: fija 2 y reemplaza el previo", r.status_code == 200 and res.get("pinned") == 2
+              and res.get("replaced") >= 1, r.text[:200])
+        act = {o["target"]: o for o in sdb.planner_overrides.find({"active": True, "kind": "assign",
+                                                                   "batch_id": res.get("batch_id")}, {"_id": 0})}
+        check("cada uno fijado en la máquina con su lugar",
+              act.get(b, {}).get("params", {}).get("queue_pos") == 1 and act.get(a, {}).get("params", {}).get("queue_pos") == 2
+              and all(o["params"]["machine"] == maq for o in act.values()), act)
+        check("conserva el 'no antes de' que ya tenía", act.get(a, {}).get("params", {}).get("not_before") == hoy_iso, act.get(a))
+        check("bitácora del reordenamiento", sdb.activity_logs.count_documents({"action": "planner_override_reorder"}) == 1)
+        antes = {o["order_id"]: o for o in sdb.orders.find({}, {"_id": 0})}
+        run_r = (await sup.post("/api/planner/shadow-run")).json()
+        despues = {o["order_id"]: o for o in sdb.orders.find({}, {"_id": 0})}
+        check("reordenar no toca ninguna orden del CRM", antes == despues)
+        nueva = fila(run_r).get(maq, [])
+        check("el motor respeta el orden nuevo en la máquina", nueva[:2] == [b, a], (maq, nueva[:3], [a, b]))
+
         print("\n== Alertas ==")
         r = await op.get("/api/planner/alerts")
         al = r.json()

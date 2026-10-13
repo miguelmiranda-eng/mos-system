@@ -706,7 +706,7 @@ const fmtDay = (iso, lang) => {
     { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" }).replace(/\./g, "").replace(",", "").replace(/ de /g, " ");
 };
 
-const BoardCard = ({ job, segs, seq, live, today, onAdjust, tr, lang }) => {
+const BoardCard = ({ job, segs, seq, live, today, onAdjust, draggable, tr, lang }) => {
   const first = segs[0];
   const last = segs[segs.length - 1];
   const when = (s) => `${s.date === today ? tr("plan_board_today") : fmtDay(s.date, lang)} · ${
@@ -741,7 +741,8 @@ const BoardCard = ({ job, segs, seq, live, today, onAdjust, tr, lang }) => {
             {mocks.length}
           </span>
         )}
-        <span className="absolute -top-2 -left-2 min-w-[22px] h-[22px] px-1 rounded-full bg-slate-800 text-white text-[11px] font-black grid place-items-center tabular-nums">
+        <span className="absolute -top-2 -left-2 min-w-[22px] h-[22px] px-1 rounded-full bg-slate-800 text-white text-[11px] font-black grid place-items-center tabular-nums"
+          title={draggable ? tr("plan_board_drag_hint") : undefined}>
           {seq}
         </span>
       </div>
@@ -831,11 +832,19 @@ const BoardCard = ({ job, segs, seq, live, today, onAdjust, tr, lang }) => {
 
 const BOARD_VIEW_KEY = "mos_plan_board_view";
 
-const MachineBoard = ({ run, onAdjust, tr }) => {
+const MachineBoard = ({ run, onAdjust, onReorder, tr }) => {
   const { lang } = useLang();
   const [machineF, setMachineF] = useState("");
   const [q, setQ] = useState("");
   const [live, setLive] = useState({});
+  // Arrastrar y soltar dentro de la máquina: drag = {machine, id}, over = id
+  // destino. localOrder = el orden recién soltado, que se pinta al instante y
+  // se descarta cuando llega la corrida nueva del motor.
+  const [drag, setDrag] = useState(null);
+  const [over, setOver] = useState(null);
+  const [localOrder, setLocalOrder] = useState({});
+  const [saving, setSaving] = useState("");
+  useEffect(() => { setLocalOrder({}); }, [run.run_id]);
   const today = (run.now_local || "").slice(0, 10);
 
   // Cola por máquina: cada trabajo aparece en cada máquina donde tiene
@@ -882,9 +891,44 @@ const MachineBoard = ({ run, onAdjust, tr }) => {
   const needle = q.trim().toUpperCase();
   const match = (j) => !needle || [j.order_number, j.customer_po, j.branding, j.client, j.design, j.color]
     .some((v) => String(v || "").toUpperCase().includes(needle));
+  const ordered = (c) => {
+    const lo = localOrder[c.machine];
+    if (!lo) return c.items;
+    const rank = Object.fromEntries(lo.map((id, i) => [id, i]));
+    return [...c.items].sort((a, b) => (rank[a.job.job_id] ?? 1e6) - (rank[b.job.job_id] ?? 1e6));
+  };
   const shown = columns.filter((c) => !machineF || c.machine === machineF)
-    .map((c) => ({ ...c, visible: c.items.filter((x) => match(x.job)) }));
+    .map((c) => { const items = ordered(c); return { ...c, items, visible: items.filter((x) => match(x.job)) }; });
   const single = !!machineF;
+  // Con el buscador activo no se arrastra: la fila visible no es la fila real.
+  const canDrag = !!onReorder && !needle && !saving;
+
+  const drop = async (c, targetId) => {
+    const d = drag;
+    setDrag(null);
+    setOver(null);
+    if (!d || d.machine !== c.machine || d.id === targetId) return;
+    const ids = c.items.map((x) => x.job.job_id);
+    const from = ids.indexOf(d.id);
+    const to = ids.indexOf(targetId);
+    if (from < 0 || to < 0) return;
+    const next = [...ids];
+    next.splice(from, 1);
+    next.splice(to, 0, d.id);
+    // Se fija el tramo 1..N que cambió (N = el lugar más bajo tocado); lo de
+    // abajo lo sigue acomodando el motor.
+    const n = Math.max(from, to) + 1;
+    const byId = Object.fromEntries(c.items.map((x) => [x.job.job_id, x.job]));
+    setLocalOrder((lo) => ({ ...lo, [c.machine]: next }));
+    setSaving(c.machine);
+    try {
+      await onReorder(c.machine, next.slice(0, n).map((id) => ({ order_id: byId[id].order_id, position: byId[id].position })));
+    } catch {
+      setLocalOrder((lo) => { const x = { ...lo }; delete x[c.machine]; return x; });
+    } finally {
+      setSaving("");
+    }
+  };
 
   if (!(run.jobs || []).length) return <Empty>{tr("plan_grid_empty")}</Empty>;
 
@@ -914,6 +958,7 @@ const MachineBoard = ({ run, onAdjust, tr }) => {
               <span className="text-[11px] text-slate-500 tabular-nums">
                 {tr("plan_board_orders", { n: c.items.length })} · {fmt(c.hits)} {tr("plan_hits").toLowerCase()}
               </span>
+              {saving === c.machine && <Loader2 className="w-3.5 h-3.5 text-blue-500 animate-spin" />}
               {c.until && (
                 <span className="ml-auto text-[11px] text-slate-400 whitespace-nowrap">
                   {tr("plan_board_until", { d: fmtDate(c.until, lang, false) })}
@@ -927,11 +972,24 @@ const MachineBoard = ({ run, onAdjust, tr }) => {
                 <div className="py-8 text-center text-xs text-slate-400 border border-dashed border-slate-200 rounded-xl">
                   {c.items.length ? tr("plan_board_no_match") : tr("plan_board_empty_machine")}
                 </div>
-              ) : c.visible.map((x) => (
-                <BoardCard key={`${x.job.job_id}|${c.machine}`} job={x.job} segs={x.segs}
-                  seq={c.items.indexOf(x) + 1} live={live[x.job.order_id]} today={today}
-                  onAdjust={onAdjust} tr={tr} lang={lang} />
-              ))}
+              ) : c.visible.map((x) => {
+                const id = x.job.job_id;
+                const sameCol = drag && drag.machine === c.machine;
+                return (
+                  <div key={`${id}|${c.machine}`} draggable={canDrag}
+                    onDragStart={canDrag ? (e) => { e.dataTransfer.effectAllowed = "move"; setDrag({ machine: c.machine, id }); } : undefined}
+                    onDragEnd={() => { setDrag(null); setOver(null); }}
+                    onDragOver={sameCol ? (e) => { e.preventDefault(); if (over !== id) setOver(id); } : undefined}
+                    onDrop={sameCol ? (e) => { e.preventDefault(); drop(c, id); } : undefined}
+                    className={`rounded-xl transition ${canDrag ? "cursor-grab active:cursor-grabbing" : ""} ${
+                      drag?.id === id && sameCol ? "opacity-40" : ""} ${
+                      sameCol && over === id && drag.id !== id ? "ring-2 ring-blue-400 ring-offset-2" : ""}`}>
+                    <BoardCard job={x.job} segs={x.segs}
+                      seq={c.items.indexOf(x) + 1} live={live[x.job.order_id]} today={today}
+                      onAdjust={onAdjust} draggable={canDrag} tr={tr} lang={lang} />
+                  </div>
+                );
+              })}
             </div>
           </div>
         ))}
@@ -1107,7 +1165,7 @@ const AppliedMovesCard = ({ rows, canEdit, onRevert, lastResults, tr }) => {
   );
 };
 
-const ScheduleTab = ({ config, efficiency, run, running, onRun, canEdit, onToggle, onAdjust, overrides, history, onUndo,
+const ScheduleTab = ({ config, efficiency, run, running, onRun, canEdit, onToggle, onAdjust, onReorder, overrides, history, onUndo,
   onApplyMoves, applied, onRevertMove, lastApply, tr }) => {
   const [status, setStatus] = useState("");
   const [kindF, setKindF] = useState("");
@@ -1308,7 +1366,7 @@ const ScheduleTab = ({ config, efficiency, run, running, onRun, canEdit, onToggl
           </div>
         </div>
         {boardView === "board"
-          ? <MachineBoard run={run} onAdjust={canEdit ? onAdjust : null} tr={tr} />
+          ? <MachineBoard run={run} onAdjust={canEdit ? onAdjust : null} onReorder={canEdit ? onReorder : null} tr={tr} />
           : <MachineGrid run={run} onAdjust={canEdit ? onAdjust : null} tr={tr} />}
       </Card>
 
@@ -3170,6 +3228,21 @@ const PlannerModule = () => {
     if (on) await runEngine("override");
     if (closePanel) setAdjusting(null);
   };
+
+  // Prioridad dentro de una máquina (arrastrar y soltar en el tablero visual):
+  // fija el tramo 1..N en ese orden y recalcula. Si falla, lanza para que el
+  // tablero regrese la fila como estaba.
+  const reorderMachine = async (machine, items) => {
+    try {
+      await planner("/overrides/reorder", { method: "POST", body: JSON.stringify({ machine, items }) });
+    } catch (e) {
+      toast.error(e.message);
+      throw e;
+    }
+    toast.success(on ? tr("plan_board_reordered", { n: items.length, m: machine.replace("MAQUINA", "M") })
+      : tr("plan_board_reordered_off"));
+    await afterOverride(false);
+  };
   // ── Recálculo automático (modo sombra) ──
   // 1) por tiempo: si la última corrida tiene más de N minutos;
   // 2) por cambios: una orden o una captura de producción cambió (mismo canal
@@ -3316,7 +3389,7 @@ const PlannerModule = () => {
         ) : (
           <>
             {tab === "schedule" && <ScheduleTab config={cfgData.config} efficiency={cfgData.efficiency} run={run} running={running} onRun={() => runEngine("manual")} canEdit={canEdit}
-              onToggle={toggleEngine} onAdjust={setAdjusting} overrides={ovData.active} history={ovData.history}
+              onToggle={toggleEngine} onAdjust={setAdjusting} onReorder={reorderMachine} overrides={ovData.active} history={ovData.history}
               onUndo={undoOverride} onApplyMoves={applyMoves} applied={applied} onRevertMove={revertMove}
               lastApply={lastApply} tr={tr} />}
             {tab === "projection" && <ProjectionTab canEdit={canEdit} run={run} onCalendarSaved={afterConfigChange} calendar={cfgData.calendar}

@@ -1184,6 +1184,76 @@ async def add_override(request: Request):
     return {"override": doc, "replaced": len(replaced)}
 
 
+REORDER_MAX = 60
+
+
+@router.post("/overrides/reorder")
+async def reorder_machine(request: Request):
+    """Prioridad DENTRO de una máquina, desde el tablero visual (arrastrar y
+    soltar). body: {machine, items: [{order_id, position}, ...], reason?}, con
+    `items` = la fila de esa máquina de la 1 a la N en el orden nuevo.
+
+    Cada trabajo queda reprogramado/fijado (assign) en esa máquina con
+    queue_pos = su lugar. Se fija TODO el tramo 1..N, no sólo la tarjeta
+    movida: el motor inserta los fijados en su lugar y llena el resto con lo
+    que él elija, así que fijar sólo una dejaría que otra no fijada se colara
+    antes. Lo de abajo de N lo sigue acomodando el motor. Mismo camino que
+    POST /overrides (un assign activo por trabajo; el anterior pasa al
+    historial) y conserva su "no antes de". Todo comparte batch_id."""
+    user = await require_admin(request)
+    body = await request.json() or {}
+    machine = body.get("machine")
+    if machine not in await get_machines():
+        raise HTTPException(400, "Esa máquina no existe")
+    items = body.get("items") or []
+    if not isinstance(items, list) or not items:
+        raise HTTPException(400, "Indica la fila de la máquina")
+    if len(items) > REORDER_MAX:
+        raise HTTPException(400, f"Máximo {REORDER_MAX} trabajos por reordenamiento")
+    targets = []
+    for it in items:
+        pos = str((it or {}).get("position") or "").strip().upper()
+        oid = (it or {}).get("order_id")
+        if not oid or not pos or pos == "*":
+            raise HTTPException(400, "Cada trabajo necesita orden y posición")
+        targets.append((oid, pos, f"{oid}:{pos}"))
+    if len({t[2] for t in targets}) != len(targets):
+        raise HTTPException(400, "Un trabajo aparece dos veces en la fila")
+    orders = {o["order_id"]: o async for o in db.orders.find(
+        {"order_id": {"$in": list({t[0] for t in targets})}}, {"_id": 0, "order_id": 1, "order_number": 1})}
+    missing = [t[0] for t in targets if t[0] not in orders]
+    if missing:
+        raise HTTPException(404, f"La orden no existe: {missing[0]}")
+
+    now = datetime.now(timezone.utc).isoformat()
+    batch_id = f"pob_{uuid.uuid4().hex[:10]}"
+    reason = str(body.get("reason") or "").strip()[:300] or "Prioridad en el tablero visual"
+    prev = {o["target"]: o async for o in db.planner_overrides.find(
+        {"target": {"$in": [t[2] for t in targets]}, "kind": "assign", "active": True}, {"_id": 0})}
+    docs = []
+    for i, (oid, pos, target) in enumerate(targets, 1):
+        params = {"machine": machine, "queue_pos": i}
+        nb = ((prev.get(target) or {}).get("params") or {}).get("not_before")
+        if nb:
+            params["not_before"] = nb
+        docs.append({"override_id": f"pov_{uuid.uuid4().hex[:10]}", "target": target,
+                     "order_id": oid, "order_number": str(orders[oid].get("order_number") or ""),
+                     "position": pos, "kind": "assign", "params": params, "reason": reason,
+                     "batch_id": batch_id, "active": True, "created_at": now,
+                     "created_by": user.get("email"), "created_by_name": user.get("name")})
+    if prev:
+        await db.planner_overrides.update_many(
+            {"target": {"$in": list(prev)}, "kind": "assign", "active": True},
+            {"$set": {"active": False, "removed_at": now, "removed_by": user.get("email"),
+                      "removed_reason": "reemplazado"}})
+    await db.planner_overrides.insert_many([dict(d) for d in docs])
+    await log_activity(user, "planner_override_reorder",
+                       {"batch_id": batch_id, "machine": machine, "reason": reason,
+                        "order": [d["target"] for d in docs]},
+                       {"replaced": list(prev.values())} if prev else None)
+    return {"batch_id": batch_id, "pinned": len(docs), "replaced": len(prev)}
+
+
 @router.delete("/overrides/{override_id}")
 async def remove_override(override_id: str, request: Request):
     user = await require_admin(request)
