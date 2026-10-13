@@ -4,7 +4,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   ArrowLeft, CalendarClock, Power, RefreshCw, Loader2, Cpu, TrendingUp,
   Settings2, CalendarDays, AlertTriangle, Trash2, Plus, Save, FlaskConical, Eye, Search,
-  Pin, ArrowUpDown, LogIn, PauseCircle, Undo2, X, SlidersHorizontal, BellRing, CheckCircle2, Download, PackageCheck, Gauge, ClipboardCheck,
+  Pin, ArrowUpDown, LogIn, PauseCircle, Undo2, X, Tv, SlidersHorizontal, BellRing, CheckCircle2, Download, PackageCheck, Gauge, ClipboardCheck,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { saveAs } from "file-saver";
@@ -832,6 +832,25 @@ const BoardCard = ({ job, segs, seq, live, today, onAdjust, draggable, tr, lang 
 
 const BOARD_VIEW_KEY = "mos_plan_board_view";
 
+// Cola por máquina (tablero visual y Modo TV): cada trabajo aparece en cada
+// máquina donde tiene segmentos, ordenado por su primer segmento ahí.
+const machineColumns = (run) => {
+  const by = {};
+  (run.jobs || []).forEach((j) => {
+    const per = {};
+    (j.segments || []).forEach((sg) => { (per[sg.machine] = per[sg.machine] || []).push(sg); });
+    Object.entries(per).forEach(([m, segs]) => {
+      segs.sort((a, b) => (a.start || "").localeCompare(b.start || ""));
+      (by[m] = by[m] || []).push({ job: j, segs, hits: segs.reduce((a, sg) => a + (sg.hits || 0), 0) });
+    });
+  });
+  return (run.active_machines || Object.keys(by)).map((m) => {
+    const items = (by[m] || []).sort((a, b) => (a.segs[0].start || "").localeCompare(b.segs[0].start || ""));
+    const lastSeg = items.length ? items[items.length - 1].segs.slice(-1)[0] : null;
+    return { machine: m, items, hits: items.reduce((a, x) => a + x.hits, 0), until: lastSeg?.date };
+  });
+};
+
 const MachineBoard = ({ run, onAdjust, onReorder, tr }) => {
   const { lang } = useLang();
   const [machineF, setMachineF] = useState("");
@@ -853,24 +872,7 @@ const MachineBoard = ({ run, onAdjust, onReorder, tr }) => {
   useEffect(() => { setLocalOrder({}); }, [run.run_id]);
   const today = (run.now_local || "").slice(0, 10);
 
-  // Cola por máquina: cada trabajo aparece en cada máquina donde tiene
-  // segmentos, ordenado por su primer segmento ahí.
-  const columns = useMemo(() => {
-    const by = {};
-    (run.jobs || []).forEach((j) => {
-      const per = {};
-      (j.segments || []).forEach((s) => { (per[s.machine] = per[s.machine] || []).push(s); });
-      Object.entries(per).forEach(([m, segs]) => {
-        segs.sort((a, b) => (a.start || "").localeCompare(b.start || ""));
-        (by[m] = by[m] || []).push({ job: j, segs, hits: segs.reduce((a, s) => a + (s.hits || 0), 0) });
-      });
-    });
-    return (run.active_machines || Object.keys(by)).map((m) => {
-      const items = (by[m] || []).sort((a, b) => (a.segs[0].start || "").localeCompare(b.segs[0].start || ""));
-      const lastSeg = items.length ? items[items.length - 1].segs.slice(-1)[0] : null;
-      return { machine: m, items, hits: items.reduce((a, x) => a + x.hits, 0), until: lastSeg?.date };
-    });
-  }, [run]);
+  const columns = useMemo(() => machineColumns(run), [run]);
 
   const orderIds = useMemo(() => [...new Set((run.jobs || []).map((j) => j.order_id).filter(Boolean))], [run]);
   // Los mocks que faltan los trae el SERVIDOR en goteo (1 consulta a Printavo
@@ -1050,6 +1052,279 @@ const MachineBoard = ({ run, onAdjust, onReorder, tr }) => {
             </div>
           </div>
         ))}
+      </div>
+    </div>
+  );
+};
+
+/* ── Modo TV ───────────────────────────────────────────────────────────────
+   Todas las máquinas activas en UNA pantalla (/planeacion?tv=1), para el piso.
+   Por máquina: encabezado (máquina, colores de la orden actual, operador de la
+   última captura), la orden actual (mock + información del tablero) y las
+   siguientes de su cola. Se dibuja en un lienzo fijo de 1920×1080 que se
+   escala a la pantalla con transform (ver modo-tv-produccion: nunca scroll,
+   breakpoints de Tailwind no sirven en TVs con escala de Windows). Se refresca
+   solo cada minuto y, si la corrida está vieja y el recálculo automático está
+   encendido, la pide igual que el módulo (max_age: varias pantallas = una
+   sola corrida). Colores explícitos: no depende del tema claro/oscuro. */
+const TV_W = 1920;
+const TV_H = 1080;
+const TV_HEADER = 64;
+const TV_GAP = 12;
+const TV_REFRESH_MS = 60000;
+
+const ago = (iso, now, tr) => {
+  if (!iso) return "";
+  const min = Math.max(0, Math.round((now - new Date(iso).getTime()) / 60000));
+  if (min < 1) return tr("plan_tv_now");
+  if (min < 60) return tr("plan_tv_min_ago", { n: min });
+  const h = Math.floor(min / 60);
+  return tr("plan_tv_h_ago", { n: h });
+};
+
+// Tarjeta VERTICAL por máquina (TV de 50": dos filas de máquinas). De arriba
+// abajo, como el boceto: máquina · colores · operador / mock / información de
+// la orden / siguientes con flechas. El mock es lo único que se encoge si falta
+// alto; todo lo demás es de una sola línea.
+const TvTile = ({ col, live, op, today, now, tr, lang }) => {
+  const [cur, ...rest] = col.items;
+  const job = cur?.job;
+  const card = job ? live[job.order_id] : null;
+  const status = card?.production_status || "";
+  const sc = getStatusColor(status);
+  const printed = job ? Math.max(0, (job.hits || 0) - (job.remaining || 0)) : 0;
+  const pct = job?.hits ? Math.min(100, Math.round((printed / job.hits) * 100)) : 0;
+  const pos = String(job?.position || "").toUpperCase();
+  const posLabel = tr(`plan_pos_${pos}`) === `plan_pos_${pos}` ? job?.position : tr(`plan_pos_${pos}`);
+  const opStale = op?.at && now - new Date(op.at).getTime() > 12 * 3600000;
+  const when = (sg) => `${sg.date === today ? tr("plan_board_today") : fmtDay(sg.date, lang)} · ${
+    sg.shift === "DIA" ? tr("plan_shift_day") : tr("plan_shift_night")}`;
+  const started = job && (job.started || printed > 0);
+  const muted = { color: "#64748b" };
+  return (
+    <div className="flex flex-col min-h-0 overflow-hidden rounded-xl whitespace-nowrap" style={{ background: "#ffffff", color: "#0f172a" }}>
+      {/* Máquina · colores · operador */}
+      <div className="shrink-0 px-2.5 py-1.5" style={{ background: "#1e293b", color: "#ffffff" }}>
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="text-[30px] leading-none font-black tracking-tight">{col.machine.replace("MAQUINA", "M")}</span>
+          {job && (
+            <span className="ml-auto min-w-0 truncate px-1.5 py-0.5 rounded-md text-[12px] font-bold"
+              style={job.colors_known === false ? { background: "#78350f", color: "#fde68a" } : { background: "#334155", color: "#e2e8f0" }}>
+              {job.colors_known === false ? tr("plan_board_colors_unknown") : tr("plan_board_colors", { n: job.colors })}
+            </span>
+          )}
+        </div>
+        <div className="mt-1 flex items-baseline gap-1.5 min-w-0">
+          <span className="text-[14px] font-bold truncate" style={{ color: op && !opStale ? "#ffffff" : "#94a3b8" }}>
+            {op?.operator || tr("plan_tv_no_operator")}
+          </span>
+          {op?.at && <span className="ml-auto shrink-0 text-[11px]" style={{ color: "#94a3b8" }}>{ago(op.at, now, tr)}</span>}
+        </div>
+      </div>
+
+      {!job ? (
+        <div className="flex-1 grid place-items-center text-[18px] font-bold whitespace-normal text-center px-3" style={{ color: "#94a3b8" }}>
+          {tr("plan_board_empty_machine")}
+        </div>
+      ) : (
+        <>
+          {/* Mock */}
+          <div className="flex-1 min-h-[96px] px-2 pt-1.5 pb-1">
+            <div className="h-full rounded-lg p-1.5" style={{ background: "#f1f5f9" }}>
+              <GarmentThumb color={job.color} position={pos} mock={card?.mock} pending={false} tr={tr} />
+            </div>
+          </div>
+
+          {/* Información de la orden */}
+          <div className="shrink-0 px-2.5 pb-1.5 flex flex-col gap-[3px] [&>*]:shrink-0">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="shrink-0 text-[10px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded"
+                style={started ? { background: "#dcfce7", color: "#166534" } : { background: "#e0e7ff", color: "#3730a3" }}>
+                {started ? tr("plan_tv_on_machine") : tr("plan_tv_up_next")}
+              </span>
+              <span className="ml-auto text-[12px] font-bold truncate" style={{ color: "#475569" }}>{when(cur.segs[0])}</span>
+            </div>
+            <div className="flex items-baseline gap-2 min-w-0">
+              <span className="text-[30px] leading-none font-black tabular-nums">{job.order_number}</span>
+              {job.customer_po && <span className="text-[12px] tabular-nums truncate" style={muted}>PO {job.customer_po}</span>}
+            </div>
+            <div className="text-[12px] truncate" style={{ color: "#475569" }}>
+              <b>{job.branding || job.client}</b>{job.design ? ` · ${job.design}` : ""}
+            </div>
+            <div className="flex items-baseline gap-1.5">
+              <span className="text-[24px] leading-none font-black tabular-nums">{fmt(job.quantity)}</span>
+              <span className="text-[12px]" style={muted}>{tr("plan_board_pieces")}</span>
+              {printed > 0 && <span className="ml-auto text-[13px] font-bold tabular-nums" style={{ color: "#047857" }}>{pct}%</span>}
+            </div>
+            <div className="h-1.5 rounded-full overflow-hidden" style={{ background: "#e2e8f0" }}>
+              <div className="h-full" style={{ width: `${pct}%`, background: "#10b981" }} />
+            </div>
+            <div className="flex items-center gap-1 min-w-0">
+              {status && (
+                <span className="min-w-0 truncate px-1.5 py-0.5 rounded text-[11px] font-black uppercase"
+                  style={sc ? { background: sc.bg, color: sc.text } : { background: "#e2e8f0" }}>{status}</span>
+              )}
+              <span className={`ml-auto shrink-0 px-1.5 py-0.5 rounded border text-[11px] font-bold ${STATUS_STYLE[job.status] || STATUS_STYLE.SIN_FECHA}`}>
+                {job.cancel_date ? tr("plan_board_cancel", { d: fmtDate(job.cancel_date, lang, false) }) : tr("plan_board_no_cancel")}
+              </span>
+            </div>
+            <div className="flex items-center gap-1 min-w-0">
+              <span className="shrink-0 px-1.5 py-0.5 rounded text-[12px] font-bold" style={{ background: "#f1f5f9" }}>{posLabel}</span>
+              {job.color && (
+                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[12px] font-bold min-w-0" style={{ background: "#f1f5f9" }}>
+                  <span className="shrink-0 w-2.5 h-2.5 rounded-full border" style={{ background: garmentHex(job.color) || "transparent", borderColor: "#cbd5e1" }} />
+                  <span className="truncate">{[job.color, card?.style].filter(Boolean).join(" · ")}</span>
+                </span>
+              )}
+            </div>
+          </div>
+
+          {/* Siguientes, con flechas hacia abajo como el boceto */}
+          <div className="shrink-0 px-2.5 pt-1 pb-1.5 flex flex-col gap-1" style={{ borderTop: "1px solid #e2e8f0", background: "#f8fafc" }}>
+            <div className="text-[10px] font-black uppercase tracking-widest text-center leading-4" style={{ color: "#94a3b8" }}>
+              {tr("plan_tv_next")}{rest.length > 2 ? ` · ${tr("plan_tv_more", { n: rest.length - 2 })}` : ""}
+            </div>
+            {rest.length === 0 ? (
+              <div className="text-[12px] text-center py-1" style={{ color: "#94a3b8" }}>{tr("plan_tv_nothing_next")}</div>
+            ) : rest.slice(0, 2).map((x) => (
+              <div key={x.job.job_id} className="flex items-center gap-1 min-w-0">
+                <span className="shrink-0 text-[14px] font-black" style={{ color: "#94a3b8" }}>↓</span>
+                <div className="flex-1 rounded-md px-2 py-0.5 min-w-0" style={{ background: "#ffffff", border: "1px solid #cbd5e1" }}>
+                  <div className="flex items-baseline gap-1.5 min-w-0">
+                    <span className="text-[16px] font-black tabular-nums">{x.job.order_number}</span>
+                    <span className="ml-auto text-[12px] tabular-nums" style={{ color: "#475569" }}>{fmt(x.job.quantity)} {tr("plan_tv_pcs")}</span>
+                  </div>
+                  <div className="flex items-baseline gap-1.5 min-w-0 text-[11px]">
+                    <span className="truncate" style={{ color: "#475569" }}>{x.job.branding || x.job.client}</span>
+                    <span className="ml-auto shrink-0" style={muted}>{when(x.segs[0])}</span>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+};
+
+const PlannerTV = () => {
+  const { t: tr, lang } = useLang();
+  const navigate = useNavigate();
+  const [run, setRun] = useState(null);
+  const [live, setLive] = useState({});
+  const [ops, setOps] = useState({});
+  const [cfg, setCfg] = useState(null);
+  const [err, setErr] = useState("");
+  const [now, setNow] = useState(Date.now());
+  const [view, setView] = useState({ w: window.innerWidth, h: window.innerHeight });
+
+  useEffect(() => {
+    const onResize = () => setView({ w: window.innerWidth, h: window.innerHeight });
+    window.addEventListener("resize", onResize);
+    const clock = setInterval(() => setNow(Date.now()), 30000);
+    const onFs = () => setNow(Date.now());   // repinta el botón de pantalla completa
+    document.addEventListener("fullscreenchange", onFs);
+    // Que la TV no se apague mientras muestra el programa (si el navegador lo permite).
+    let lock = null;
+    navigator.wakeLock?.request?.("screen").then((l) => { lock = l; }).catch(() => {});
+    return () => {
+      window.removeEventListener("resize", onResize);
+      document.removeEventListener("fullscreenchange", onFs);
+      clearInterval(clock);
+      lock?.release?.().catch(() => {});
+    };
+  }, []);
+
+  useEffect(() => {
+    let alive = true;
+    // Sin config (error de red) igual se muestra la última corrida, sin pedir recálculo.
+    const loadCfg = () => planner("/config").then((r) => { if (alive) setCfg(r.config || {}); })
+      .catch(() => { if (alive) setCfg((c) => c || {}); });
+    const load = async () => {
+      try {
+        let r = await planner("/shadow-run/latest");
+        const c = cfg;
+        const autoMin = Number(c?.auto_recalc_minutes) || 15;
+        const old = !r?.created_at || Date.now() - new Date(r.created_at).getTime() > autoMin * 60000;
+        if (old && c?.engine_mode === "shadow" && c?.auto_recalc) {
+          const qs = new URLSearchParams({ trigger: "auto_timer", max_age: String(autoMin * 60) });
+          r = await planner(`/shadow-run?${qs}`, { method: "POST" }).catch(() => r);
+        }
+        if (!alive) return;
+        setRun(r?.run_id ? r : null);
+        setErr("");
+        const ids = [...new Set((r?.jobs || []).map((j) => j.order_id).filter(Boolean))];
+        const [cards, o] = await Promise.all([
+          ids.length ? planner("/cards", { method: "POST", body: JSON.stringify({ order_ids: ids }) }) : { cards: {} },
+          planner("/machine-operators"),
+        ]);
+        if (!alive) return;
+        setLive(cards.cards || {});
+        setOps(o.machines || {});
+      } catch (e) {
+        if (alive) setErr(e.message);
+      }
+    };
+    if (!cfg) { loadCfg(); return () => { alive = false; }; }
+    load();
+    const id = setInterval(load, TV_REFRESH_MS);
+    const idCfg = setInterval(loadCfg, 10 * TV_REFRESH_MS);
+    return () => { alive = false; clearInterval(id); clearInterval(idCfg); };
+  }, [cfg]);
+
+  const exit = () => {
+    if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
+    navigate("/planeacion");
+  };
+  const fullscreen = () => document.documentElement.requestFullscreen?.().catch(() => {});
+
+  const cols = run ? machineColumns(run) : [];
+  const n = Math.max(1, cols.length);
+  // Dos filas de máquinas, la mitad arriba y la mitad abajo (TV de 50"); con
+  // muy pocas máquinas, una sola fila.
+  const gr = n > 3 ? 2 : 1;
+  const gc = Math.ceil(n / gr);
+  const scale = Math.min(view.w / TV_W, view.h / TV_H);
+  const today = (run?.now_local || "").slice(0, 10);
+  const stamp = new Date(now).toLocaleString(lang === "en" ? "en-US" : "es-MX",
+    { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+
+  return (
+    <div className="fixed inset-0 overflow-hidden" style={{ background: "#0f172a" }}>
+      <div style={{ width: TV_W, height: TV_H, transform: `scale(${scale})`, transformOrigin: "top left",
+        position: "absolute", left: (view.w - TV_W * scale) / 2, top: (view.h - TV_H * scale) / 2 }}>
+        <div className="flex items-center gap-4 px-4" style={{ height: TV_HEADER, color: "#ffffff" }}>
+          <CalendarClock className="w-8 h-8" style={{ color: "#60a5fa" }} />
+          <span className="text-[28px] font-black tracking-tight">{tr("plan_tv_title")}</span>
+          <span className="text-[18px]" style={{ color: "#94a3b8" }}>{stamp}</span>
+          {run?.created_at && (
+            <span className="text-[14px]" style={{ color: "#64748b" }}>
+              {tr("plan_tv_computed", { t: ago(run.created_at, now, tr) })}
+            </span>
+          )}
+          {err && <span className="text-[14px] font-bold" style={{ color: "#f87171" }}>{err}</span>}
+          <span className="ml-auto flex gap-2">
+            {!document.fullscreenElement && (
+              <button onClick={fullscreen} className="h-9 px-3 rounded-lg text-[14px] font-bold"
+                style={{ background: "#1e293b", color: "#e2e8f0" }}>{tr("plan_tv_fullscreen")}</button>
+            )}
+            <button onClick={exit} className="h-9 px-3 rounded-lg text-[14px] font-bold"
+              style={{ background: "#1e293b", color: "#e2e8f0" }}>{tr("plan_tv_exit")}</button>
+          </span>
+        </div>
+        {!run ? (
+          <div className="grid place-items-center text-[28px] font-bold" style={{ height: TV_H - TV_HEADER, color: "#94a3b8" }}>
+            {err ? tr("plan_tv_no_run") : <Loader2 className="w-12 h-12 animate-spin" />}
+          </div>
+        ) : (
+          <div className="grid" style={{ height: TV_H - TV_HEADER, padding: `0 ${TV_GAP}px ${TV_GAP}px`, gap: TV_GAP,
+            gridTemplateColumns: `repeat(${gc}, minmax(0, 1fr))`, gridTemplateRows: `repeat(${gr}, minmax(0, 1fr))` }}>
+            {cols.map((c) => (
+              <TvTile key={c.machine} col={c} live={live} op={ops[c.machine]} today={today} now={now} tr={tr} lang={lang} />
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -3392,6 +3667,11 @@ const PlannerModule = () => {
           <GlobalSearch run={run} alerts={alertData?.printed_stale} canEdit={canEdit} onAdjust={setAdjusting}
             onApply={applyMoves} onGoTab={setTab} tr={tr} />
 
+          <button onClick={() => navigate("/planeacion?tv=1")} title={tr("plan_tv_hint")}
+            className="h-10 px-3 rounded-xl bg-slate-800 text-white text-sm font-bold inline-flex items-center gap-2 hover:bg-slate-700">
+            <Tv className="w-4 h-4" /> {tr("plan_tv_button")}
+          </button>
+
           {/* Interruptor del motor */}
           <div className={`flex items-center gap-3 px-3 py-2 rounded-xl border ${on ? "bg-emerald-50 border-emerald-200" : "bg-slate-50 border-slate-200"}`}>
             <div className="leading-tight">
@@ -3471,4 +3751,10 @@ const PlannerModule = () => {
   );
 };
 
-export default PlannerModule;
+// /planeacion?tv=1 = Modo TV (todas las máquinas en una pantalla).
+const PlannerRoot = () => {
+  const [sp] = useSearchParams();
+  return sp.get("tv") ? <PlannerTV /> : <PlannerModule />;
+};
+
+export default PlannerRoot;

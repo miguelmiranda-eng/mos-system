@@ -592,6 +592,30 @@ CARDS_MAX = 600
 MOCKS_PER_CARD = 8
 
 
+OPERATORS_WINDOW_H = 36
+
+
+@router.get("/machine-operators")
+async def machine_operators(request: Request):
+    """Para el Modo TV: quién está en cada máquina = el operador de su ÚLTIMA
+    captura de producción (production_logs.operator), con la hora y la orden.
+    Sólo mira las últimas OPERATORS_WINDOW_H horas (índice por created_at); una
+    máquina sin captura en ese rango no aparece. Sólo lectura."""
+    await require_auth(request)
+    since = (datetime.now(timezone.utc) - timedelta(hours=OPERATORS_WINDOW_H)).isoformat()
+    pipe = [
+        {"$match": {"created_at": {"$gte": since}, "machine": {"$nin": [None, ""]}}},
+        {"$sort": {"created_at": -1}},
+        {"$group": {"_id": "$machine", "operator": {"$first": "$operator"}, "at": {"$first": "$created_at"},
+                    "order_number": {"$first": "$order_number"}, "shift": {"$first": "$shift"}}},
+    ]
+    out = {}
+    async for r in db.production_logs.aggregate(pipe):
+        out[r["_id"]] = {"operator": r.get("operator") or "", "at": r.get("at"),
+                         "order_number": str(r.get("order_number") or ""), "shift": r.get("shift") or ""}
+    return {"machines": out, "window_hours": OPERATORS_WINDOW_H}
+
+
 @router.post("/cards")
 async def board_cards(request: Request):
     """Datos EN VIVO para las tarjetas del tablero visual por máquina: lo que la

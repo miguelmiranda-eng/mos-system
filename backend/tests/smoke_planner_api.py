@@ -365,6 +365,25 @@ async def main():
         check("historial conserva lo deshecho",
               sdb.planner_overrides.count_documents({"active": False}) == 2)
 
+        print("\n== Modo TV: operador por máquina ==")
+        ahora = datetime.now(timezone.utc)
+        sdb.production_logs.insert_many([
+            {"log_id": "pl_tv1", "order_id": "ord_tv", "order_number": "9901", "machine": "MAQUINA3",
+             "operator": "Operador Viejo", "quantity_produced": 0, "created_at": (ahora - timedelta(hours=2)).isoformat()},
+            {"log_id": "pl_tv2", "order_id": "ord_tv", "order_number": "9902", "machine": "MAQUINA3",
+             "operator": "Operador Nuevo", "shift": "TURNO 1", "quantity_produced": 0,
+             "created_at": (ahora - timedelta(minutes=5)).isoformat()},
+            {"log_id": "pl_tv3", "order_id": "ord_tv", "order_number": "9903", "machine": "MAQUINA2",
+             "operator": "Fuera de rango", "quantity_produced": 0, "created_at": (ahora - timedelta(hours=60)).isoformat()},
+        ])
+        r = await op.get("/api/planner/machine-operators")
+        mo = r.json().get("machines", {}) if r.status_code == 200 else {}
+        check("operadores: cualquier sesión los lee", r.status_code == 200, r.status_code)
+        check("operador = el de la ÚLTIMA captura de la máquina",
+              mo.get("MAQUINA3", {}).get("operator") == "Operador Nuevo" and mo["MAQUINA3"]["order_number"] == "9902", mo.get("MAQUINA3"))
+        check("captura fuera de la ventana (36 h) no cuenta", mo.get("MAQUINA2", {}).get("operator") != "Fuera de rango", mo.get("MAQUINA2"))
+        sdb.production_logs.delete_many({"log_id": {"$in": ["pl_tv1", "pl_tv2", "pl_tv3"]}})
+
         print("\n== Prioridad dentro de la máquina (arrastrar y soltar) ==")
 
         def fila(run):
