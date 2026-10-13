@@ -591,6 +591,51 @@ async def latest_run(request: Request):
 CARDS_MAX = 600
 MOCKS_PER_CARD = 8
 
+# Medidas (ancho, alto) de cada mock guardado, por llave de archivo. Los
+# archivos de /api/uploads nunca cambian (llave con id aleatorio), así que se
+# leen UNA vez por proceso y sólo el encabezado (PIL no decodifica la imagen).
+_MOCK_DIMS: dict = {}
+_MOCK_DIMS_MAX = 20000
+
+
+def _mock_dims(url: str):
+    if not url or "/api/uploads/" not in url:
+        return None
+    key = url.split("/api/uploads/", 1)[1]
+    if key in _MOCK_DIMS:
+        return _MOCK_DIMS[key]
+    dims = None
+    try:
+        from PIL import Image
+        from routers.orders import UPLOADS_DIR
+        with Image.open(UPLOADS_DIR / key) as im:
+            dims = im.size
+    except Exception:          # noqa: BLE001 — sin archivo / no es imagen: sin medida
+        dims = None
+    if len(_MOCK_DIMS) < _MOCK_DIMS_MAX:
+        _MOCK_DIMS[key] = dims
+    return dims
+
+
+def _best_mock_first(urls: list) -> list:
+    """Pone primero la HOJA DE INFORMACIÓN del arte. En Printavo una orden trae
+    varios mocks: una foto de catálogo chica y vertical (se ve borrosa en
+    grande), la hoja técnica del cliente (Goodie Two Sleeves, West Coast
+    Choppers, American Thrift…: siempre HORIZONTAL y grande) y a veces una
+    captura de Photoshop casi cuadrada. Regla, validada contra los mocks de prod
+    (2026-10-13): la horizontal (alto ≤ 85% del ancho) más grande; si no hay
+    horizontal, la más grande; sin medidas, el orden de Printavo."""
+    scored = []
+    for i, u in enumerate(urls):
+        d = _mock_dims(u)
+        if d and d[0] and d[1]:
+            w, h = d
+            scored.append((1 if h <= w * 0.85 else 0, w * h, -i, u))
+    if not scored:
+        return urls
+    best = max(scored)[3]
+    return [best] + [u for u in urls if u != best]
+
 
 OPERATORS_WINDOW_H = 36
 
@@ -646,10 +691,10 @@ async def board_cards(request: Request):
     fail_cut = (datetime.now(timezone.utc) - timedelta(seconds=mock_trickle.RETRY_FAIL_S)).isoformat()
     cards = {}
     async for o in db.orders.aggregate(pipe):
-        # Todos los mocks de la orden (frente, espalda…) para el visor; el
-        # primero es la miniatura de la tarjeta.
-        mocks = [m.get("url") for m in (o.get("mocks") or [])
-                 if m.get("url") and not str(m["url"]).lower().endswith(".pdf")]
+        # Todos los mocks de la orden para el visor; el primero (la hoja de
+        # información, ver _best_mock_first) es la imagen de la tarjeta y de la TV.
+        mocks = _best_mock_first([m.get("url") for m in (o.get("mocks") or [])
+                                  if m.get("url") and not str(m["url"]).lower().endswith(".pdf")])
         url = mocks[0] if mocks else None
         pending = (not url and bool(o.get("printavo_invoice_id"))
                    and int(o.get("printavo_mocks_v") or 0) < MOCKS_VERSION

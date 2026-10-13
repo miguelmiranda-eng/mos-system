@@ -1067,11 +1067,20 @@ const MachineBoard = ({ run, onAdjust, onReorder, tr }) => {
    solo cada minuto y, si la corrida está vieja y el recálculo automático está
    encendido, la pide igual que el módulo (max_age: varias pantallas = una
    sola corrida). Colores explícitos: no depende del tema claro/oscuro. */
-const TV_W = 1920;
+// Alto de diseño: el texto se escala contra él. El ancho del lienzo NO es fijo:
+// se estira a la proporción real de la pantalla para llenarla completa (sin
+// franjas), con un mínimo de TV_MIN_W lógicos para que una ventana angosta no
+// aplaste las tarjetas.
 const TV_H = 1080;
-const TV_HEADER = 64;
-const TV_GAP = 12;
+const TV_MIN_W = 1280;
+const TV_HEADER = 48;
+const TV_GAP = 8;
 const TV_REFRESH_MS = 60000;
+// Páginas: 8 máquinas por pantalla (dos filas de 4) y rotan cada TV_PAGE_MS.
+// Con 16 máquinas en una sola pantalla cada hoja quedaba de ~13 cm en una TV
+// de 50"; con 8 queda del doble de ancho.
+const TV_PAGE_SIZE = 8;
+const TV_PAGE_MS = 20000;
 // Recálculo por cambio (WebSocket): si alguien —otra TV o el módulo— ya
 // recalculó en este lapso, el servidor devuelve esa corrida. Así hay como
 // máximo un recálculo por minuto en toda la planta, sin importar cuántas TVs.
@@ -1090,7 +1099,7 @@ const ago = (iso, now, tr) => {
 // abajo, como el boceto: máquina · colores · operador / mock / información de
 // la orden / siguientes con flechas. El mock es lo único que se encoge si falta
 // alto; todo lo demás es de una sola línea.
-const TvTile = ({ col, live, op, today, now, tr, lang }) => {
+const TvTile = ({ col, live, op, today, now, wide, tr, lang }) => {
   const [cur, ...rest] = col.items;
   const job = cur?.job;
   const card = job ? live[job.order_id] : null;
@@ -1107,23 +1116,15 @@ const TvTile = ({ col, live, op, today, now, tr, lang }) => {
   const muted = { color: "#64748b" };
   return (
     <div className="flex flex-col min-h-0 overflow-hidden rounded-xl whitespace-nowrap" style={{ background: "#ffffff", color: "#0f172a" }}>
-      {/* Máquina · colores · operador */}
-      <div className="shrink-0 px-2.5 py-1.5" style={{ background: "#1e293b", color: "#ffffff" }}>
-        <div className="flex items-center gap-2 min-w-0">
-          <span className="text-[30px] leading-none font-black tracking-tight">{col.machine.replace("MAQUINA", "M")}</span>
-          {job && (
-            <span className="ml-auto min-w-0 truncate px-1.5 py-0.5 rounded-md text-[12px] font-bold"
-              style={job.colors_known === false ? { background: "#78350f", color: "#fde68a" } : { background: "#334155", color: "#e2e8f0" }}>
-              {job.colors_known === false ? tr("plan_board_colors_unknown") : tr("plan_board_colors", { n: job.colors })}
-            </span>
-          )}
-        </div>
-        <div className="mt-1 flex items-baseline gap-1.5 min-w-0">
-          <span className="text-[14px] font-bold truncate" style={{ color: op && !opStale ? "#ffffff" : "#94a3b8" }}>
+      {/* Máquina · operador (un solo renglón: el alto es para la hoja) */}
+      <div className="shrink-0 flex items-center gap-2 px-2.5 h-[40px]" style={{ background: "#1e293b", color: "#ffffff" }}>
+        <span className="text-[28px] leading-none font-black tracking-tight">{col.machine.replace("MAQUINA", "M")}</span>
+        <span className="ml-auto min-w-0 text-right leading-tight">
+          <span className="block text-[13px] font-bold truncate" style={{ color: op && !opStale ? "#ffffff" : "#94a3b8" }}>
             {op?.operator || tr("plan_tv_no_operator")}
           </span>
-          {op?.at && <span className="ml-auto shrink-0 text-[11px]" style={{ color: "#94a3b8" }}>{ago(op.at, now, tr)}</span>}
-        </div>
+          {op?.at && <span className="block text-[10px]" style={{ color: "#94a3b8" }}>{ago(op.at, now, tr)}</span>}
+        </span>
       </div>
 
       {!job ? (
@@ -1132,21 +1133,27 @@ const TvTile = ({ col, live, op, today, now, tr, lang }) => {
         </div>
       ) : (
         <>
-          {/* Mock */}
-          <div className="flex-1 min-h-[96px] px-2 pt-1.5 pb-1">
-            <div className="h-full rounded-lg p-1.5" style={{ background: "#f1f5f9" }}>
-              <GarmentThumb color={job.color} position={pos} mock={card?.mock} pending={false} tr={tr} />
-            </div>
+          {/* Hoja de información del arte: todo el ancho de la tarjeta, sin marco
+              (las hojas son horizontales: el ancho es lo que limita su tamaño). */}
+          <div className="flex-1 min-h-[120px] flex items-start" style={{ background: "#ffffff" }}>
+            <GarmentThumb color={job.color} position={pos} mock={card?.mock} pending={false} tr={tr} />
           </div>
 
+          {/* Abajo: información de la orden y siguientes. Con la tarjeta ancha
+              (8 máquinas por pantalla) van lado a lado, así la hoja se lleva
+              casi todo el alto; angosta, una debajo de la otra. */}
+          <div className={wide ? "shrink-0 flex min-w-0" : "contents"} style={wide ? { borderTop: "1px solid #e2e8f0" } : undefined}>
           {/* Información de la orden */}
-          <div className="shrink-0 px-2.5 pb-1.5 flex flex-col gap-[3px] [&>*]:shrink-0">
-            <div className="flex items-center gap-2 min-w-0">
+          <div className={`shrink-0 px-2.5 pb-1.5 flex flex-col gap-[3px] [&>*]:shrink-0 ${wide ? "flex-1 min-w-0 pt-1.5" : ""}`}>
+            <div className="flex items-center gap-1.5 min-w-0 pt-1" style={wide ? undefined : { borderTop: "1px solid #e2e8f0" }}>
               <span className="shrink-0 text-[10px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded"
                 style={started ? { background: "#dcfce7", color: "#166534" } : { background: "#e0e7ff", color: "#3730a3" }}>
                 {started ? tr("plan_tv_on_machine") : tr("plan_tv_up_next")}
               </span>
-              <span className="ml-auto text-[12px] font-bold truncate" style={{ color: "#475569" }}>{when(cur.segs[0])}</span>
+              <span className="ml-auto min-w-0 truncate px-1.5 py-0.5 rounded text-[11px] font-bold"
+                style={job.colors_known === false ? { background: "#fef3c7", color: "#92400e" } : { background: "#f1f5f9", color: "#334155" }}>
+                {job.colors_known === false ? tr("plan_board_colors_unknown") : tr("plan_board_colors", { n: job.colors })}
+              </span>
             </div>
             <div className="flex items-baseline gap-2 min-w-0">
               <span className="text-[30px] leading-none font-black tabular-nums">{job.order_number}</span>
@@ -1155,10 +1162,11 @@ const TvTile = ({ col, live, op, today, now, tr, lang }) => {
             <div className="text-[12px] truncate" style={{ color: "#475569" }}>
               <b>{job.branding || job.client}</b>{job.design ? ` · ${job.design}` : ""}
             </div>
-            <div className="flex items-baseline gap-1.5">
+            <div className="flex items-baseline gap-1.5 min-w-0">
               <span className="text-[24px] leading-none font-black tabular-nums">{fmt(job.quantity)}</span>
-              <span className="text-[12px]" style={muted}>{tr("plan_board_pieces")}</span>
-              {printed > 0 && <span className="ml-auto text-[13px] font-bold tabular-nums" style={{ color: "#047857" }}>{pct}%</span>}
+              <span className="text-[12px]" style={muted}>{tr("plan_tv_pcs")}</span>
+              {printed > 0 && <span className="text-[13px] font-bold tabular-nums" style={{ color: "#047857" }}>{pct}%</span>}
+              <span className="ml-auto min-w-0 truncate text-[12px] font-bold" style={{ color: "#475569" }}>{when(cur.segs[0])}</span>
             </div>
             <div className="h-1.5 rounded-full overflow-hidden" style={{ background: "#e2e8f0" }}>
               <div className="h-full" style={{ width: `${pct}%`, background: "#10b981" }} />
@@ -1184,7 +1192,8 @@ const TvTile = ({ col, live, op, today, now, tr, lang }) => {
           </div>
 
           {/* Siguientes, con flechas hacia abajo como el boceto */}
-          <div className="shrink-0 px-2.5 pt-1 pb-1.5 flex flex-col gap-1" style={{ borderTop: "1px solid #e2e8f0", background: "#f8fafc" }}>
+          <div className={`shrink-0 px-2.5 pt-1 pb-1.5 flex flex-col gap-1 ${wide ? "w-[44%] pt-2" : ""}`}
+            style={{ [wide ? "borderLeft" : "borderTop"]: "1px solid #e2e8f0", background: "#f8fafc" }}>
             <div className="text-[10px] font-black uppercase tracking-widest text-center leading-4" style={{ color: "#94a3b8" }}>
               {tr("plan_tv_next")}{rest.length > 2 ? ` · ${tr("plan_tv_more", { n: rest.length - 2 })}` : ""}
             </div>
@@ -1206,6 +1215,7 @@ const TvTile = ({ col, live, op, today, now, tr, lang }) => {
               </div>
             ))}
           </div>
+          </div>
         </>
       )}
     </div>
@@ -1222,6 +1232,11 @@ const PlannerTV = () => {
   const [err, setErr] = useState("");
   const [now, setNow] = useState(Date.now());
   const [view, setView] = useState({ w: window.innerWidth, h: window.innerHeight });
+  const [page, setPage] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setPage((p) => p + 1), TV_PAGE_MS);
+    return () => clearInterval(id);
+  }, []);
 
   useEffect(() => {
     const onResize = () => setView({ w: window.innerWidth, h: window.innerHeight });
@@ -1329,28 +1344,45 @@ const PlannerTV = () => {
   };
   const fullscreen = () => document.documentElement.requestFullscreen?.().catch(() => {});
 
-  const cols = run ? machineColumns(run) : [];
+  const allCols = run ? machineColumns(run) : [];
+  const pages = Math.max(1, Math.ceil(allCols.length / TV_PAGE_SIZE));
+  const pg = page % pages;
+  const cols = allCols.slice(pg * TV_PAGE_SIZE, (pg + 1) * TV_PAGE_SIZE);
   const n = Math.max(1, cols.length);
   // Dos filas de máquinas, la mitad arriba y la mitad abajo (TV de 50"); con
   // muy pocas máquinas, una sola fila.
   const gr = n > 3 ? 2 : 1;
-  const gc = Math.ceil(n / gr);
-  const scale = Math.min(view.w / TV_W, view.h / TV_H);
+  // Mismo ancho de columna en todas las páginas (la última puede traer menos).
+  const gc = Math.ceil(Math.min(allCols.length, TV_PAGE_SIZE) / gr) || 1;
+  const wide = gc <= 5;
+  const scale = Math.min(view.h / TV_H, view.w / TV_MIN_W);
+  const cw = view.w / scale;     // ancho y alto lógicos = la pantalla completa
+  const ch = view.h / scale;
   const today = (run?.now_local || "").slice(0, 10);
   const stamp = new Date(now).toLocaleString(lang === "en" ? "en-US" : "es-MX",
     { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
 
   return (
     <div className="fixed inset-0 overflow-hidden" style={{ background: "#0f172a" }}>
-      <div style={{ width: TV_W, height: TV_H, transform: `scale(${scale})`, transformOrigin: "top left",
-        position: "absolute", left: (view.w - TV_W * scale) / 2, top: (view.h - TV_H * scale) / 2 }}>
+      <div style={{ width: cw, height: ch, transform: `scale(${scale})`, transformOrigin: "top left",
+        position: "absolute", left: 0, top: 0 }}>
         <div className="flex items-center gap-4 px-4" style={{ height: TV_HEADER, color: "#ffffff" }}>
-          <CalendarClock className="w-8 h-8" style={{ color: "#60a5fa" }} />
-          <span className="text-[28px] font-black tracking-tight">{tr("plan_tv_title")}</span>
-          <span className="text-[18px]" style={{ color: "#94a3b8" }}>{stamp}</span>
+          <CalendarClock className="w-6 h-6" style={{ color: "#60a5fa" }} />
+          <span className="text-[22px] font-black tracking-tight">{tr("plan_tv_title")}</span>
+          <span className="text-[16px]" style={{ color: "#94a3b8" }}>{stamp}</span>
           {run?.created_at && (
             <span className="text-[14px]" style={{ color: "#64748b" }}>
               {tr("plan_tv_computed", { t: ago(run.created_at, now, tr) })}
+            </span>
+          )}
+          {pages > 1 && cols.length > 0 && (
+            <span className="flex items-center gap-2 text-[16px] font-bold" style={{ color: "#e2e8f0" }}>
+              {tr("plan_tv_page", { a: cols[0].machine.replace("MAQUINA", "M"), b: cols[cols.length - 1].machine.replace("MAQUINA", "M") })}
+              <span className="flex gap-1">
+                {Array.from({ length: pages }, (_, i) => (
+                  <span key={i} className="w-2.5 h-2.5 rounded-full" style={{ background: i === pg ? "#60a5fa" : "#334155" }} />
+                ))}
+              </span>
             </span>
           )}
           {err && <span className="text-[14px] font-bold" style={{ color: "#f87171" }}>{err}</span>}
@@ -1364,14 +1396,14 @@ const PlannerTV = () => {
           </span>
         </div>
         {!run ? (
-          <div className="grid place-items-center text-[28px] font-bold" style={{ height: TV_H - TV_HEADER, color: "#94a3b8" }}>
+          <div className="grid place-items-center text-[28px] font-bold" style={{ height: ch - TV_HEADER, color: "#94a3b8" }}>
             {err ? tr("plan_tv_no_run") : <Loader2 className="w-12 h-12 animate-spin" />}
           </div>
         ) : (
-          <div className="grid" style={{ height: TV_H - TV_HEADER, padding: `0 ${TV_GAP}px ${TV_GAP}px`, gap: TV_GAP,
+          <div className="grid" style={{ height: ch - TV_HEADER, padding: `0 ${TV_GAP}px ${TV_GAP}px`, gap: TV_GAP,
             gridTemplateColumns: `repeat(${gc}, minmax(0, 1fr))`, gridTemplateRows: `repeat(${gr}, minmax(0, 1fr))` }}>
             {cols.map((c) => (
-              <TvTile key={c.machine} col={c} live={live} op={ops[c.machine]} today={today} now={now} tr={tr} lang={lang} />
+              <TvTile key={c.machine} col={c} live={live} op={ops[c.machine]} today={today} now={now} wide={wide} tr={tr} lang={lang} />
             ))}
           </div>
         )}
@@ -3717,7 +3749,12 @@ const PlannerModule = () => {
           <GlobalSearch run={run} alerts={alertData?.printed_stale} canEdit={canEdit} onAdjust={setAdjusting}
             onApply={applyMoves} onGoTab={setTab} tr={tr} />
 
-          <button onClick={() => navigate("/planeacion?tv=1")} title={tr("plan_tv_hint")}
+          <button onClick={() => {
+            // El clic es el gesto que el navegador exige para pantalla completa;
+            // la ruta cambia dentro del mismo documento, así que se conserva.
+            document.documentElement.requestFullscreen?.().catch(() => {});
+            navigate("/planeacion?tv=1");
+          }} title={tr("plan_tv_hint")}
             className="h-10 px-3 rounded-xl bg-slate-800 text-white text-sm font-bold inline-flex items-center gap-2 hover:bg-slate-700">
             <Tv className="w-4 h-4" /> {tr("plan_tv_button")}
           </button>

@@ -308,6 +308,25 @@ async def main():
               and cards.get("ord_g", {}).get("style") == "GI5000", cards.get("ord_g"))
         check("tarjetas: mock = imagen de Printavo, no la foto del piso",
               cards.get("ord_g", {}).get("mock") == "/api/uploads/mock.png", cards.get("ord_g"))
+        # Hoja de información primero: una vertical chica (foto de catálogo) y
+        # una horizontal grande (hoja técnica); gana la horizontal aunque
+        # Printavo la mande segunda.
+        from PIL import Image as _Img
+        from routers.orders import UPLOADS_DIR as _UP
+        _UP.mkdir(parents=True, exist_ok=True)
+        _Img.new("RGB", (30, 60)).save(_UP / "smoke_mock_vertical.png")
+        _Img.new("RGB", (300, 190)).save(_UP / "smoke_mock_hoja.png")
+        sdb.orders.update_one({"order_id": "ord_d"}, {"$set": {"images": [
+            {"filename": "printavo_mock_1.png", "url": "/api/uploads/smoke_mock_vertical.png", "source": "printavo"},
+            {"filename": "printavo_mock_2.png", "url": "/api/uploads/smoke_mock_hoja.png", "source": "printavo"}]}})
+        r2 = await op.post("/api/planner/cards", json={"order_ids": ["ord_d"]})
+        cd = r2.json()["cards"].get("ord_d", {})
+        check("tarjetas: la hoja horizontal grande va primero",
+              cd.get("mock") == "/api/uploads/smoke_mock_hoja.png"
+              and cd.get("mocks") == ["/api/uploads/smoke_mock_hoja.png", "/api/uploads/smoke_mock_vertical.png"], cd)
+        for _f in ("smoke_mock_vertical.png", "smoke_mock_hoja.png"):
+            (_UP / _f).unlink(missing_ok=True)
+        sdb.orders.update_one({"order_id": "ord_d"}, {"$unset": {"images": ""}})
         check("tarjetas: lista de mocks para el visor (sin la foto del piso)",
               cards.get("ord_g", {}).get("mocks") == ["/api/uploads/mock.png"], cards.get("ord_g"))
         check("tarjetas: sin mock -> None", "ord_d" in cards and cards["ord_d"]["mock"] is None, cards.get("ord_d"))

@@ -6026,6 +6026,7 @@ const es = {
   plan_tv_next: "Siguientes",
   plan_tv_more: "+{n} más",
   plan_tv_nothing_next: "Nada más programado",
+  plan_tv_page: "Máquinas {a}–{b}",
   plan_tv_pcs: "pz",
   plan_pos_FRENTE: "Frente",
   plan_pos_ESPALDA: "Espalda",

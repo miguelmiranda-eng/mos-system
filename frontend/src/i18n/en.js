@@ -6212,6 +6212,7 @@ const en = {
   plan_tv_next: "Next",
   plan_tv_more: "+{n} more",
   plan_tv_nothing_next: "Nothing else scheduled",
+  plan_tv_page: "Machines {a}–{b}",
   plan_tv_pcs: "pcs",
   plan_pos_FRENTE: "Front",
   plan_pos_ESPALDA: "Back",
