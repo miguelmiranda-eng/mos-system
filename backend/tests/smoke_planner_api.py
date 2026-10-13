@@ -205,6 +205,10 @@ async def main():
         check("dashboard 200 y forma", r.status_code == 200
               and all(k in dash for k in ("this_week", "next_week", "test_orders", "exceptions", "shipments_by_day"))
               and "status_behind" in dash["exceptions"], r.status_code)
+        tw = dash.get("this_week", {})
+        check("esta semana: capacidad completa (desde el lunes) ≥ la que queda desde hoy, y regular + extra = total",
+              tw.get("capacity_week") is not None and tw["capacity_week"] >= tw["capacity"]
+              and tw["capacity_week_regular"] + tw["capacity_week_overtime"] == tw["capacity_week"], tw)
         r = await op.get("/api/planner/audit")
         aud = r.json()
         check("audit 200 y 4 checks", r.status_code == 200 and "checks" in aud

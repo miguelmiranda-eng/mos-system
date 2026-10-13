@@ -22,13 +22,13 @@ const Unavailable = ({ kpis, section }) => {
   );
 };
 
-const CapacityBar = ({ capacity, demand }) => {
+const CapacityBar = ({ capacity, demand, capLabel, demandLabel }) => {
   const { t, lang } = useLang();
   const max = Math.max(1, capacity || 0, demand || 0);
   const over = (demand || 0) > (capacity || 0);
   return (
     <div className="space-y-3">
-      {[[t('exe_capacity'), capacity, false], [t('exe_demand'), demand, over]].map(([label, v, bad]) => (
+      {[[capLabel || t('exe_capacity'), capacity, false], [demandLabel || t('exe_demand'), demand, over]].map(([label, v, bad]) => (
         <div key={label}>
           <div className="flex justify-between text-xs mb-1">
             <span className="text-muted-foreground">{label}</span>
@@ -238,9 +238,21 @@ export const PlanningView = ({ kpis }) => {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {w && (
           <Panel title={t('exe_this_week')} subtitle={t('exe_week_from', { d: fmtDay(kpis.week_start, lang) })}>
-            <CapacityBar capacity={w.capacity} demand={w.pending_hits} />
+            {/* Dos datos: la capacidad de la semana completa (desde el lunes) y
+                la que queda desde hoy, que es la que se compara con lo que falta. */}
+            {w.capacity_week != null && (
+              <div className="flex items-baseline justify-between mb-3 pb-3 border-b border-border">
+                <span className="text-xs text-muted-foreground">{t('exe_capacity_week')}</span>
+                <span className="tabular-nums font-semibold">{fmt(w.capacity_week, lang)} {t('exe_hits')}</span>
+              </div>
+            )}
+            <CapacityBar capacity={w.capacity} demand={w.pending_hits}
+              capLabel={t('exe_capacity_left')} demandLabel={t('exe_demand_left')} />
             <p className="text-xs text-muted-foreground mt-3">
-              {t('exe_capacity_split', { reg: fmt(w.capacity_regular, lang), ot: fmt(w.capacity_overtime, lang) })}
+              {w.capacity_week != null
+                ? t('exe_capacity_split_week', { reg: fmt(w.capacity_week_regular, lang), ot: fmt(w.capacity_week_overtime, lang),
+                  left: fmt(w.capacity, lang) })
+                : t('exe_capacity_split', { reg: fmt(w.capacity_regular, lang), ot: fmt(w.capacity_overtime, lang) })}
             </p>
           </Panel>
         )}

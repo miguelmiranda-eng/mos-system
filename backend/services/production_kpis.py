@@ -227,6 +227,9 @@ async def build_executive(now: Optional[datetime] = None) -> dict:
                        "due": tw.get("due_this_week"), "overdue": tw.get("overdue"),
                        "capacity": tw["capacity"], "capacity_regular": tw["capacity_regular"],
                        "capacity_overtime": tw["capacity_overtime"], "delta": tw["delta"],
+                       "capacity_week": tw.get("capacity_week"),
+                       "capacity_week_regular": tw.get("capacity_week_regular"),
+                       "capacity_week_overtime": tw.get("capacity_week_overtime"),
                        "pull_ahead": tw["pull_ahead"]}
         out["next_week"] = {"demand_hits": nw["demand"], "demand_units": nw.get("demand_units"),
                             "capacity": nw["capacity"], "capacity_regular": nw["capacity_regular"],

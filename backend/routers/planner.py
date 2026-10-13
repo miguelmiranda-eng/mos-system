@@ -865,11 +865,14 @@ async def build_dashboard() -> dict:
     w0 = pe.week_start(today)
     cap_shift = cfg["hits_per_shift"] * eff
 
-    def week_cap(ws):   # capacidad futura de la semana, separando regular vs extra
+    def week_cap(ws, since=None):
+        """Capacidad de la semana separando regular vs extra. Por omisión sólo
+        desde hoy (lo que queda); since=ws = la semana completa desde el lunes."""
+        since = today if since is None else since
         reg = ot = 0.0
         for k in range(7):
             d = ws + timedelta(days=k)
-            if d < today:
+            if d < since:
                 continue
             for s in cfg["shifts"]:
                 full_h = float(s.get("hours") or 12)
@@ -886,6 +889,7 @@ async def build_dashboard() -> dict:
     res = pe.projection(jobs, cfg, cal, today, eff, len(ctx["active"]), None)
     weeks = res["weeks"]
     this_reg, this_ot = week_cap(w0)
+    full_reg, full_ot = week_cap(w0, since=w0)
     next_reg, next_ot = week_cap(w0 + timedelta(weeks=1))
 
     # Producido real esta semana (production_logs), por DÍA OPERATIVO: la noche
@@ -1080,6 +1084,9 @@ async def build_dashboard() -> dict:
                       "due_this_week": pend_total(due_items), "overdue": pend_total(overdue_items),
                       "capacity_regular": this_reg, "capacity_overtime": this_ot,
                       "capacity": this_reg + this_ot, "demand": weeks[0]["demand"],
+                      # semana completa (desde el lunes, aunque ya hayan pasado días)
+                      "capacity_week": full_reg + full_ot, "capacity_week_regular": full_reg,
+                      "capacity_week_overtime": full_ot,
                       "delta": (this_reg + this_ot) - weeks[0]["demand"],
                       "pull_ahead": max(0, (this_reg + this_ot) - weeks[0]["demand"])},
         "next_week": {"capacity_regular": next_reg, "capacity_overtime": next_ot,
