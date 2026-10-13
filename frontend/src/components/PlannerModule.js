@@ -1,4 +1,4 @@
-import { Fragment, useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { Fragment, useState, useEffect, useLayoutEffect, useCallback, useMemo, useRef } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
@@ -680,7 +680,7 @@ const GarmentThumb = ({ color, position, mock, pending, tr }) => {
   const [broken, setBroken] = useState(false);
   const src = mock && !broken ? mockSrc(mock) : null;
   if (src) {
-    return <img src={src} alt="" loading="lazy" onError={() => setBroken(true)}
+    return <img src={src} alt="" loading="lazy" draggable={false} onError={() => setBroken(true)}
       className="w-full h-full object-contain" />;
   }
   const drawn = <GarmentDrawing color={color} position={position} />;
@@ -837,12 +837,18 @@ const MachineBoard = ({ run, onAdjust, onReorder, tr }) => {
   const [machineF, setMachineF] = useState("");
   const [q, setQ] = useState("");
   const [live, setLive] = useState({});
-  // Arrastrar y soltar dentro de la máquina: drag = {machine, id}, over = id
-  // destino. localOrder = el orden recién soltado, que se pinta al instante y
-  // se descarta cuando llega la corrida nueva del motor.
+  // Arrastrar y soltar dentro de la máquina, EN VIVO: mientras se arrastra,
+  // drag = {machine, id, from, ids} y `ids` es la fila provisional (las demás
+  // tarjetas se recorren para abrir el hueco). Al soltar, localOrder guarda la
+  // fila nueva hasta que llega la corrida del motor; soltar fuera la regresa.
   const [drag, setDrag] = useState(null);
-  const [over, setOver] = useState(null);
+  const dragRef = useRef(null);
+  dragRef.current = drag;
   const [localOrder, setLocalOrder] = useState({});
+  // Animación FLIP: posición previa de cada tarjeta (relativa a su columna,
+  // así el scroll no la dispara) para deslizarla a su nuevo lugar.
+  const cardEls = useRef({});
+  const lastPos = useRef({});
   const [saving, setSaving] = useState("");
   useEffect(() => { setLocalOrder({}); }, [run.run_id]);
   const today = (run.now_local || "").slice(0, 10);
@@ -892,7 +898,7 @@ const MachineBoard = ({ run, onAdjust, onReorder, tr }) => {
   const match = (j) => !needle || [j.order_number, j.customer_po, j.branding, j.client, j.design, j.color]
     .some((v) => String(v || "").toUpperCase().includes(needle));
   const ordered = (c) => {
-    const lo = localOrder[c.machine];
+    const lo = drag && drag.machine === c.machine ? drag.ids : localOrder[c.machine];
     if (!lo) return c.items;
     const rank = Object.fromEntries(lo.map((id, i) => [id, i]));
     return [...c.items].sort((a, b) => (rank[a.job.job_id] ?? 1e6) - (rank[b.job.job_id] ?? 1e6));
@@ -903,26 +909,75 @@ const MachineBoard = ({ run, onAdjust, onReorder, tr }) => {
   // Con el buscador activo no se arrastra: la fila visible no es la fila real.
   const canDrag = !!onReorder && !needle && !saving;
 
-  const drop = async (c, targetId) => {
-    const d = drag;
-    setDrag(null);
-    setOver(null);
-    if (!d || d.machine !== c.machine || d.id === targetId) return;
+  useLayoutEffect(() => {
+    const next = {};
+    Object.entries(cardEls.current).forEach(([k, el]) => {
+      if (!el) return;
+      const pos = { x: el.offsetLeft, y: el.offsetTop };
+      next[k] = pos;
+      const prev = lastPos.current[k];
+      if (prev && (prev.x !== pos.x || prev.y !== pos.y) && el.animate) {
+        el.animate([{ transform: `translate(${prev.x - pos.x}px, ${prev.y - pos.y}px)` }, { transform: "none" }],
+          { duration: 160, easing: "ease-out" });
+      }
+    });
+    lastPos.current = next;
+  });
+
+  const startDrag = (e, c, id) => {
+    e.dataTransfer.effectAllowed = "move";
+    try { e.dataTransfer.setData("text/plain", id); } catch { /* Firefox exige datos; otros no */ }
     const ids = c.items.map((x) => x.job.job_id);
-    const from = ids.indexOf(d.id);
-    const to = ids.indexOf(targetId);
-    if (from < 0 || to < 0) return;
-    const next = [...ids];
-    next.splice(from, 1);
-    next.splice(to, 0, d.id);
+    // Cambiar el DOM dentro del dragstart cancela el arrastre en Chrome: se
+    // pinta en el siguiente tick.
+    setTimeout(() => setDrag({ machine: c.machine, id, from: ids.indexOf(id), ids }), 0);
+  };
+
+  // Sobre una tarjeta: el hueco va antes o después según la mitad en que esté
+  // el cursor (vertical en columna, horizontal en la cuadrícula de una máquina).
+  const overCard = (e, c, id) => {
+    const d = dragRef.current;
+    if (!d || d.machine !== c.machine) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    if (id === d.id) return;
+    const r = e.currentTarget.getBoundingClientRect();
+    const after = single ? e.clientX > r.left + r.width / 2 : e.clientY > r.top + r.height / 2;
+    const rest = d.ids.filter((x) => x !== d.id);
+    const at = rest.indexOf(id) + (after ? 1 : 0);
+    const next = [...rest.slice(0, at), d.id, ...rest.slice(at)];
+    if (next.join() !== d.ids.join()) setDrag({ ...d, ids: next });
+  };
+
+  // Sobre la columna: permite soltar en los huecos y desplaza la columna sola
+  // cuando el cursor llega a su borde de arriba o de abajo.
+  const overColumn = (e, c) => {
+    const d = dragRef.current;
+    if (!d || d.machine !== c.machine) return;
+    e.preventDefault();
+    const el = e.currentTarget;
+    if (el.scrollHeight > el.clientHeight) {
+      const r = el.getBoundingClientRect();
+      if (e.clientY < r.top + 60) el.scrollTop -= 14;
+      else if (e.clientY > r.bottom - 60) el.scrollTop += 14;
+    }
+  };
+
+  const drop = async (e, c) => {
+    const d = dragRef.current;
+    if (!d || d.machine !== c.machine) return;
+    e.preventDefault();
+    setDrag(null);
+    const to = d.ids.indexOf(d.id);
+    if (to === d.from) return;
     // Se fija el tramo 1..N que cambió (N = el lugar más bajo tocado); lo de
     // abajo lo sigue acomodando el motor.
-    const n = Math.max(from, to) + 1;
+    const n = Math.max(d.from, to) + 1;
     const byId = Object.fromEntries(c.items.map((x) => [x.job.job_id, x.job]));
-    setLocalOrder((lo) => ({ ...lo, [c.machine]: next }));
+    setLocalOrder((lo) => ({ ...lo, [c.machine]: d.ids }));
     setSaving(c.machine);
     try {
-      await onReorder(c.machine, next.slice(0, n).map((id) => ({ order_id: byId[id].order_id, position: byId[id].position })));
+      await onReorder(c.machine, d.ids.slice(0, n).map((id) => ({ order_id: byId[id].order_id, position: byId[id].position })));
     } catch {
       setLocalOrder((lo) => { const x = { ...lo }; delete x[c.machine]; return x; });
     } finally {
@@ -965,25 +1020,27 @@ const MachineBoard = ({ run, onAdjust, onReorder, tr }) => {
                 </span>
               )}
             </div>
-            <div className={single
-              ? "grid gap-3 sm:grid-cols-2 xl:grid-cols-3"
-              : "space-y-2.5 max-h-[70vh] overflow-y-auto pr-1 pt-2 pl-2"}>
+            <div onDragOver={(e) => overColumn(e, c)} onDrop={(e) => drop(e, c)}
+              className={`relative ${single
+                ? "grid gap-3 sm:grid-cols-2 xl:grid-cols-3"
+                : "space-y-2.5 max-h-[70vh] overflow-y-auto pr-1 pt-2 pl-2"} ${
+                drag?.machine === c.machine ? "rounded-xl bg-blue-50/40" : ""}`}>
               {c.visible.length === 0 ? (
                 <div className="py-8 text-center text-xs text-slate-400 border border-dashed border-slate-200 rounded-xl">
                   {c.items.length ? tr("plan_board_no_match") : tr("plan_board_empty_machine")}
                 </div>
               ) : c.visible.map((x) => {
                 const id = x.job.job_id;
-                const sameCol = drag && drag.machine === c.machine;
+                const key = `${c.machine}|${id}`;
+                const dragging = drag && drag.machine === c.machine && drag.id === id;
                 return (
-                  <div key={`${id}|${c.machine}`} draggable={canDrag}
-                    onDragStart={canDrag ? (e) => { e.dataTransfer.effectAllowed = "move"; setDrag({ machine: c.machine, id }); } : undefined}
-                    onDragEnd={() => { setDrag(null); setOver(null); }}
-                    onDragOver={sameCol ? (e) => { e.preventDefault(); if (over !== id) setOver(id); } : undefined}
-                    onDrop={sameCol ? (e) => { e.preventDefault(); drop(c, id); } : undefined}
-                    className={`rounded-xl transition ${canDrag ? "cursor-grab active:cursor-grabbing" : ""} ${
-                      drag?.id === id && sameCol ? "opacity-40" : ""} ${
-                      sameCol && over === id && drag.id !== id ? "ring-2 ring-blue-400 ring-offset-2" : ""}`}>
+                  <div key={key} ref={(el) => { if (el) cardEls.current[key] = el; else delete cardEls.current[key]; }}
+                    draggable={canDrag}
+                    onDragStart={canDrag ? (e) => startDrag(e, c, id) : undefined}
+                    onDragEnd={() => setDrag(null)}
+                    onDragOver={(e) => overCard(e, c, id)}
+                    className={`rounded-xl ${canDrag ? "cursor-grab active:cursor-grabbing select-none" : ""} ${
+                      dragging ? "opacity-50 outline-2 outline-dashed outline-blue-400 outline-offset-2" : ""}`}>
                     <BoardCard job={x.job} segs={x.segs}
                       seq={c.items.indexOf(x) + 1} live={live[x.job.order_id]} today={today}
                       onAdjust={onAdjust} draggable={canDrag} tr={tr} lang={lang} />
