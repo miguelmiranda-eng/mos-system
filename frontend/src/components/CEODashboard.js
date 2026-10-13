@@ -68,7 +68,9 @@ const StatCard = ({ title, value, subvalue, icon: Icon, color, description }) =>
   );
 };
 
-const CEODashboard = () => {
+// embedded: se pinta dentro de la vista ejecutiva (/ejecutivo/analitica), que
+// ya pone el fondo, el regreso, el idioma y el tema.
+const CEODashboard = ({ embedded = false }) => {
   const { theme } = useTheme();
   const isDark = theme === 'dark';
   const CHART_COLORS = isDark ? CHART_COLORS_DARK : CHART_COLORS_LIGHT;
@@ -221,7 +223,7 @@ const CEODashboard = () => {
 
   if (loading || !data) {
     return (
-      <div className="min-h-screen bg-background flex flex-col items-center justify-center gap-6">
+      <div className={`${embedded ? 'py-24' : 'min-h-screen bg-background'} flex flex-col items-center justify-center gap-6`}>
         <Loader loading={loading} />
         {!loading && !data && <p className="text-muted-foreground text-sm">{t('ceo_err_connection')}</p>}
       </div>
@@ -229,7 +231,7 @@ const CEODashboard = () => {
   }
 
   return (
-    <div className={`min-h-screen font-barlow p-4 md:p-8 lg:p-10 relative overflow-x-hidden transition-colors duration-500 custom-scrollbar ${
+    <div className={embedded ? 'font-barlow relative' : `min-h-screen font-barlow p-4 md:p-8 lg:p-10 relative overflow-x-hidden transition-colors duration-500 custom-scrollbar ${
       isDark ? 'bg-[#050508]' : 'bg-[#f8fafc]'
     }`}>
       {/* Dynamic Background Effects — radial-gradient estático: el mismo halo
@@ -237,7 +239,7 @@ const CEODashboard = () => {
           pantalla, que costaban una rasterización GPU gigante en una vista que
           vive encendida en un TV. Las clases animate-float-* no existían en
           tailwind.config (nunca animaron) y .scanline tampoco estaba definida. */}
-      <div className="fixed inset-0 overflow-hidden pointer-events-none z-0">
+      {!embedded && <div className="fixed inset-0 overflow-hidden pointer-events-none z-0">
         <div
           className="absolute top-[-10%] right-[-10%] w-[50%] h-[50%]"
           style={{ background: `radial-gradient(circle, ${isDark ? 'rgba(233,69,96,0.10)' : 'rgba(52,211,153,0.10)'} 0%, transparent 70%)` }}
@@ -246,10 +248,11 @@ const CEODashboard = () => {
           className="absolute bottom-[-5%] left-[-5%] w-[40%] h-[40%]"
           style={{ background: `radial-gradient(circle, ${isDark ? 'rgba(37,99,235,0.10)' : 'rgba(110,231,183,0.05)'} 0%, transparent 70%)` }}
         />
-      </div>
+      </div>}
 
-      <header className="mb-8 md:mb-12 relative z-10">
+      <header className={`${embedded ? 'mb-6' : 'mb-8 md:mb-12'} relative z-10`}>
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6 md:gap-8">
+ {!embedded && (
           <div className="flex items-center gap-4 md:gap-8 w-full lg:w-auto">
             <button 
               onClick={() => navigate('/home')} 
@@ -277,9 +280,10 @@ const CEODashboard = () => {
               </p>
             </div>
           </div>
+          )}
 
           <div className="flex flex-col sm:flex-row flex-wrap items-center gap-4 md:gap-6 w-full lg:w-auto">
-            <div className="flex items-center gap-3 self-start sm:self-auto">
+            {!embedded && <div className="flex items-center gap-3 self-start sm:self-auto">
               <button
                 onClick={toggleLang}
                 className={`flex items-center gap-3 px-5 py-3 rounded-2xl border transition-all active:scale-95 group backdrop-blur-md ${
@@ -294,7 +298,7 @@ const CEODashboard = () => {
                 </span>
               </button>
               <ThemeSwitch />
-            </div>
+            </div>}
 
             <div className={`flex flex-col sm:flex-row items-center gap-4 p-3 md:p-2 rounded-3xl border backdrop-blur-xl w-full sm:w-auto ${
               isDark ? 'bg-white/5 border-white/10' : 'bg-white/60 border-emerald-500/10 shadow-sm'
@@ -622,11 +626,11 @@ const CEODashboard = () => {
         </div>
       </div>
 
-      <footer className="mt-16 pt-8 border-t border-border/30 text-center relative z-10 transition-colors duration-500">
+      {!embedded && <footer className="mt-16 pt-8 border-t border-border/30 text-center relative z-10 transition-colors duration-500">
         <p className="text-[10px] font-black uppercase tracking-[0.5em] text-muted-foreground/30 italic">
           {t('ceo_footer')}
         </p>
-      </footer>
+      </footer>}
     </div>
   );
 };

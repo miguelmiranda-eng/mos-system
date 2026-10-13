@@ -65,7 +65,7 @@ const SECTIONS_DEFS = [
     titleKey: 'home_sec_catalogs',
     items: [
       { nameKey: 'home_operators', path: '/operators-center', descKey: 'home_operators_desc', icon: 'UserSquare' },
-      { nameKey: 'home_atlas', path: '/ceo-dashboard', descKey: 'home_atlas_desc', icon: 'TrendingUp', roles: ['admin'] },
+      { nameKey: 'home_atlas', path: '/ejecutivo', descKey: 'home_atlas_desc', icon: 'TrendingUp', roles: ['ceo'] },
     ]
   },
   {
@@ -97,7 +97,8 @@ const HomeDashboard = () => {
     ...s,
     title: t(s.titleKey),
     items: s.items.map(item => ({ ...item, name: t(item.nameKey), desc: t(item.descKey) })).filter(item => {
-      const hasRole = !item.roles || item.roles.includes(user?.role) || user?.role === 'supersu';
+      const mine = [...(user?.roles || []), user?.role];
+      const hasRole = !item.roles || item.roles.some(r => mine.includes(r)) || mine.includes('supersu');
       const matchesSearch = !search ||
         item.name.toLowerCase().includes(search.toLowerCase()) ||
         item.desc.toLowerCase().includes(search.toLowerCase());

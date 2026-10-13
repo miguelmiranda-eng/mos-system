@@ -282,6 +282,7 @@ from routers.samples import router as samples_router
 from routers.tools import router as tools_router
 from routers.order_components import router as order_components_router
 from routers.planner import router as planner_router
+from routers.executive import router as executive_router
 
 app.include_router(auth_router)
 app.include_router(orders_router)
@@ -324,6 +325,7 @@ app.include_router(samples_router)
 app.include_router(tools_router)
 app.include_router(order_components_router)
 app.include_router(planner_router)
+app.include_router(executive_router)
 
 # ==================== RETENCIÓN ====================
 # La limpieza vivía en startup_restore() (código muerto) y nunca corrió: se

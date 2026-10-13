@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, createContext, useContext, lazy, Suspense } from "react";
 import "@/App.css";
-import { BrowserRouter, Routes, Route, useNavigate, useLocation, Link } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, useNavigate, useLocation, Link } from "react-router-dom";
 import { useLang, LanguageProvider } from "./contexts/LanguageContext";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import { Loader2, Mail, Lock, Eye, EyeOff, ArrowLeft } from "lucide-react";
@@ -42,6 +42,11 @@ window.fetch = async function (url, options = {}) {
 // to /operator). They land on /qc at login and get bounced back if they try to
 // reach any other route. Admin/supersu also use QC but are NOT confined.
 const QC_ROLES = ['qc', 'inspector_qc'];
+
+// Vista ejecutiva: SOLO rol ceo y supersu (por unión de roles; el backend
+// exige lo mismo en /api/executive/*). Los admin ya no la ven.
+const EXEC_ROLES = ['ceo', 'supersu'];
+const isExecUser = (u) => [...(u?.roles || []), u?.role].some(r => EXEC_ROLES.includes(r));
 
 // Auth Context
 const AuthContext = createContext(null);
@@ -214,8 +219,8 @@ const AuthCallback = () => {
                 // esto caia en /dashboard y las guardas de ruta lo rebotaban,
                 // mostrando varios dashboards antes del suyo.
                 navigate('/wms', { replace: true });
-              } else if (['admin', 'supersu'].includes(userData.role)) {
-                navigate('/ceo-dashboard', { replace: true });
+              } else if (isExecUser(userData)) {
+                navigate('/ejecutivo', { replace: true });
               } else if (userData.role === 'general') {
                 navigate('/dashboard', { replace: true });
               } else {
@@ -357,8 +362,7 @@ const AdminRoute = ({ children }) => {
   return children;
 };
 
-// CEO Route
-const CEORoute = ({ children }) => {
+const ExecRoute = ({ children }) => {
   const { t } = useLang();
   const { user, loading } = useAuth();
   const navigate = useNavigate();
@@ -373,10 +377,8 @@ const CEORoute = ({ children }) => {
     if (!loading && !grace) {
       if (!user) {
         navigate('/', { replace: true });
-      } else if (QC_ROLES.includes(user.role)) {
-        navigate('/qc', { replace: true });
-      } else if (!['admin', 'supersu'].includes(user.role)) {
-        navigate('/dashboard', { replace: true });
+      } else if (!isExecUser(user)) {
+        navigate(QC_ROLES.includes(user.role) ? '/qc' : '/dashboard', { replace: true });
       }
     }
   }, [user, loading, grace, navigate]);
@@ -389,7 +391,7 @@ const CEORoute = ({ children }) => {
     );
   }
 
-  if (!user || !['admin', 'supersu', 'ceo'].includes(user.role)) {
+  if (!user || !isExecUser(user)) {
     return null;
   }
 
@@ -446,8 +448,8 @@ const LandingPage = () => {
           navigate('/qc', { replace: true });
         } else if (userData.role === 'customer') {
           navigate('/wms', { replace: true });
-        } else if (userData.role === 'ceo') {
-          navigate('/dashboard', { replace: true });
+        } else if (isExecUser(userData)) {
+          navigate('/ejecutivo', { replace: true });
         } else if (userData.role === 'picker') {
           navigate('/wms', { replace: true });
         } else if (userData.role === 'operator') {
@@ -690,7 +692,7 @@ const UserManagementCenter = lazy(() => import("./components/UserManagementCente
 const CatalogCenter = lazy(() => import("./components/CatalogCenter"));
 const QCSettingsPage = lazy(() => import("./components/QCSettingsPage"));
 const OperatorsCenter = lazy(() => import("./components/OperatorsCenter"));
-const CEODashboard = lazy(() => import("./components/CEODashboard"));
+const ExecutiveHub = lazy(() => import("./components/executive/ExecutiveHub"));
 const QCDashboard = lazy(() => import("./components/QCDashboard"));
 const InsightsDashboard = lazy(() => import("./components/InsightsDashboard"));
 const BackupCenter = lazy(() => import("./components/BackupCenter"));
@@ -835,10 +837,12 @@ function AppRouter() {
           <SheetsPage />
         </ProtectedRoute>
       } />
-      <Route path="/ceo-dashboard" element={
-        <CEORoute>
-          <CEODashboard />
-        </CEORoute>
+      {/* La vista CEO vieja vive ahora dentro del menú ejecutivo. */}
+      <Route path="/ceo-dashboard" element={<Navigate to="/ejecutivo/analitica" replace />} />
+      <Route path="/ejecutivo/:section?" element={
+        <ExecRoute>
+          <ExecutiveHub />
+        </ExecRoute>
       } />
       <Route path="/wms" element={
         <ProtectedRoute allowCustomer={true}>
