@@ -2649,9 +2649,18 @@ const MachinesTab = ({ cfgData, canEdit, onSaved, tr }) => {
                       onChange={(v) => setRows(rows.map((x, k) => (k === i ? { ...x, heads: v } : x)))} />
                   </td>
                   <td className="pr-3">
-                    <input value={m.preferred_client || ""} disabled={!canEdit} placeholder={tr("plan_any_client")}
+                    {/* Clientes actuales (catálogo + órdenes). Un valor guardado que ya no
+                        está en la lista se conserva como opción para no perderlo. */}
+                    <select value={m.preferred_client || ""} disabled={!canEdit}
                       onChange={(e) => setRows(rows.map((x, k) => (k === i ? { ...x, preferred_client: e.target.value } : x)))}
-                      className="h-9 px-2 rounded-lg border border-slate-200 text-sm w-44" />
+                      className="h-9 px-2 rounded-lg border border-slate-200 text-sm w-44 bg-white disabled:bg-slate-50">
+                      <option value="">{tr("plan_any_client")}</option>
+                      {[...(cfgData.clients || []),
+                        ...(m.preferred_client && !(cfgData.clients || []).some((c) => c.toUpperCase() === m.preferred_client.toUpperCase())
+                          ? [m.preferred_client] : [])].map((c) => (
+                        <option key={c} value={c}>{c}</option>
+                      ))}
+                    </select>
                     <label className="ml-2 inline-flex items-center gap-1 text-[11px] text-slate-500 align-middle" title={tr("plan_dedicated_hint")}>
                       <input type="checkbox" checked={!!m.dedicated} disabled={!canEdit}
                         onChange={(e) => setRows(rows.map((x, k) => (k === i ? { ...x, dedicated: e.target.checked } : x)))} className="w-3.5 h-3.5" />

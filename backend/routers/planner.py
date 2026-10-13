@@ -211,7 +211,25 @@ async def get_config(request: Request):
     cfg = await _config()
     return {"config": cfg, "defaults": pe.DEFAULT_CONFIG, "machines": await _machines(),
             "calendar": await _calendar_entries(), "efficiency": await _efficiency(cfg),
-            "heads_range": [pe.HEADS_MIN, pe.HEADS_MAX]}
+            "heads_range": [pe.HEADS_MIN, pe.HEADS_MAX], "clients": await _client_names()}
+
+
+async def _client_names() -> list:
+    """Clientes para el selector de "cliente preferido" de cada máquina: la
+    UNIÓN del catálogo (config_options.clients) y los clientes que traen las
+    órdenes. No coinciden: el catálogo tiene 5 y las órdenes ~10 (LOVE IN FAITH,
+    33 Threads, SPEKTRUM CALIFORNIA… no están en el catálogo). Sin duplicados
+    por mayúsculas; el motor compara sin distinguirlas."""
+    opts = await db.config_options.find_one({"config_id": "main"}, {"_id": 0, "clients": 1}) or {}
+    # Órdenes sin cliente traen None: se descartan antes de volverlas texto.
+    names = [str(c).strip() for c in (opts.get("clients") or []) if c]
+    names += [str(c).strip() for c in await db.orders.distinct("client") if c]
+    seen, out = set(), []
+    for n in names:
+        if n and n.upper() not in seen:
+            seen.add(n.upper())
+            out.append(n)
+    return sorted(out, key=str.upper)
 
 
 def _validate_config(body: dict) -> dict:

@@ -384,6 +384,18 @@ async def main():
         check("historial conserva lo deshecho",
               sdb.planner_overrides.count_documents({"active": False}) == 2)
 
+        print("\n== Clientes para el cliente preferido ==")
+        sdb.config_options.update_one({"config_id": "main"}, {"$set": {"clients": ["Catalogo Solo", "goodie two sleeves"]}}, upsert=True)
+        sdb.orders.insert_one({"order_id": "ord_sin_cliente", "order_number": "9990", "client": None, "board": "COMPLETOS"})
+        r = await op.get("/api/planner/config")
+        cl = r.json().get("clients", [])
+        check("clientes = catálogo + los de las órdenes", "Catalogo Solo" in cl and "GOODIE TWO SLEEVES" in cl.__str__().upper(), cl)
+        check("sin duplicados por mayúsculas", sum(1 for c in cl if c.upper() == "GOODIE TWO SLEEVES") == 1, cl)
+        check("ordenados", cl == sorted(cl, key=str.upper), cl)
+        check("sin 'None' de órdenes sin cliente", "None" not in cl and "" not in cl, cl)
+        sdb.config_options.delete_many({"config_id": "main"})
+        sdb.orders.delete_one({"order_id": "ord_sin_cliente"})
+
         print("\n== Modo TV: operador por máquina ==")
         ahora = datetime.now(timezone.utc)
         sdb.production_logs.insert_many([
