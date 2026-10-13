@@ -56,11 +56,11 @@ export const Panel = ({ title, subtitle, right, children, className = '' }) => (
 
 // Tile de KPI. tone="alert" sólo cuando el número ES un problema (atrasadas):
 // lleva ícono y texto, nunca sólo color.
-export const KpiTile = ({ label, value, hint, tone, icon: Icon, onClick }) => {
+export const KpiTile = ({ label, value, hint, tone, icon: Icon, onClick, active }) => {
   const alert = tone === 'alert' && Number(String(value).replace(/[^\d.-]/g, '')) > 0;
   return (
     <button type="button" onClick={onClick} disabled={!onClick}
-      className={`text-left bg-card border rounded-xl p-4 min-w-0 transition-colors ${onClick ? 'hover:border-primary/50 cursor-pointer' : 'cursor-default'} ${alert ? 'border-destructive/40' : 'border-border'}`}>
+      className={`text-left bg-card border rounded-xl p-4 min-w-0 transition-colors ${onClick ? 'hover:border-primary/50 cursor-pointer' : 'cursor-default'} ${alert ? 'border-destructive/40' : active ? 'border-primary ring-1 ring-primary/40' : 'border-border'}`}>
       <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
         {alert ? <AlertTriangle className="w-3.5 h-3.5 text-destructive" /> : Icon && <Icon className="w-3.5 h-3.5" />}
         <span className="truncate">{label}</span>
@@ -128,7 +128,7 @@ export const LateBadge = ({ row }) => {
     );
   }
   if (row.days_to_cancel != null && row.days_to_cancel <= 7) {
-    return <span className="text-[11px] font-medium text-foreground">{t('exe_due_in', { n: row.days_to_cancel })}</span>;
+    return <span className="text-[11px] font-medium text-foreground">{row.days_to_cancel === 0 ? t('exe_due_today') : t('exe_due_in', { n: row.days_to_cancel })}</span>;
   }
   return null;
 };
@@ -229,6 +229,40 @@ export const ChartTooltip = ({ active, payload, label, formatLabel, rows }) => {
           <span>{r.name}</span><span className="ml-auto pl-3 font-semibold text-foreground tabular-nums">{fmt(r.value, lang)}</span>
         </div>
       ))}
+    </div>
+  );
+};
+
+// Fecha local YYYY-MM-DD (la que entienden <input type="date"> y el backend).
+export const isoDay = (d) => {
+  const x = new Date(d);
+  return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`;
+};
+
+// Selector de periodo: chips + rango. `periods` = [{id, labelKey}]; con id
+// 'custom' aparecen los dos <input type="date">.
+export const PeriodPicker = ({ periods, value, onChange, from, to, onRange }) => {
+  const { t } = useLang();
+  const today = isoDay(new Date());
+  return (
+    <div className="flex items-center gap-2 flex-wrap">
+      <div className="flex items-center gap-1 p-1 rounded-lg bg-muted/60 border border-border">
+        {periods.map(p => (
+          <button key={p.id} type="button" onClick={() => onChange(p.id)}
+            className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${value === p.id ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}`}>
+            {t(p.labelKey)}
+          </button>
+        ))}
+      </div>
+      {value === 'custom' && (
+        <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-muted/60 border border-border">
+          <input type="date" value={from} max={today} onChange={e => onRange(e.target.value, to)}
+            className="bg-transparent text-xs font-medium outline-none [color-scheme:light] dark:[color-scheme:dark]" />
+          <span className="text-xs text-muted-foreground">{t('exe_range_to')}</span>
+          <input type="date" value={to} max={today} onChange={e => onRange(from, e.target.value)}
+            className="bg-transparent text-xs font-medium outline-none [color-scheme:light] dark:[color-scheme:dark]" />
+        </div>
+      )}
     </div>
   );
 };

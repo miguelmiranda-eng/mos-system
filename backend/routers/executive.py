@@ -6,31 +6,38 @@ frontend no reclasifica, sólo pinta lo que este módulo devuelve.
 
   Etapa          Regla (en este orden de precedencia; la primera que aplica gana)
   ─────────────  ───────────────────────────────────────────────────────────────
-  listo          production_status ∈ LISTO PARA ENVIO / INVENTARIO / FULFILLMENT
+  (fuera)        production_status ∈ LISTO PARA ENVIO / INVENTARIO / FULFILLMENT:
+                 ya no es trabajo en proceso; se mide como LLEGADAS (ver abajo)
   empaque        production_status ∈ NECESITA EMPACAR / EN PROCESO DE EMPAQUE
   qc             production_status ∈ NECESITA QC / CORRECIÓN DE QC / RECHAZADO
                  POR QC, o tablero CONTROL DE CALIDAD
   produccion     production_status EN PRODUCCION, o tablero MAQUINA<n>
-  blanks         blank_status distinto de CONTADO/PICKED y CANCELLED (incluye
-                 vacío = nunca se capturó), sin importar el tablero
-  por_producir   lo demás: blanks ya contados, esperando máquina
+  blanks         blank_status que NO está en BLANKS_DONE (incluye vacío = nunca
+                 se capturó), sin importar el tablero
+  por_producir   lo demás: blanks ya contados/surtidos, esperando máquina
 
-Universo: se ignoran papelera, canceladas, ejemplos y el respaldo de Monday.
-Las etapas previas a "listo" ignoran además los tableros terminales
-(COMPLETOS, EDI, INVENTARIO, FINAL BILL): una orden ahí con un status viejo es
-dato sucio, no trabajo pendiente. "listo" sí cuenta COMPLETOS/EDI/INVENTARIO
-(ahí la deja la automatización) pero no FINAL BILL (ya se facturó/embarcó).
+BLANKS_DONE usa los valores que SÍ existen en prod (medido 2026-10-13: CONTADO
+98, SURTIDO 46, NECK CUT 4…), no la lista de deps.py ("CONTADO/PICKED" no lo
+usa nadie). Si se agrega un estado de blanks nuevo, decidir aquí de qué lado va.
 
-Corte diario de "listo": se usa `production_status_at`, que orders.py y las
-automatizaciones sellan SOLO cuando el estado cambia de verdad. Para las
-llegadas por día se incluye FINAL BILL: una orden que llegó a LISTO el lunes y
-se facturó el miércoles sigue siendo una llegada del lunes. Si después alguien
-le cambia el estado a otro, el sello se mueve y deja de contar como llegada
-(no hay historial por día; para eso haría falta una foto diaria).
+Universo: se ignoran papelera, canceladas, ejemplos y el respaldo de Monday,
+y los tableros terminales (COMPLETOS, EDI, INVENTARIO, FINAL BILL): una orden
+ahí con un status viejo es dato sucio, no trabajo pendiente.
+
+"Listas para envío" NO es un acumulado (COMPLETOS/FINAL BILL guardan órdenes
+que ya se fueron hace meses): es cuántas LLEGARON a listo en un periodo — hoy,
+ayer, esta semana (lunes a hoy) o un rango. Se usa `production_status_at`, que
+orders.py y las automatizaciones sellan SOLO cuando el estado cambia de verdad;
+la fecha es el día calendario de la planta (America/Tijuana). Una orden que
+llegó el lunes y se facturó el miércoles sigue siendo una llegada del lunes. Si
+después alguien le cambia el estado, el sello se mueve (no hay foto diaria).
 
 Endpoints (prefijo /api/executive):
-  GET /pipeline  → etapas + corte diario de "listo". Caché compartido con el
-                   de órdenes (se invalida en cada order_change, TTL 60 s).
+  GET /pipeline  → etapas en proceso + llegadas a listo hoy/ayer/semana.
+                   Caché compartido con el de órdenes (se invalida en cada
+                   order_change, TTL 60 s).
+  GET /listo     → llegadas a listo en un rango (date_from/date_to), por día,
+                   con las órdenes. Máximo LISTO_MAX_DAYS días.
   GET /kpis      → lo mismo que el Reporte Ejecutivo por correo
                    (production_kpis.build_executive), caché de 60 s.
 """
@@ -56,11 +63,11 @@ TERMINAL_BOARDS = {"COMPLETOS", "EDI", "INVENTARIO", "FINAL BILL"}
 LISTO = {"LISTO PARA ENVIO", "LISTO PARA INVENTARIO", "LISTO PARA FULFILLMENT"}
 EMPAQUE = {"NECESITA EMPACAR", "EN PROCESO DE EMPAQUE"}
 QC = {"NECESITA QC", "CORRECIÓN DE QC", "CORRECCIÓN DE QC", "RECHAZADO POR QC"}
-BLANKS_DONE = {"CONTADO/PICKED", "CANCELLED"}
+BLANKS_DONE = {"CONTADO", "CONTADO/PICKED", "SURTIDO", "NECK CUT", "CANCELLED"}
 
-STAGES = ["blanks", "por_producir", "produccion", "qc", "empaque", "listo"]
+STAGES = ["blanks", "por_producir", "produccion", "qc", "empaque"]
 AGING_BUCKETS = [(2, "0-2"), (7, "3-7"), (14, "8-14"), (None, "15+")]
-DAILY_WINDOW = 14
+LISTO_MAX_DAYS = 93
 MAX_ROWS = 400
 
 PROJECTION = {"_id": 0, "order_id": 1, "order_number": 1, "client": 1, "branding": 1,
@@ -104,9 +111,7 @@ def stage_of(o: dict):
     status, board = _up(o.get("production_status")), _up(o.get("board"))
     if status == "CANCELLED":
         return None
-    if status in LISTO:
-        return "listo" if board != "FINAL BILL" else None
-    if board in TERMINAL_BOARDS:
+    if status in LISTO or board in TERMINAL_BOARDS:
         return None
     if status in EMPAQUE:
         return "empaque"
@@ -181,39 +186,82 @@ async def build_pipeline(now: datetime = None) -> dict:
         if st:
             buckets[st].append(_row(o, st, now, today))
 
-    # Corte diario de "listo": llegadas por día de la planta (no por día UTC).
-    first = today - timedelta(days=DAILY_WINDOW - 1)
-    since_utc = datetime.combine(first, datetime.min.time(), tzinfo=TZ).astimezone(timezone.utc).isoformat()
-    days = {(first + timedelta(days=i)).isoformat(): {"count": 0, "pieces": 0, "by_status": defaultdict(int)}
-            for i in range(DAILY_WINDOW)}
-    arrivals_today = []
+    stages = [_summarize(k, buckets[k]) for k in STAGES]
+    cal_today = now.date()
+    w0 = pe.week_start(cal_today)
+    yday = cal_today - timedelta(days=1)
+    arr = await listo_arrivals(min(w0, yday), cal_today, now)
+
+    def total(d_from, d_to):
+        ds = [d for d in arr["days"] if d_from.isoformat() <= d["date"] <= d_to.isoformat()]
+        return {"count": sum(d["count"] for d in ds), "pieces": sum(d["pieces"] for d in ds)}
+
+    return {
+        "generated_at": now.isoformat(), "today": today.isoformat(),
+        "stages": stages,
+        "listo": {"today": total(cal_today, cal_today), "yesterday": total(yday, yday),
+                  "week": total(w0, cal_today), "week_start": w0.isoformat()},
+    }
+
+
+def _day_start_utc(d) -> str:
+    return datetime.combine(d, datetime.min.time(), tzinfo=TZ).astimezone(timezone.utc).isoformat()
+
+
+async def listo_arrivals(d_from, d_to, now: datetime = None) -> dict:
+    """Órdenes que LLEGARON a un status listo entre d_from y d_to (días de la
+    planta, inclusive). Incluye FINAL BILL/COMPLETOS: lo que cuenta es el día
+    de llegada, no dónde está hoy."""
+    now = (now or datetime.now(TZ)).astimezone(TZ)
+    today = op_today(now)
+    n_days = (d_to - d_from).days + 1
+    days = {(d_from + timedelta(days=i)).isoformat(): {"count": 0, "pieces": 0, "by_status": defaultdict(int)}
+            for i in range(n_days)}
+    rows = []
     async for o in db.orders.find(
-            {"production_status": {"$in": sorted(LISTO)}, "production_status_at": {"$gte": since_utc},
+            {"production_status": {"$in": sorted(LISTO)},
+             "production_status_at": {"$gte": _day_start_utc(d_from), "$lt": _day_start_utc(d_to + timedelta(days=1))},
              "board": {"$nin": IGNORED_BOARDS}}, PROJECTION):
         at = _local_dt(o.get("production_status_at"))
-        if not at:
-            continue
-        d = at.date().isoformat()
+        d = at.date().isoformat() if at else None
         if d not in days:
             continue
         q = _qty(o.get("quantity"))
         days[d]["count"] += 1
         days[d]["pieces"] += q
         days[d]["by_status"][_up(o.get("production_status"))] += q
-        if d == today.isoformat():
-            arrivals_today.append({**_row(o, "listo", now, today), "arrived_at": at.strftime("%H:%M")})
-    arrivals_today.sort(key=lambda r: r["arrived_at"], reverse=True)
-
-    stages = [_summarize(k, buckets[k]) for k in STAGES]
+        rows.append({**_row(o, "listo", now, today), "arrived_on": d, "arrived_at": at.strftime("%H:%M")})
+    rows.sort(key=lambda r: (r["arrived_on"], r["arrived_at"]), reverse=True)
+    by_status, by_client = defaultdict(lambda: [0, 0]), defaultdict(lambda: [0, 0])
+    for r in rows:
+        for bucket, k in ((by_status, _up(r["production_status"])), (by_client, r["client"])):
+            bucket[k][0] += 1
+            bucket[k][1] += r["quantity"]
+    pack = lambda d, name: sorted(({name: k, "count": v[0], "pieces": v[1]} for k, v in d.items()),
+                                  key=lambda x: -x["pieces"])
     return {
-        "generated_at": now.isoformat(), "today": today.isoformat(),
-        "stages": stages,
-        "listo_daily": {
-            "days": [{"date": d, "count": v["count"], "pieces": v["pieces"], "by_status": dict(v["by_status"])}
-                     for d, v in sorted(days.items())],
-            "today": arrivals_today,
-        },
+        "date_from": d_from.isoformat(), "date_to": d_to.isoformat(),
+        "count": len(rows), "pieces": sum(r["quantity"] for r in rows),
+        "days": [{"date": k, "count": v["count"], "pieces": v["pieces"], "by_status": dict(v["by_status"])}
+                 for k, v in sorted(days.items())],
+        "by_status": pack(by_status, "status"), "by_client": pack(by_client, "client")[:10],
+        "orders": rows[:MAX_ROWS * 2], "truncated": len(rows) > MAX_ROWS * 2,
     }
+
+
+@router.get("/listo")
+async def listo(request: Request, date_from: str = None, date_to: str = None):
+    await require_exec(request)
+    today = datetime.now(TZ).date()
+    d_from = pe.parse_date(date_from) or today
+    d_to = pe.parse_date(date_to) or d_from
+    if d_from > d_to:
+        d_from, d_to = d_to, d_from
+    d_to = min(d_to, today)
+    d_from = min(d_from, d_to)
+    if (d_to - d_from).days + 1 > LISTO_MAX_DAYS:
+        raise HTTPException(status_code=400, detail=f"Rango máximo: {LISTO_MAX_DAYS} días")
+    return await listo_arrivals(d_from, d_to)
 
 
 @router.get("/pipeline")

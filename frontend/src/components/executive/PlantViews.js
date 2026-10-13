@@ -126,10 +126,10 @@ export const ProductionView = ({ kpis }) => {
         <Panel className="xl:col-span-3" title={t('exe_week_by_day')} subtitle={t('exe_week_by_day_sub')}>
           <div className="h-64">
             <ResponsiveContainer width="100%" height="100%" minWidth={0}>
-              <ComposedChart data={days} margin={{ top: 8, right: 4, left: -8, bottom: 0 }}>
+              <ComposedChart data={days} margin={{ top: 8, right: 8, left: 4, bottom: 0 }}>
                 <CartesianGrid vertical={false} stroke={c.grid} strokeDasharray="3 3" />
                 <XAxis dataKey="label" tick={{ fill: c.muted, fontSize: 11 }} axisLine={false} tickLine={false} />
-                <YAxis tick={{ fill: c.muted, fontSize: 11 }} axisLine={false} tickLine={false} width={52} tickFormatter={v => fmt(v, lang)} />
+                <YAxis tick={{ fill: c.muted, fontSize: 11 }} axisLine={false} tickLine={false} width={60} tickFormatter={v => fmt(v, lang)} />
                 <Tooltip cursor={{ fill: c.grid, opacity: 0.4 }} content={<ChartTooltip />} />
                 <Legend iconType="plainline" wrapperStyle={{ fontSize: 12, color: c.muted }} />
                 <Bar dataKey="hits" name={t('exe_hits_label')} fill={c.primary} radius={[4, 4, 0, 0]} maxBarSize={44} isAnimationActive={false} />

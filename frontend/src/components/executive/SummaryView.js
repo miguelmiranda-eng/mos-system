@@ -9,11 +9,11 @@ const SummaryView = ({ pipeline, kpis, stageMeta, onOpen }) => {
   const { t, lang } = useLang();
   const stages = pipeline?.stages || [];
   const byKey = Object.fromEntries(stages.map(s => [s.key, s]));
-  const open = stages.filter(s => s.key !== 'listo');
+  const open = stages;
   const wip = open.reduce((s, x) => s + x.pieces, 0);
   const wipOrders = open.reduce((s, x) => s + x.count, 0);
   const lateTotal = open.reduce((s, x) => s + x.late, 0);
-  const todayArr = pipeline?.listo_daily?.days?.slice(-1)[0];
+  const todayArr = pipeline?.listo?.today;
   const max = Math.max(1, ...stages.map(s => s.pieces));
   const prodToday = kpis?.today;
 

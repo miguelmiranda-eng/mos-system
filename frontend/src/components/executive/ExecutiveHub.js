@@ -4,7 +4,7 @@
 // /executive/kpis (lo mismo que el Reporte Ejecutivo por correo). Ambos con
 // caché en el servidor; aquí se refrescan cada 60 s mientras la pestaña está
 // visible — sin escuchar el WebSocket, que en hora pico dispara cada ~20 s.
-import React, { useCallback, useEffect, useState, lazy, Suspense } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   ArrowLeft, LayoutDashboard, PackageSearch, ListTodo, Factory, ShieldCheck, Package, Truck,
@@ -18,10 +18,11 @@ import { fmt } from './parts';
 import StageView from './StageView';
 import SummaryView from './SummaryView';
 import { PlanningView, ProductionView } from './PlantViews';
+import ListoView from './ListoView';
+import AnalyticsView from './AnalyticsView';
 
-const CEODashboard = lazy(() => import('../CEODashboard'));
-
-// Orden = orden del proceso. labelKey/descKey en es.js / en.js.
+// Orden = orden del proceso. labelKey/descKey en es.js / en.js. 'listo' no es
+// una etapa en proceso: tiene su propia vista (llegadas por periodo).
 export const STAGE_META = [
   { key: 'blanks', labelKey: 'exe_stage_blanks', descKey: 'exe_desc_blanks', icon: PackageSearch },
   { key: 'por_producir', labelKey: 'exe_stage_por_producir', descKey: 'exe_desc_por_producir', icon: ListTodo },
@@ -48,6 +49,9 @@ const ExecutiveHub = () => {
   const [error, setError] = useState(false);
   const [loading, setLoading] = useState(false);
   const [updatedAt, setUpdatedAt] = useState(null);
+  // Sube en cada recarga: las vistas que piden sus propios datos (listo,
+  // analítica) se refrescan al mismo ritmo que el resto.
+  const [refreshKey, setRefreshKey] = useState(0);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -60,6 +64,7 @@ const ExecutiveHub = () => {
       if (k) setKpis(k);
       setError(!p);
       setUpdatedAt(new Date());
+      setRefreshKey(k => k + 1);
     } catch {
       setError(true);
     } finally {
@@ -109,7 +114,10 @@ const ExecutiveHub = () => {
 
   let body;
   if (section === 'analitica') {
-    body = <Suspense fallback={null}><CEODashboard embedded /></Suspense>;
+    body = <AnalyticsView refreshKey={refreshKey} />;
+  } else if (section === 'listo') {
+    body = pipeline ? <ListoView summary={pipeline.listo} refreshKey={refreshKey} />
+      : <div className="py-24 text-center text-sm text-muted-foreground">{t('exe_load_error')}</div>;
   } else if (!pipeline && !kpis) {
     body = (
       <div className="py-24 text-center text-sm text-muted-foreground">
@@ -120,7 +128,7 @@ const ExecutiveHub = () => {
     body = <SummaryView pipeline={pipeline} kpis={kpis} stageMeta={STAGE_META} onOpen={open} />;
   } else if (stageMeta) {
     body = stageByKey[section]
-      ? <StageView stage={stageByKey[section]} meta={stageMeta} daily={pipeline?.listo_daily} />
+      ? <StageView stage={stageByKey[section]} meta={stageMeta} />
       : <div className="py-24 text-center text-sm text-muted-foreground">{t('exe_load_error')}</div>;
   } else if (section === 'programacion') {
     body = <PlanningView kpis={kpis} />;
@@ -148,7 +156,8 @@ const ExecutiveHub = () => {
           <GroupLabel>{t('exe_group_process')}</GroupLabel>
           {STAGE_META.map(m => (
             <NavItem key={m.key} k={m.key} labelKey={m.labelKey} icon={m.icon}
-              count={stageByKey[m.key]?.count} late={stageByKey[m.key]?.late} />
+              count={m.key === 'listo' ? pipeline?.listo?.today?.count : stageByKey[m.key]?.count}
+              late={stageByKey[m.key]?.late} />
           ))}
           <GroupLabel>{t('exe_group_plant')}</GroupLabel>
           {PLANT.map(p => <NavItem key={p.key} k={p.key} labelKey={p.labelKey} icon={p.icon} />)}
