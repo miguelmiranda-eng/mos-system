@@ -1072,6 +1072,10 @@ const TV_H = 1080;
 const TV_HEADER = 64;
 const TV_GAP = 12;
 const TV_REFRESH_MS = 60000;
+// Recálculo por cambio (WebSocket): si alguien —otra TV o el módulo— ya
+// recalculó en este lapso, el servidor devuelve esa corrida. Así hay como
+// máximo un recálculo por minuto en toda la planta, sin importar cuántas TVs.
+const TV_CHANGE_MAX_AGE_S = 60;
 
 const ago = (iso, now, tr) => {
   if (!iso) return "";
@@ -1236,18 +1240,29 @@ const PlannerTV = () => {
     };
   }, []);
 
+  // Recalcular sólo si el motor está encendido con recálculo automático (la
+  // misma regla que el módulo abierto).
+  const canRecalc = cfg?.engine_mode === "shadow" && !!cfg?.auto_recalc;
+  const loadRef = useRef(null);
+
   useEffect(() => {
     let alive = true;
     // Sin config (error de red) igual se muestra la última corrida, sin pedir recálculo.
     const loadCfg = () => planner("/config").then((r) => { if (alive) setCfg(r.config || {}); })
       .catch(() => { if (alive) setCfg((c) => c || {}); });
-    const load = async () => {
+    // changed = llegó un aviso de que cambió una orden o hubo una captura.
+    const load = async (changed = false) => {
       try {
-        let r = await planner("/shadow-run/latest");
+        let r;
+        if (changed && canRecalc) {
+          const qs = new URLSearchParams({ trigger: "auto_change", max_age: String(TV_CHANGE_MAX_AGE_S) });
+          r = await planner(`/shadow-run?${qs}`, { method: "POST" }).catch(() => null);
+        }
+        if (!r) r = await planner("/shadow-run/latest");
         const c = cfg;
         const autoMin = Number(c?.auto_recalc_minutes) || 15;
         const old = !r?.created_at || Date.now() - new Date(r.created_at).getTime() > autoMin * 60000;
-        if (old && c?.engine_mode === "shadow" && c?.auto_recalc) {
+        if (old && canRecalc) {
           const qs = new URLSearchParams({ trigger: "auto_timer", max_age: String(autoMin * 60) });
           r = await planner(`/shadow-run?${qs}`, { method: "POST" }).catch(() => r);
         }
@@ -1266,12 +1281,47 @@ const PlannerTV = () => {
         if (alive) setErr(e.message);
       }
     };
-    if (!cfg) { loadCfg(); return () => { alive = false; }; }
+    if (!cfg) { loadCfg(); return () => { alive = false; loadRef.current = null; }; }
+    loadRef.current = load;
     load();
-    const id = setInterval(load, TV_REFRESH_MS);
+    const id = setInterval(() => load(), TV_REFRESH_MS);
     const idCfg = setInterval(loadCfg, 10 * TV_REFRESH_MS);
-    return () => { alive = false; clearInterval(id); clearInterval(idCfg); };
-  }, [cfg]);
+    return () => { alive = false; loadRef.current = null; clearInterval(id); clearInterval(idCfg); };
+  }, [cfg, canRecalc]);
+
+  // Avisos en vivo (el mismo WebSocket de las pantallas de operador): una
+  // captura o un cambio de orden → espera 15–25 s para juntar ráfagas y
+  // recarga pidiendo recálculo. Si la conexión se cae, se reintenta cada 10 s
+  // (la TV pasa el día encendida); mientras, sigue el refresco por minuto.
+  useEffect(() => {
+    let ws;
+    let timer;
+    let retry;
+    let disposed = false;
+    const connect = () => {
+      try {
+        ws = new WebSocket(WS_URL);
+        ws.onmessage = (e) => {
+          try {
+            const msg = JSON.parse(e.data);
+            if (msg.type !== "order_change" && msg.type !== "production_update") return;
+            clearTimeout(timer);
+            timer = setTimeout(() => loadRef.current?.(true), 15000 + Math.random() * 10000);
+          } catch { /* mensaje ajeno */ }
+        };
+        ws.onclose = () => { if (!disposed) retry = setTimeout(connect, 10000); };
+      } catch {
+        if (!disposed) retry = setTimeout(connect, 10000);
+      }
+    };
+    connect();
+    return () => {
+      disposed = true;
+      clearTimeout(timer);
+      clearTimeout(retry);
+      try { ws?.close(); } catch { /* ya cerrado */ }
+    };
+  }, []);
 
   const exit = () => {
     if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
