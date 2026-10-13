@@ -514,6 +514,40 @@ async def main():
         check("cumplimiento: real 3,200 de 6,000 comprometido = 53.3%",
               row.get("score", {}).get("committed") == 6000 and row["score"]["actual"] == 3200
               and row["score"]["pct"] == 53.3, row.get("score"))
+
+        print("\n== Plan vs Real ==")
+        r = await op.get("/api/planner/plan-vs-actual", params={"week": w3.isoformat()})
+        pva = r.json()
+        wk = pva.get("week") or {}
+        lun = (wk.get("days") or [{}])[0]
+        mie = (wk.get("days") or [{}, {}, {}])[2]
+        check("plan vs real: cualquier sesión lo lee", r.status_code == 200, r.status_code)
+        check("lunes día: meta 2,000, real 1,000 = 50% (sin la captura de prueba)",
+              lun.get("shifts", {}).get("DIA") == {**lun["shifts"]["DIA"], "goal": 2000, "actual": 1000, "pct": 50.0}, lun.get("shifts", {}).get("DIA"))
+        check("lunes noche: 600 de 1,000 = 60%", lun["shifts"]["NOCHE"]["pct"] == 60.0, lun["shifts"]["NOCHE"])
+        check("% del lunes = 1,600 / 3,000 = 53.3", lun.get("pct") == 53.3, lun.get("pct"))
+        check("miércoles sin meta: su producción va aparte (1,600) y no se califica",
+              mie.get("committed") == 0 and mie.get("actual") == 1600 and mie.get("pct") is None
+              and wk.get("unplanned") == 1600, (mie.get("committed"), mie.get("actual"), wk.get("unplanned")))
+        check("score de la semana = 3,200 / 6,000 = 53.3%", wk.get("score") == 53.3, wk.get("score"))
+        check("proyección al cierre = cerrado 3,200 + sin meta 1,600 = 4,800 (80%)",
+              wk.get("projected_end") == 4800 and wk.get("projected_pct") == 80.0, (wk.get("projected_end"), wk.get("projected_pct")))
+        check("por turno: día 2,000 de 4,000 = 50%", wk.get("per_shift", {}).get("DIA", {}).get("pct") == 50.0, wk.get("per_shift"))
+        det = lun["shifts"]["DIA"]
+        check("detalle: máquinas con su operador",
+              sorted((m["machine"], m["hits"], tuple(m["operators"])) for m in det.get("machines", []))
+              == [("MAQUINA1", 500, ("Ana",)), ("MAQUINA2", 500, ("Beto",))], det.get("machines"))
+        check("detalle: máquinas activas sin captura en un turno con meta",
+              "MAQUINA3" in det.get("no_capture", []) and "MAQUINA1" not in det.get("no_capture", []), det.get("no_capture"))
+        check("turno sin meta no lista máquinas sin captura", mie["shifts"]["DIA"].get("no_capture") == [], mie["shifts"]["DIA"])
+        h = next((x for x in pva.get("history", []) if x["week_start"] == w3.isoformat()), None)
+        check("historial trae la semana con su score", h is not None and h["score"] == 53.3, h)
+        r = await op.get("/api/planner/plan-vs-actual", params={"week": (w3 - timedelta(weeks=1)).isoformat()})
+        check("semana no comprometida -> 404", r.status_code == 404, r.status_code)
+        r = await op.get("/api/planner/plan-vs-actual", params={"week": (w3 + timedelta(days=2)).isoformat()})
+        check("semana que no empieza en lunes -> 400", r.status_code == 400, r.status_code)
+        r = await op.get("/api/planner/plan-vs-actual")
+        check("sin semana: elige una comprometida", r.status_code == 200 and (r.json().get("week") or {}).get("week_start"), r.text[:200])
         sdb.production_logs.delete_many({"log_id": {"$regex": "^pc_"}})
         sdb.planner_commitments.delete_many({})
         sdb.planner_commitments_history.delete_many({})

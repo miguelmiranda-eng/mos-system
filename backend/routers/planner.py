@@ -418,6 +418,155 @@ async def list_commitments(request: Request):
     return {"rows": [{**d, "score": scores.get(d["week_start"])} for d in docs]}
 
 
+ADHERENCE_RISK_PCT = 80
+PVA_HISTORY_WEEKS = 8
+
+
+def _pct1(n, d):
+    return round(n / d * 100, 1) if d else None
+
+
+@router.get("/plan-vs-actual")
+async def plan_vs_actual(request: Request, week: str = ""):
+    """Pestaña Plan vs Real: la semana comprometida (`week` = su lunes; por
+    omisión la que contiene hoy o la más reciente) contra lo real por día y
+    turno, con el detalle por máquina/operador, las máquinas activas sin
+    captura en cada turno con meta, la producción de días/turnos SIN meta
+    (aparte: no entra al score), la proyección al cierre y el historial de las
+    últimas semanas comprometidas. Real = misma cuenta del Reporte Ejecutivo
+    (día operativo, sin pruebas de máquina). Sólo se califica lo CERRADO
+    (antes del día operativo en curso). Sólo lectura."""
+    await require_auth(request)
+    today = _op_today()
+    docs = [d async for d in db.planner_commitments.find({}, {"_id": 0}).sort("week_start", -1).limit(52)]
+    weeks = [{"week_start": d["week_start"], "iso_week": d.get("iso_week"), "total": d.get("total")} for d in docs]
+    if not docs:
+        return {"weeks": [], "week": None, "risk_pct": ADHERENCE_RISK_PCT, "op_today": today.isoformat()}
+    if week:
+        ws = _parse_week(week)
+    else:
+        cur = pe.week_start(today).isoformat()
+        ws = date.fromisoformat(cur if any(d["week_start"] == cur for d in docs) else docs[0]["week_start"])
+    doc = next((d for d in docs if d["week_start"] == ws.isoformat()), None)
+    if not doc:
+        raise HTTPException(404, "Esa semana no está comprometida")
+    cfg = await _config()
+    keys = [s["key"] for s in cfg["shifts"]]
+    active = [m["machine"] for m in await _machines() if m.get("active")]
+
+    # Una sola lectura de producción para la semana y el historial.
+    hist_docs = docs[:PVA_HISTORY_WEEKS]
+    oldest = min([date.fromisoformat(d["week_start"]) for d in hist_docs] + [ws])
+    last = min(ws + timedelta(days=6), today)
+    window = await kpis.produced_window(oldest, max(last, oldest)) if last >= oldest else {"rows": []}
+    cell = {}           # (fecha, turno) -> {hits, machines{m: hits}, ops{op}}
+    for r in window["rows"]:
+        sh = SHIFT_FROM_LOG.get(r["shift"], "SIN_TURNO")
+        c = cell.setdefault((r["date"], sh), {"hits": 0, "machines": {}})
+        c["hits"] += r["n"]
+        c["machines"][r["machine"] or "?"] = c["machines"].get(r["machine"] or "?", 0) + r["n"]
+    # operadores por máquina (produced_window no los trae): lectura chica de la semana
+    ops = {}
+    if last >= ws:
+        async for lg in db.production_logs.find(
+                {"created_at": {"$gte": kpis._utc(ws), "$lt": kpis._utc(last + timedelta(days=1), kpis.NIGHT_CUTOFF_HOUR)}},
+                {"_id": 0, "created_at": 1, "shift": 1, "machine": 1, "operator": 1}).batch_size(500):
+            try:
+                dt = datetime.fromisoformat(str(lg["created_at"])).astimezone(TZ)
+            except (KeyError, ValueError):
+                continue
+            raw = lg.get("shift") or ""
+            k = (kpis.op_date(dt, raw).isoformat(), SHIFT_FROM_LOG.get(raw, "SIN_TURNO"), lg.get("machine") or "?")
+            if lg.get("operator"):
+                ops.setdefault(k, set()).add(str(lg["operator"]).strip())
+
+    def week_block(d: dict, detail: bool):
+        days_out = []
+        com_closed = act_closed = com_total = act_to_date = 0
+        unplanned = unplanned_closed = 0
+        per_shift = {k: {"committed": 0, "actual": 0} for k in keys}
+        start = date.fromisoformat(d["week_start"])
+        for i in range(7):
+            dd = start + timedelta(days=i)
+            ds = dd.isoformat()
+            state = "closed" if dd < today else "today" if dd == today else "future"
+            goals = (d.get("days") or {}).get(ds) or {}
+            row = {"date": ds, "state": state, "shifts": {}, "committed": goals.get("total", 0) or 0}
+            row_act = 0
+            for k in keys:
+                g = int(goals.get(k) or 0)
+                c = cell.get((ds, k)) or {"hits": 0, "machines": {}}
+                a = c["hits"] if state != "future" else 0
+                row_act += a
+                com_total += g
+                if state == "closed":
+                    if g:
+                        com_closed += g
+                        act_closed += a
+                        per_shift[k]["committed"] += g
+                        per_shift[k]["actual"] += a
+                    else:
+                        unplanned += a
+                        unplanned_closed += a
+                elif state == "today" and not g:
+                    unplanned += a
+                sc = {"goal": g, "actual": a, "pct": _pct1(a, g) if state == "closed" else None}
+                if detail and state != "future":
+                    sc["machines"] = sorted(
+                        ({"machine": m, "hits": h, "operators": sorted(ops.get((ds, k, m), []))}
+                         for m, h in c["machines"].items()), key=lambda x: -x["hits"])
+                    sc["no_capture"] = sorted(m for m in active if m not in c["machines"]) if g else []
+                row["shifts"][k] = sc
+            extra = cell.get((ds, "SIN_TURNO"))
+            if extra and state != "future":
+                row["no_shift"] = extra["hits"]
+                row_act += extra["hits"]
+                unplanned += extra["hits"]
+                if state == "closed":
+                    unplanned_closed += extra["hits"]
+            row["actual"] = row_act
+            row["pct"] = _pct1(sum(row["shifts"][k]["actual"] for k in keys if row["shifts"][k]["goal"]),
+                               row["committed"]) if state == "closed" and row["committed"] else None
+            act_to_date += row_act
+            days_out.append(row)
+        # Proyección al cierre: lo cerrado (con y sin meta) + el ritmo de la
+        # semana sobre lo comprometido que falta (hoy y días futuros). Lo que va
+        # de hoy no se suma aparte: ya lo cubre el ritmo sobre la meta de hoy.
+        rate = (act_closed / com_closed) if com_closed else None
+        remaining = com_total - com_closed
+        projected = act_closed + unplanned_closed + rate * remaining if rate is not None else None
+        return {"days": days_out, "committed_total": com_total, "committed_closed": com_closed,
+                "actual_closed": act_closed, "actual_to_date": act_to_date, "unplanned": unplanned,
+                "score": _pct1(act_closed, com_closed),
+                "projected_end": round(projected) if projected is not None else None,
+                "projected_pct": _pct1(projected, com_total) if projected is not None and com_total else None,
+                "per_shift": {k: {**v, "pct": _pct1(v["actual"], v["committed"])} for k, v in per_shift.items()}}
+
+    blk = week_block(doc, True)
+    history = []
+    for hd in hist_docs:
+        b = hd
+        wb = blk if hd["week_start"] == doc["week_start"] else week_block(hd, False)
+        crews = {x["key"]: x.get("crews") for x in ((b.get("params") or {}).get("shifts") or [])}
+        base_closed = [x for x in wb["days"] if x["state"] == "closed"
+                       and date.fromisoformat(x["date"]).weekday() in set(cfg["base_weekdays"])]
+        per_crew = {}
+        for k in keys:
+            n = len([x for x in base_closed if x["shifts"][k]["goal"]])
+            tot = sum(x["shifts"][k]["actual"] for x in base_closed if x["shifts"][k]["goal"])
+            per_crew[k] = round(tot / n / crews[k]) if n and crews.get(k) else None
+        history.append({"week_start": hd["week_start"], "iso_week": hd.get("iso_week"),
+                        "committed_closed": wb["committed_closed"], "actual_closed": wb["actual_closed"],
+                        "score": wb["score"], "per_shift": wb["per_shift"], "per_crew_real": per_crew,
+                        "hits_per_crew_param": (b.get("params") or {}).get("hits_per_shift")})
+    return {"weeks": weeks, "risk_pct": ADHERENCE_RISK_PCT, "op_today": today.isoformat(), "shifts": keys,
+            "week": {"week_start": doc["week_start"], "iso_week": doc.get("iso_week"), "version": doc.get("version"),
+                     "committed_by": doc.get("committed_by_name") or doc.get("committed_by"),
+                     "committed_at": doc.get("committed_at"), "note": doc.get("note"), "basis": doc.get("basis"),
+                     "params": doc.get("params"), **blk},
+            "history": history}
+
+
 @router.get("/commitments/preview")
 async def commitment_preview(request: Request, week: str, basis: str = "params"):
     """Lo que se comprometería para la semana (lunes `week`): por día y turno,
