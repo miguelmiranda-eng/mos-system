@@ -480,3 +480,40 @@ async def save_plan_week(request: Request):
     invalidate_cache("prod_")
     _kpis_cache.update(data=None, ts=0.0)      # el resumen y el correo leen la meta nueva
     return {"saved": saved, "skipped": skipped}
+
+
+# ── Capacidad planeada vs real (para ajustar la capacidad) ─────────────────
+CAPACITY_HISTORY_WEEKS = 8
+
+
+@router.get("/capacity-history")
+async def capacity_history(request: Request, weeks: int = CAPACITY_HISTORY_WEEKS):
+    """Últimas `weeks` semanas COMPLETAS: capacidad que calcula Planeación
+    (cuadrillas del calendario × hits por cuadrilla × eficiencia, con tiempo
+    extra) contra lo realmente producido (misma cuenta del correo, con tiempo
+    extra). El cumplimiento contra la META vive en /plan, no se repite aquí. Es la base para decidir si la capacidad que se planea es
+    realista. Ojo: la capacidad de semanas pasadas se calcula con los
+    parámetros de HOY (cuadrillas, hits por cuadrilla), no con los de entonces."""
+    await require_exec(request)
+    from services import production_kpis as k
+    weeks = max(1, min(int(weeks or CAPACITY_HISTORY_WEEKS), 26))
+    today = op_today(datetime.now(TZ))
+    first = pe.week_start(today) - timedelta(weeks=weeks)
+    days = [first + timedelta(days=i) for i in range(weeks * 7)]
+    cap = await _suggested_capacity(days)
+    window = await k.produced_window(days[0], days[-1])
+    real = {}
+    for r in window["rows"]:
+        real[r["date"]] = real.get(r["date"], 0) + r["n"]
+    rows = []
+    for w in range(weeks):
+        ws = first + timedelta(weeks=w)
+        ds = [(ws + timedelta(days=i)).isoformat() for i in range(7)]
+        c = sum(sum(cap.get(d, {}).values()) for d in ds)
+        a = sum(real.get(d, 0) for d in ds)
+        rows.append({"week_start": ws.isoformat(), "iso_week": ws.isocalendar()[1], "capacity": c,
+                     "actual": a, "pct_capacity": round(a / c * 100, 1) if c else None})
+    tot_c = sum(r["capacity"] for r in rows)
+    tot_a = sum(r["actual"] for r in rows)
+    return {"weeks": rows, "avg_capacity": round(tot_c / len(rows)), "avg_actual": round(tot_a / len(rows)),
+            "avg_pct": round(tot_a / tot_c * 100, 1) if tot_c else None}

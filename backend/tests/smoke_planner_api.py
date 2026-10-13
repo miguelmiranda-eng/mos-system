@@ -472,6 +472,17 @@ async def main():
               and sdb.production_goals.count_documents({"date": hoy_op.isoformat()}) == 0, r.text[:200])
         r = await sup.get("/api/executive/plan", params={"week": lun_sig.isoformat()})
         check("plan: la semana próxima ya muestra su meta (60,000)", r.json()["totals"]["plan_week"] == 60000, r.json().get("totals"))
+        r = await op.get("/api/executive/capacity-history")
+        check("capacidad vs real: operador NO entra", r.status_code == 403, r.status_code)
+        r = await sup.get("/api/executive/capacity-history")
+        ch = r.json()
+        wk_pas = next((w for w in ch.get("weeks", []) if w["week_start"] == lun_pas.isoformat()), {})
+        check("capacidad vs real: 8 semanas completas, la última es la pasada",
+              r.status_code == 200 and len(ch.get("weeks", [])) == 8 and ch["weeks"][-1]["week_start"] == lun_pas.isoformat(), r.text[:200])
+        check("capacidad vs real: producido de la semana pasada incluye las capturas (sin la de prueba)",
+              13000 <= wk_pas.get("actual", 0) < 99999, wk_pas)
+        check("capacidad vs real: % = producido / capacidad",
+              wk_pas.get("capacity") and wk_pas["pct_capacity"] == round(wk_pas["actual"] / wk_pas["capacity"] * 100, 1), wk_pas)
         sdb.production_logs.delete_many({"log_id": {"$regex": "^ep_"}})
         sdb.production_goals.delete_many({})
 

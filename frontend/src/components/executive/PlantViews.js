@@ -220,6 +220,63 @@ const PlanWeek = () => {
   );
 };
 
+// ── Capacidad planeada vs real (para ajustar la capacidad) ─────────────────
+// Últimas semanas completas: lo que dice la capacidad de Planeación contra lo
+// producido. Si el real queda sistemáticamente abajo (o arriba), la capacidad
+// que se planea no es realista y conviene ajustar los parámetros.
+const CapacityHistory = () => {
+  const { t, lang } = useLang();
+  const [data, setData] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    apiFetch(`${API}/executive/capacity-history`).then(r => (r.ok ? r.json() : null))
+      .then(d => { if (alive) setData(d); }).catch(() => {});
+    return () => { alive = false; };
+  }, []);
+  if (!data) return null;
+  const max = Math.max(1, ...data.weeks.map(w => Math.max(w.capacity || 0, w.actual || 0)));
+  return (
+    <Panel title={t('exe_caph_title')} subtitle={t('exe_caph_sub', { n: data.weeks.length })}>
+      <table className="min-w-full text-sm">
+        <thead><tr className="text-left text-[11px] uppercase tracking-wider text-muted-foreground">
+          <th className="py-1.5 pr-3">{t('exe_caph_week')}</th>
+          <th className="pr-3 text-right">{t('exe_capacity')}</th>
+          <th className="pr-3 text-right">{t('exe_caph_actual')}</th>
+          <th className="pr-3 text-right">%</th>
+          <th className="w-1/3"></th>
+        </tr></thead>
+        <tbody className="divide-y divide-border">
+          {data.weeks.map(w => (
+            <tr key={w.week_start}>
+              <td className="py-1.5 pr-3 whitespace-nowrap">
+                <span className="font-medium">{t('exe_plan_week_n', { w: w.iso_week })}</span>
+                <span className="ml-1.5 text-[11px] text-muted-foreground">{fmtDay(w.week_start, lang, { day: 'numeric', month: 'short' })}</span>
+              </td>
+              <td className="pr-3 text-right tabular-nums text-muted-foreground">{fmt(w.capacity, lang)}</td>
+              <td className="pr-3 text-right tabular-nums font-semibold">{fmt(w.actual, lang)}</td>
+              <td className="pr-3 text-right tabular-nums">{w.pct_capacity == null ? '—' : `${w.pct_capacity}%`}</td>
+              <td>
+                <div className="relative h-2 rounded bg-muted overflow-hidden">
+                  <div className="absolute inset-y-0 left-0 rounded bg-primary" style={{ width: `${(w.actual || 0) / max * 100}%` }} />
+                  <div className="absolute inset-y-0 border-r-2 border-foreground/60" style={{ left: `${(w.capacity || 0) / max * 100}%` }} />
+                </div>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+        <tfoot><tr className="border-t border-border">
+          <td className="pt-2 pr-3 font-semibold">{t('exe_caph_avg')}</td>
+          <td className="pt-2 pr-3 text-right tabular-nums text-muted-foreground">{fmt(data.avg_capacity, lang)}</td>
+          <td className="pt-2 pr-3 text-right tabular-nums font-semibold">{fmt(data.avg_actual, lang)}</td>
+          <td className="pt-2 pr-3 text-right tabular-nums font-semibold">{data.avg_pct == null ? '—' : `${data.avg_pct}%`}</td>
+          <td />
+        </tr></tfoot>
+      </table>
+      <p className="text-xs text-muted-foreground mt-3">{t('exe_caph_note')}</p>
+    </Panel>
+  );
+};
+
 export const PlanningView = ({ kpis }) => {
   const { t, lang } = useLang();
   const w = kpis?.week, nw = kpis?.next_week, ex = kpis?.exceptions, to = kpis?.test_orders;
@@ -271,6 +328,7 @@ export const PlanningView = ({ kpis }) => {
           </Panel>
         )}
       </div>
+      <CapacityHistory />
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <Panel title={t('exe_ships_7d')} subtitle={t('exe_ships_7d_sub')} right={<Truck className="w-4 h-4 text-muted-foreground" />}>
           <BarList rows={ships} labelKey="date" valueKey="units" countKey={null} formatLabel={r => r.label} empty={t('exe_no_ships')} />
