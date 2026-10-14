@@ -208,6 +208,52 @@ check("units 1200", d25 and d25["units"] == 1200, f"{d25 and d25['units']}")
 r25 = _spektrum_record(d25)
 check("cuadra 1200 = 1200", r25["sizes_match"] is True, f"{r25['qty']} vs {r25['qty_from_sizes']}")
 
+print("\n3g) otra tienda de Spektrum con el MISMO formato (Threadbeast, PO 5448)")
+# Capa de texto real de la pág. 1 del PO 5448. Antes salía como "CULTURE KINGS -
+# PO#5448 - …" (se asumía la tienda), sin PO de tienda ni fecha, y el bloque HANG
+# TAG / NECK PRINT se pegaba al paso 3 de empaque.
+TB_TEXT = """Due Date ASAP 10/23
+THREADBEAST
+CUSTOMER PO#: SPTB092926-L4
+PACKAGING INSTRUCTIONS
+1) Doblado individual
+2) Price ticket on neck with a clear swiftag
+3) Packed by Size
+HANG TAG NECK PRINT
+YES sewn label on neck and sleeve hem
+Name: RICH SCRIPT TEE
+Color: SADDLE
+Blank: MONARCH TEE
+Units: 990
+5448
+PO #:
+M: 200, L: 392, XL: 292, 2XL: 86, 3XL: 20 Total: 990
+XS S M L XL 2XL 3XL
+RECIBIDO:
+"""
+_px._hoy = lambda: "2026-10-14"
+tb = _parse_culturekings_text(TB_TEXT)
+check("la tienda es la del título: THREADBEAST (no CULTURE KINGS)", tb["retailer"] == "THREADBEAST", f"{tb['retailer']!r}")
+check("PO de tienda = CUSTOMER PO#", tb["store_po"] == "SPTB092926-L4", f"{tb['store_po']!r}")
+check("PO 5448 (renglón antes de 'PO #:')", tb["po_number"] == "5448", f"{tb['po_number']!r}")
+check("'ASAP 10/23' -> 2026-10-23", tb["due_date"] == "2026-10-23", f"{tb['due_date']!r}")
+check("HANG TAG / NECK PRINT ya no se pega al paso 3",
+      tb["packing_instructions"] == ["1) Doblado individual", "2) Price ticket on neck with a clear swiftag",
+                                     "3) Packed by Size"], f"{tb['packing_instructions']}")
+rtb = _spektrum_record(tb)
+qtb = build_quote_input(rtb, "CID", category_id="CAT")
+check("nickname con la tienda", qtb["nickname"] == "THREADBEAST - PO#5448 - RICH SCRIPT TEE", f"{qtb['nickname']!r}")
+g1tb = [it["description"] for it in qtb["lineItemGroups"][0]["lineItems"]]
+check("molde de Spektrum (#3182), no el de Spencers, aunque la tienda no diga CULTURE KINGS",
+      g1tb[0].startswith("PRODUCTION DEPARTMENT") and any(x.startswith("SETUP FEE") for x in g1tb), f"{g1tb}")
+check("Culture Kings sin CUSTOMER PO# sigue con store_po = su PO",
+      _spektrum_record(_parse_culturekings_text(CK_TEXT))["store_po"] == "4004681")
+check("Culture Kings sigue llamándose CULTURE KINGS", _parse_culturekings_text(CK_TEXT)["retailer"] == "CULTURE KINGS")
+_px._hoy = lambda: "2026-12-20"
+check("fecha sin año que ya pasó por >60 días es del año siguiente ('1/05' en dic -> 2027-01-05)",
+      _parse_culturekings_text(TB_TEXT.replace("ASAP 10/23", "ASAP 1/05"))["due_date"] == "2027-01-05")
+_px._hoy = lambda: "2026-09-01"
+
 print("\n3f) fecha vencida -> hoy (Printavo rechaza fechas pasadas)")
 # Caso real: WK11 Y25 trae Due Date 3/17/2025; Printavo respondió "Formatted
 # payment due date must be on or after 10/6/2026" y no se creó ninguna.

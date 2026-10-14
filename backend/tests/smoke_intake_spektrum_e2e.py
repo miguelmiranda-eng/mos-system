@@ -343,6 +343,22 @@ async def main():
     else:
         print("   (sin wk11_y25_po_sheets.pdf: caso saltado)")
 
+    print("\n11b) otra tienda de Spektrum (Threadbeast, PO 5448, 17 estilos)")
+    TB = os.path.join(DIR, "threadbeast_5448.pdf")
+    if os.path.exists(TB):
+        preparar()
+        correo("tb", JOSE, TB)
+        await procesar("tb")
+        it = items()[0] if items() else {}
+        tiendas = {r.get("brand") for r in it.get("styles", [])}
+        check("17 estilos a nombre de THREADBEAST (antes: CULTURE KINGS)",
+              it.get("style_count") == 17 and tiendas == {"THREADBEAST"}, f"{it.get('style_count')} {tiendas}")
+        check("PO de tienda SPTB092926-L4", {r.get("store_po") for r in it["styles"]} == {"SPTB092926-L4"})
+        check("un PO limpio -> se crean las 17", len(CREADAS) == 17 and it.get("status") == "creado",
+              f"{len(CREADAS)} {it.get('status')}")
+    else:
+        print("   (sin threadbeast_5448.pdf: caso saltado)")
+
     print("\n12) respuestas del hilo que NO traen la etiqueta (Gmail etiqueta por mensaje)")
     preparar()
     correo("r_pdf", "Ana Flores <ana@spektrumca.com>", WK11 if os.path.exists(WK11) else SHEETS,

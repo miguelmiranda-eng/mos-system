@@ -238,7 +238,7 @@ def _motor_existente():
     if os.path.exists(spk):                           # datos del cliente: fuera del repo
         with open(spk, "rb") as fh:
             ya = motor_existente(fh.read())
-        if ya != {"motor": "Culture Kings", "estilos": 27}:
+        if ya != {"motor": "Spektrum (CULTURE KINGS)", "estilos": 27}:
             malas.append(f"motor_existente: la hoja de Spektrum dio {ya!r}")
     if motor_existente(b"%PDF-1.4 no es un pdf de verdad") is not None:
         malas.append("motor_existente: un PDF roto debe dar None (no tumbar la pantalla)")

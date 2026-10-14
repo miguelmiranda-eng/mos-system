@@ -595,8 +595,13 @@ def _spektrum_record(data: dict) -> dict:
     return {
         "brand": (data.get("retailer") or "CULTURE KINGS").upper(),
         "retailer": data.get("retailer"),
+        # Lo leyó el motor de Spektrum: decide el molde de la quote (#3182) sin
+        # depender de que la tienda se llame CULTURE KINGS (THREADBEAST, etc.).
+        "motor": "spektrum",
         "po_number": data.get("po_number"),
-        "store_po": data.get("po_number"),
+        # El PO de la tienda si el PDF lo trae (Threadbeast: CUSTOMER PO#); si no,
+        # el mismo PO, como siempre en Culture Kings.
+        "store_po": data.get("store_po") or data.get("po_number"),
         "store_po_notes": None,
         "brand_prefix": (data.get("retailer") or "CULTURE KINGS").upper(),
         "design_num": data.get("po_number"),
@@ -636,8 +641,54 @@ _CK_LABEL_RES = {
 # ("47, S: 106") no se confunde con miles.
 _CK_NUM = r"\d{1,3}(?:,\d{3})+(?!\d)|\d+"
 _CK_UNITS_RE = re.compile(rf"^\s*Units:\s*({_CK_NUM})", re.I | re.M)
-# 'Due Date 2026-09-30' (formato 2026) o 'Due Date: 3/17/2025' (formato 2025).
-_CK_DUE_RE = re.compile(r"Due Date\s*:?\s*(\d{4}-\d{2}-\d{2}|\d{1,2}/\d{1,2}/\d{4})", re.I)
+# 'Due Date 2026-09-30' (formato 2026), 'Due Date: 3/17/2025' (formato 2025) o
+# 'Due Date ASAP 10/23' (Threadbeast: sin año).
+_CK_DUE_RE = re.compile(
+    r"Due Date\s*:?\s*(?:ASAP\s+)?(\d{4}-\d{2}-\d{2}|\d{1,2}/\d{1,2}(?:/\d{2,4})?)", re.I)
+# PO de la TIENDA, en las tiendas que lo traen (Threadbeast: 'CUSTOMER PO#:
+# SPTB092926-L4'). Culture Kings no lo trae y ahí sigue siendo el mismo PO.
+_CK_CUSTOMER_PO_RE = re.compile(r"^\s*CUSTOMER\s+PO\s*#?\s*:\s*(\S+)", re.I | re.M)
+
+# La TIENDA es el título del PDF: el renglón en mayúsculas de arriba ('CULTURE
+# KINGS', 'THREADBEAST'…). Spektrum manda el MISMO formato para varias tiendas;
+# antes se buscaba la palabra "CULTURE KINGS" y si no estaba se asumía CULTURE
+# KINGS, así que el PO 5448 de Threadbeast salía como 17 quotes "CULTURE KINGS -
+# PO#5448 - …". Estos rótulos de arriba NO son la tienda.
+_CK_NO_TIENDA = re.compile(
+    r"^(DUE\s+DATE|DATE\s+CK|RANGE\s+NAME|CUSTOMER|PRIORITY|PACKAGING|WEEK|WK\d|NAME:|COLOR:|BLANK:|UNITS:|PO\s*#)",
+    re.I)
+_CK_TITULO_RE = re.compile(r"[A-Z][A-Z0-9&'.\- ]{2,40}")
+
+
+def _ck_tienda(text: str) -> str:
+    """Tienda de un PO de Spektrum: el título en mayúsculas de los primeros
+    renglones. Si no hay título reconocible, el criterio de siempre (que el texto
+    diga CULTURE KINGS o SPEKTRUM); vacío si tampoco."""
+    for ln in (text or "").splitlines()[:4]:
+        s = ln.strip()
+        if _CK_TITULO_RE.fullmatch(s) and not _CK_NO_TIENDA.match(s) and not re.search(r"\d{3,}", s):
+            return re.sub(r"\s+", " ", s)
+    up = (text or "").upper()
+    return "CULTURE KINGS" if "CULTURE KINGS" in up else ("SPEKTRUM" if "SPEKTRUM" in up else "")
+
+
+def _ck_due(raw: str):
+    """Fecha de entrega a ISO. '10/23' (sin año, Threadbeast) toma el año en curso,
+    salvo que así quede más de 60 días en el pasado: entonces es del año que viene
+    (un PO de diciembre que pide enero)."""
+    if not raw:
+        return None
+    m = re.fullmatch(r"(\d{1,2})/(\d{1,2})", raw.strip())
+    if not m:
+        return _iso(raw)
+    hoy = date.fromisoformat(_hoy())
+    try:
+        f = date(hoy.year, int(m.group(1)), int(m.group(2)))
+    except ValueError:
+        return None
+    if (hoy - f).days > 60:
+        f = date(hoy.year + 1, f.month, f.day)
+    return f.isoformat()
 # El número de PO cae en la línea ANTERIOR a la etiqueta ('4004681\nPO #:'); se
 # intenta primero número-antes-de-etiqueta y luego el orden natural.
 _CK_PO_BEFORE_RE = re.compile(r"(\d{4,})\s*\n\s*PO\s*#\s*:", re.I)
@@ -691,20 +742,20 @@ def _parse_culturekings_text(text: str) -> dict:
         ma = _CK_PO_AFTER_RE.search(text)
         po = ma.group(1) if ma else ""
 
-    up = text.upper()
-    retailer = "CULTURE KINGS" if "CULTURE KINGS" in up else ("SPEKTRUM" if "SPEKTRUM" in up else "")
+    retailer = _ck_tienda(text)
     units = _ck_first(_CK_UNITS_RE, text)
     return {
         "retailer": retailer or None,
         "range_name": _ck_first(_CK_LABEL_RES["range_name"], text) or None,
         "po_number": po or None,
+        "store_po": _ck_first(_CK_CUSTOMER_PO_RE, text) or None,
         "name": name,
         # El código entre llaves ({YW100}) no es parte del color (igual que en el
         # formato tabla): en Printavo queda "White".
         "color": re.sub(r"\s*\{[^}]*\}\s*", " ", _ck_first(_CK_LABEL_RES["color"], text)).strip() or None,
         "blank": _ck_first(_CK_LABEL_RES["blank"], text) or None,
         "units": int(units.replace(",", "")) if units else None,
-        "due_date": _iso(_ck_first(_CK_DUE_RE, text)) or None,
+        "due_date": _ck_due(_ck_first(_CK_DUE_RE, text)),
         "sizes": sizes,
         # Pasos de empaque: el molde #3182 los baja del PO (un line item c/u).
         "packing_instructions": _ck_packing_instructions(text),
@@ -713,8 +764,10 @@ def _parse_culturekings_text(text: str) -> dict:
 
 # PACKAGING INSTRUCTIONS: bloque de pasos numerados ('1)... 2)...'); en el quote
 # #3182 cada paso es su propio line item en el PACKING DEPARTMENT.
+# Threadbeast trae después el bloque 'HANG TAG  NECK PRINT' (otras columnas): sin
+# cortarlo ahí, se pegaba al último paso ("3) Packed by Size HANG TAG NECK…").
 _CK_PACK_INSTR_RE = re.compile(
-    r"PACKAGING INSTRUCTIONS\s*(.+?)(?=\n\s*AGREGAR\b|\n\s*Name:|\Z)", re.I | re.S)
+    r"PACKAGING INSTRUCTIONS\s*(.+?)(?=\n\s*AGREGAR\b|\n\s*HANG\s+TAG\b|\n\s*Name:|\Z)", re.I | re.S)
 
 
 def _ck_packing_instructions(text: str) -> list:
@@ -789,8 +842,10 @@ def _ck_tabla_page(page) -> list:
     """Records (forma de _parse_culturekings_text) de una página en formato tabla;
     [] si la página no es de este formato."""
     text = page.extract_text() or ""
-    up = text.upper()
-    if "CULTURE KINGS" not in up and "SPEKTRUM" not in up:
+    # La tienda sale del título, igual que en el formato de siempre (antes solo
+    # se aceptaban PDFs que dijeran CULTURE KINGS / SPEKTRUM).
+    retailer = _ck_tienda(text)
+    if not retailer:
         return []
     tallas = None
     for m in _CK_TABLA_HDR_RE.finditer(text):
@@ -808,7 +863,6 @@ def _ck_tabla_page(page) -> list:
     # siempre trae "White" a secas y así queda en Printavo.
     color = re.sub(r"\s*\{[^}]*\}\s*", " ", _ck_valor_rotulo(words, "COLOR:")).strip()
     blank = _ck_valor_rotulo(words, "BLANK:")
-    retailer = "CULTURE KINGS" if "CULTURE KINGS" in up else "SPEKTRUM"
 
     filas = []
     for m in _CK_TABLA_ROW_RE.finditer(text):
@@ -1121,7 +1175,11 @@ def build_quote_input(r: dict, contact_id: str, contact: dict = None, owner_id: 
         # captures it in the review screen before creating.
         raise ValueError("Falta la tienda (brand): el PDF no la trae reconocible; captúrala en la revisión")
     is_tractor = "TRACTOR" in brand_up
-    is_spektrum = "CULTURE KING" in brand_up or "SPEKTRUM" in brand_up
+    # Spektrum = lo leyó su motor (cualquier tienda: CULTURE KINGS, THREADBEAST…),
+    # o la marca lo dice (records viejos de la bandeja, sin `motor`). Sin lo
+    # primero, una tienda nueva de Spektrum caía en el molde de SPENCERS.
+    is_spektrum = (r.get("motor") == "spektrum"
+                   or "CULTURE KING" in brand_up or "SPEKTRUM" in brand_up)
     # Un registro leido con una plantilla de PDF carga su plantilla de SALIDA.
     # Si no la trae (Goodie, Culture Kings, o una plantilla sin personalizar),
     # manda la eleccion por marca de siempre.

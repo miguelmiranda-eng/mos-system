@@ -49,12 +49,17 @@ def motor_existente(data: bytes):
     Paso el 2026-10-06: se armó, validó y activó una plantilla SPEKTRUM para PDFs
     que el motor de Culture Kings ya leía, y nada en la pantalla lo dijo. Mismo
     orden que parse_po_bytes; si un motor truena se toma como que no lo lee."""
-    for nombre, fn in (("Goodie", parse_pdf), ("Culture Kings", parse_culturekings_pdf)):
+    for nombre, fn in (("Goodie", parse_pdf), ("Spektrum", parse_culturekings_pdf)):
         try:
             recs = fn(data)
         except Exception:                             # noqa: BLE001
             recs = []
         if recs:
+            # El motor de Spektrum lee varias tiendas (CULTURE KINGS, THREADBEAST…):
+            # se dice CUAL detecto, que es lo que el usuario necesita saber.
+            tiendas = sorted({(r.get("brand") or "").strip() for r in recs} - {""})
+            if nombre == "Spektrum" and tiendas:
+                nombre = f"Spektrum ({', '.join(tiendas)})"
             return {"motor": nombre, "estilos": len(recs)}
     return None
 
