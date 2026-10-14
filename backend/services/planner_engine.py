@@ -85,6 +85,11 @@ DEFAULT_CONFIG = {
     "efficiency_mode": "manual",
     "efficiency_manual_pct": 100,
     "horizon_weeks": 8,
+    # Candado de máquina: un trabajo que el motor programó para arrancar en los
+    # próximos N días queda AMARRADO a esa máquina; los recálculos ya no lo
+    # pasan a otra (sí lo pueden reacomodar dentro de la misma por urgencia) y
+    # reparten sólo lo nuevo según el avance real. 0 = sin candado.
+    "lock_machine_days": 3,
     # off = apagado (no calcula nada) | shadow = calcula y muestra, NO mueve
     # órdenes. El modo que mueve tableros no existe todavía: se habilita en
     # otra fase, con autorización explícita del responsable.
@@ -578,7 +583,8 @@ def _held(ov: dict, today: date) -> bool:
 
 def schedule(jobs: List[dict], machines: List[dict], cfg: dict, cal: Calendar,
              start: datetime, efficiency: float, board_of: Dict[str, str],
-             overrides: Optional[Dict[str, dict]] = None, run_rates: Optional[dict] = None):
+             overrides: Optional[Dict[str, dict]] = None, run_rates: Optional[dict] = None,
+             locks: Optional[Dict[str, str]] = None):
     """Simulación turno por turno.
 
     machines: [{"machine": "MAQUINA1", "active": bool, "heads": int, "preferred_client": str}]
@@ -588,6 +594,10 @@ def schedule(jobs: List[dict], machines: List[dict], cfg: dict, cal: Calendar,
        "priority": {"level": TOP|UP|DOWN},
        "force": {...},                                      entra aunque no esté lista
        "hold": {"until"}}                                    no se programa
+    locks: {job_id: máquina} candados de la corrida anterior (lock_machine_days).
+      Un trabajo amarrado sólo lo toma SU máquina; compite ahí por urgencia con
+      lo nuevo. Se suelta si la máquina ya no está activa o no le alcanzan las
+      cabezas. Ajustes manuales y tablero MAQUINA mandan sobre el candado.
     El motor RESPETA los ajustes: no los mueve ni los discute; sólo avisa si
     algo no cuadra (máquina inactiva, colores > cabezas).
     """
@@ -663,6 +673,18 @@ def schedule(jobs: List[dict], machines: List[dict], cfg: dict, cal: Calendar,
     for mname, pos, j in sorted(assigned, key=lambda x: (x[1] or 10**6)):
         q = state[mname]["queue"]
         q.insert(max(0, pos - 1) if pos else len(q), j)
+
+    # 3) Candados: lo que ya quedó amarrado a una máquina sólo lo toma ella.
+    lock_days = float(cfg.get("lock_machine_days") or 0)
+    if lock_days > 0:
+        for j in pool:
+            lm = (locks or {}).get(j["job_id"])
+            if not lm:
+                continue
+            if lm not in state or j["colors"] > int(state[lm]["cfg"].get("heads") or HEADS_MAX):
+                j["_warnings"].append("candado_liberado")
+                continue
+            j["_lock"] = lm
     for j in pool:
         j["setup_left"] = j["colors"] * setup_hits_per_color
     for st in state.values():
@@ -681,7 +703,7 @@ def schedule(jobs: List[dict], machines: List[dict], cfg: dict, cal: Calendar,
         for i, j in enumerate(m["queue"]):
             if eligible(j, d):
                 return m["queue"].pop(i)
-        cands = [j for j in pool if fits(m, j) and eligible(j, d)]
+        cands = [j for j in pool if fits(m, j) and eligible(j, d) and j.get("_lock") in (None, mname)]
         if not cands:
             return None
         # Dedicación: si la máquina está dedicada a un cliente y ese cliente
@@ -723,9 +745,16 @@ def schedule(jobs: List[dict], machines: List[dict], cfg: dict, cal: Calendar,
         frac = (w1 - w0) / full                      # turno ya empezado = menos capacidad
         # Quién corre: primero las máquinas con trabajo, las más urgentes;
         # luego máquinas libres si queda gente y hay pool.
-        busy = sorted([n for n, s in state.items() if s["current"] or s["queue"]],
-                      key=lambda n: _sort_key(state[n]["current"] or state[n]["queue"][0]))
-        idle = [n for n, s in state.items() if not s["current"] and not s["queue"]] if pool else []
+        # Una máquina con trabajo amarrado en el pool cuenta como ocupada: si no
+        # corre, nadie más puede avanzar ese trabajo.
+        def head(n):
+            s = state[n]
+            return s["current"] or (s["queue"][0] if s["queue"] else None) or \
+                next((j for j in pool if j.get("_lock") == n), None)
+        heads = {n: head(n) for n in state}
+        busy = sorted([n for n in state if heads[n]], key=lambda n: _sort_key(heads[n]))
+        free_pool = any(j.get("_lock") is None for j in pool)
+        idle = [n for n in state if not heads[n]] if free_pool else []
         running = (busy + idle)[:crews]
         alto_in_shift: Dict[str, int] = {}
         cap = cap_shift * frac
@@ -789,6 +818,12 @@ def schedule(jobs: List[dict], machines: List[dict], cfg: dict, cal: Calendar,
         rec["manual"] = meta[jid].get("_manual", []) if jid in meta else []
         rec["warnings"] = meta[jid].get("_warnings", []) if jid in meta else []
         rec["start"] = rec["segments"][0]["start"] if rec["segments"] else None
+        # Candado para la siguiente corrida: ya amarrado, o arranca dentro de
+        # la ventana de lock_machine_days.
+        if lock_days > 0 and rec["segments"] and (
+                (meta.get(jid) or {}).get("_lock")
+                or datetime.fromisoformat(rec["start"]) < start + timedelta(days=lock_days)):
+            rec["locked_machine"] = rec["segments"][0]["machine"]
         end_date = rec.get("end_date")
         tgt, cxl = rec.get("target_date"), rec.get("cancel_date")
         if rec.get("remaining_after_horizon"):

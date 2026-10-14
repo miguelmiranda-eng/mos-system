@@ -289,6 +289,11 @@ async def main():
         check("sin max_age recalcula y etiqueta el disparador",
               r.json()["run_id"] != run["run_id"] and r.json()["trigger"] == "auto_timer")
         timer_run_id = r.json()["run_id"]
+        lk1 = run.get("locks") or {}
+        m2 = {j["job_id"]: j["machines"][:1] for j in r.json()["jobs"] if j.get("machines")}
+        check("candado: la corrida guarda los trabajos amarrados", bool(lk1), lk1)
+        check("candado: el recálculo no cambia de máquina lo amarrado",
+              all(m2.get(jid) in (None, [m]) for jid, m in lk1.items()), {k: (v, m2.get(k)) for k, v in lk1.items()})
         check("defaults: recálculo automático cada 15 min", d["config"]["auto_recalc"] is True
               and d["config"]["auto_recalc_minutes"] == 15)
         wins = run.get("windows", [])

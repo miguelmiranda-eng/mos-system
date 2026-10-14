@@ -469,5 +469,46 @@ check("turnos extra necesarios (cuadrillas de día)", pb["overtime_shifts_needed
 check("contratación limitada por máquinas libres (día: 5)", pb["hires"]["DIA"]["crews_possible"] <= 5
       and pb["hires"]["DIA"]["people"] == pb["hires"]["DIA"]["crews_possible"] * 7)
 
+print("== Candado de máquina (lock_machine_days) ==")
+cfgL = cfg_with(shifts=[{"key": "DIA", "start": "07:00", "hours": 12, "crews": 2},
+                        {"key": "NOCHE", "start": "19:00", "hours": 12, "crews": 0}],
+                setup_min_per_color=0, lock_machine_days=3)
+calL = pe.Calendar(cfgL, [], max_machines=2)
+MS2 = ["MAQUINA1", "MAQUINA2"]
+jL1, _ = pe.build_jobs([order(700, 1000, ["FRENTE"], cancel="2026-10-10"),
+                        order(701, 1000, ["FRENTE"], cancel="2026-10-11")], {}, cfgL, calL, MS2, LUNES.date())
+r1 = {j["order_number"]: j for j in pe.schedule(jL1, machines(2), cfgL, calL, LUNES, 1.0, {})}
+locks1 = {j["job_id"]: j["locked_machine"] for j in r1.values() if j.get("locked_machine")}
+check("corrida 1: lo que arranca en la ventana queda amarrado a su máquina",
+      locks1 == {"o700:FRENTE": "MAQUINA1", "o701:FRENTE": "MAQUINA2"}, locks1)
+# Corrida 2: llega una urgente. Sin candado, 700 se pasaría a la otra máquina.
+jL2, _ = pe.build_jobs([order(702, 4000, ["FRENTE"], cancel="2026-09-29"),
+                        order(700, 1000, ["FRENTE"], cancel="2026-10-10"),
+                        order(701, 1000, ["FRENTE"], cancel="2026-10-11")], {}, cfgL, calL, MS2, LUNES.date())
+free = {j["order_number"]: j["machines"] for j in pe.schedule(jL2, machines(2), {**cfgL, "lock_machine_days": 0},
+                                                               calL, LUNES, 1.0, {}, None, None, locks1)}
+check("(control) sin candado la urgente sí cambia de máquina a la 700", free["700"] == ["MAQUINA2"], free)
+r2 = {j["order_number"]: j for j in pe.schedule(jL2, machines(2), cfgL, calL, LUNES, 1.0, {}, None, None, locks1)}
+check("con candado la 700 sigue en MAQUINA1 y la 701 en MAQUINA2",
+      r2["700"]["machines"] == ["MAQUINA1"] and r2["701"]["machines"] == ["MAQUINA2"], {k: v["machines"] for k, v in r2.items()})
+check("la urgente nueva entra antes en su máquina (reacomodo por urgencia)",
+      r2["702"]["start"] < r2["700"]["start"] and r2["702"]["machines"] == ["MAQUINA1"])
+mL = [{"machine": "MAQUINA1", "active": False, "heads": 16}, {"machine": "MAQUINA2", "active": True, "heads": 16}]
+r3 = {j["order_number"]: j for j in pe.schedule(jL1, mL, cfgL, calL, LUNES, 1.0, {}, None, None, locks1)}
+check("máquina inactiva: el candado se suelta y avisa",
+      r3["700"]["machines"] == ["MAQUINA2"] and "candado_liberado" in r3["700"]["warnings"], r3["700"].get("warnings"))
+cfgL1 = {**cfgL, "shifts": [{"key": "DIA", "start": "07:00", "hours": 12, "crews": 1},
+                             {"key": "NOCHE", "start": "19:00", "hours": 12, "crews": 0}]}
+jL3, _ = pe.build_jobs([order(703, 1000, ["FRENTE"])], {}, cfgL1, calL, MS2, LUNES.date())
+r4 = pe.schedule(jL3, machines(2), cfgL1, calL, LUNES, 1.0, {}, None, None, {"o703:FRENTE": "MAQUINA2"})
+check("con 1 cuadrilla corre la máquina que tiene el trabajo amarrado",
+      r4 and r4[0]["machines"] == ["MAQUINA2"] and not r4[0].get("remaining_after_horizon"), r4)
+jL4, _ = pe.build_jobs([order(704, 18000, ["FRENTE"], cancel="2026-10-02"),
+                        order(705, 1000, ["FRENTE"], cancel="2026-10-20")], {}, cfgL1, calL, MS2, LUNES.date())
+r5 = {j["order_number"]: j for j in pe.schedule(jL4, machines(1), cfgL1, calL, LUNES, 1.0, {})}
+check("lo que arranca después de la ventana no se amarra (se sigue acomodando)",
+      r5["704"].get("locked_machine") == "MAQUINA1" and not r5["705"].get("locked_machine"),
+      (r5["705"].get("start"), r5["705"].get("locked_machine")))
+
 print(f"\n{ok} PASS, {fail} FAIL")
 sys.exit(1 if fail else 0)

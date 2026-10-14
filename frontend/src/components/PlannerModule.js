@@ -4,7 +4,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   ArrowLeft, CalendarClock, Power, RefreshCw, Loader2, Cpu, TrendingUp,
   Settings2, CalendarDays, AlertTriangle, Trash2, Plus, Save, FlaskConical, Eye, Search,
-  Pin, ArrowUpDown, LogIn, PauseCircle, Undo2, X, Tv, SlidersHorizontal, BellRing, CheckCircle2, Download, PackageCheck, Gauge, ClipboardCheck,
+  Pin, ArrowUpDown, LogIn, PauseCircle, Undo2, X, Tv, SlidersHorizontal, BellRing, CheckCircle2, Download, PackageCheck, Gauge, ClipboardCheck, Lock,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { saveAs } from "file-saver";
@@ -153,8 +153,13 @@ const describeOverride = (o, tr) => {
   return tr("plan_ov_kind_force");
 };
 
-const OverrideBadges = ({ manual, warnings, tr }) => (
+const OverrideBadges = ({ manual, warnings, locked, tr }) => (
   <span className="inline-flex gap-1 align-middle">
+    {locked && (
+      <span title={tr("plan_locked_hint", { m: locked.replace("MAQUINA", "M") })}>
+        <Lock className="w-3.5 h-3.5 text-slate-500" />
+      </span>
+    )}
     {(manual || []).map((k) => {
       const Icon = KIND_ICON[k] || Pin;
       return <Icon key={k} className="w-3.5 h-3.5 text-violet-600" title={tr(`plan_ov_kind_${k}`)} />;
@@ -752,7 +757,7 @@ const BoardCard = ({ job, segs, seq, live, today, onAdjust, draggable, tr, lang 
             <div className="flex items-baseline gap-1.5 flex-wrap">
               <span className="text-base font-black text-slate-900 tabular-nums">{job.order_number}</span>
               {job.customer_po && <span className="text-[11px] text-slate-400 tabular-nums">PO {job.customer_po}</span>}
-              <OverrideBadges manual={job.manual} warnings={job.warnings} tr={tr} />
+              <OverrideBadges manual={job.manual} warnings={job.warnings} locked={job.locked_machine} tr={tr} />
             </div>
             <div className="text-xs text-slate-500 break-words leading-snug" title={job.client}>
               {[job.branding || job.client, job.design].filter(Boolean).join(" · ")}
@@ -1824,7 +1829,7 @@ const ScheduleTab = ({ config, efficiency, run, running, onRun, canEdit, onToggl
             <tbody className="divide-y divide-slate-100">
               {jobs.map((j) => (
                 <tr key={j.job_id}>
-                  <td className="py-1.5 pr-3 font-black whitespace-nowrap">{j.order_number} <OverrideBadges manual={j.manual} warnings={j.warnings} tr={tr} /> <ExtraWorkBadge extra={j.extra_work} tr={tr} /></td>
+                  <td className="py-1.5 pr-3 font-black whitespace-nowrap">{j.order_number} <OverrideBadges manual={j.manual} warnings={j.warnings} locked={j.locked_machine} tr={tr} /> <ExtraWorkBadge extra={j.extra_work} tr={tr} /></td>
                   <td className="pr-3 text-xs">{j.position}</td>
                   <td className="pr-3 text-xs text-slate-500 max-w-[160px] truncate">{j.client}</td>
                   <td className="pr-3"><KindBadge kind={j.kind} state={j.sample_state} tr={tr} /></td>
@@ -2836,6 +2841,7 @@ const RULE_FIELDS = [
   ["volume_low_max", "plan_r_low"],
   ["volume_high_min", "plan_r_high"],
   ["horizon_weeks", "plan_r_horizon"],
+  ["lock_machine_days", "plan_r_lock_days"],
   ["printed_complete_pct", "plan_r_printed_pct"],
   ["printed_alert_days", "plan_r_alert_days"],
   ["audit_printed_pct", "plan_r_audit_pct"],

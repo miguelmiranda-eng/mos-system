@@ -541,10 +541,21 @@ async def shadow_run(request: Request, trigger: str = "manual", max_age: int = 0
     board_of = {o["order_id"]: o.get("board") for o in ctx["orders"]}
     active_ov = await _active_overrides()
     ov = _resolve_overrides(ctx["jobs"], active_ov)
+    # Corrida anterior: candados de máquina (lock_machine_days) e impacto.
+    prev = await db.planner_runs.find_one({}, {"_id": 0, "jobs.job_id": 1, "jobs.status": 1,
+                                                "blocked.job_id": 1, "locks": 1}, sort=[("created_at", -1)])
+    job_ids = {j["job_id"] for j in ctx["jobs"]}
+    prev_locks = {k: v for k, v in ((prev or {}).get("locks") or {}).items() if k in job_ids}
     scheduled = pe.schedule(ctx["jobs"], ctx["machines"], ctx["cfg"], ctx["cal"], ctx["now"],
                             ctx["eff"]["applied"], board_of, ov,
-                            ctx["eff"]["measured"].get("run_rates"))
+                            ctx["eff"]["measured"].get("run_rates"), prev_locks)
     in_plan = {j["job_id"] for j in scheduled}
+    # El candado sobrevive a una corrida en que el trabajo no se programó
+    # (retenido, o le faltó un requisito un rato): al volver, regresa a su máquina.
+    locks = {jid: m for jid, m in prev_locks.items() if jid not in in_plan}
+    locks.update({j["job_id"]: j["locked_machine"] for j in scheduled if j.get("locked_machine")})
+    if not float(ctx["cfg"].get("lock_machine_days") or 0):
+        locks = {}
     blocked = []
     for j in ctx["jobs"]:
         if j["job_id"] in in_plan:
@@ -557,8 +568,6 @@ async def shadow_run(request: Request, trigger: str = "manual", max_age: int = 0
         blocked.append(row)
 
     # Impacto contra la corrida anterior: qué trabajos cambiaron de estatus.
-    prev = await db.planner_runs.find_one({}, {"_id": 0, "jobs.job_id": 1, "jobs.status": 1,
-                                                "blocked.job_id": 1}, sort=[("created_at", -1)])
     impact = []
     if prev:
         before = {j["job_id"]: j.get("status") for j in prev.get("jobs", [])}
@@ -589,6 +598,7 @@ async def shadow_run(request: Request, trigger: str = "manual", max_age: int = 0
         "moves": _moves(scheduled, ctx["orders"], ctx["now"], ctx["cfg"]),
         "impact": impact,
         "overrides_active": len(active_ov),
+        "locks": locks,
         "windows": _calendar_windows(ctx),
         "data_issues": len(ctx["issues"]),
     }
