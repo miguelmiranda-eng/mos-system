@@ -8,6 +8,11 @@ import uuid, io, csv, re
 router = APIRouter(prefix="/api/qc")
 
 WRITE_ROLES = ["supersu", "inspector_qc", "qc"]
+
+# Solicitud automática (la orden pasó a NECESITA QC) que QC aún no captura.
+# No es una inspección: no cuenta en métricas ni aparece en las pestañas.
+PENDING = "PENDING"
+NOT_PENDING = {"result": {"$ne": PENDING}}
 async def require_qc_write(request: Request):
     user = await require_auth(request)
     if user.get("role") not in WRITE_ROLES:
@@ -40,9 +45,7 @@ def diff_record(old, new_data, fields):
 async def list_qc_records(request: Request):
     await require_auth(request)
     p = request.query_params
-    query = {}
-    if p.get("result"):
-        query["result"] = p["result"]
+    query = {"result": p["result"]} if p.get("result") else dict(NOT_PENDING)
     if p.get("severity"):
         query["severity"] = p["severity"]
     if p.get("inspector_id"):
@@ -81,6 +84,7 @@ async def get_qc_stats(request: Request):
     # Single pass over qc_records via $facet instead of 5 serial count_documents
     # (each of which was a full collection scan). Output contract is unchanged.
     agg = await db.qc_records.aggregate([
+        {"$match": NOT_PENDING},
         {"$facet": {
             "total": [{"$count": "n"}],
             "by_result": [{"$group": {"_id": "$result", "n": {"$sum": 1}}}],
@@ -138,6 +142,7 @@ async def get_qc_metrics(request: Request):
     await require_auth(request)
 
     pipeline_type = [
+        {"$match": NOT_PENDING},
         {"$group": {
             "_id": "$finding_type",
             "total": {"$sum": 1},
@@ -150,6 +155,7 @@ async def get_qc_metrics(request: Request):
     by_type_raw = await db.qc_records.aggregate(pipeline_type).to_list(20)
 
     pipeline_inspector = [
+        {"$match": NOT_PENDING},
         {"$group": {
             "_id": "$inspector",
             "total": {"$sum": 1},
@@ -163,6 +169,7 @@ async def get_qc_metrics(request: Request):
     by_inspector_raw = await db.qc_records.aggregate(pipeline_inspector).to_list(10)
 
     pipeline_month = [
+        {"$match": NOT_PENDING},
         {"$addFields": {"month": {"$substr": ["$inspection_date", 0, 7]}}},
         {"$group": {
             "_id": "$month",
@@ -215,9 +222,7 @@ async def mark_notification_read(notif_id: str, request: Request):
 async def export_qc_csv(request: Request):
     await require_auth(request)
     p = request.query_params
-    query = {}
-    if p.get("result"):
-        query["result"] = p["result"]
+    query = {"result": p["result"]} if p.get("result") else dict(NOT_PENDING)
     if p.get("severity"):
         query["severity"] = p["severity"]
     if p.get("search"):
@@ -238,7 +243,7 @@ async def export_qc_csv(request: Request):
 
     output = io.StringIO()
     fields = [
-        "qc_id", "order_number", "client", "inspector", "inspection_date",
+        "qc_id", "order_number", "client", "inspector", "requested_by", "inspection_date",
         "request_date", "finding_type", "severity", "result",
         "quantity_inspected", "quantity_rejected", "quantity",
         "findings", "corrective_action", "created_at",
@@ -324,7 +329,20 @@ async def create_qc_record(request: Request):
         "created_at": now_iso(),
         "updated_at": now_iso(),
     }
-    await db.qc_records.insert_one(doc)
+    # Si la orden tiene una solicitud automática pendiente (se creó al pasar a
+    # NECESITA QC), la captura la completa en vez de dejar un duplicado.
+    pending = await db.qc_records.find_one(
+        {"order_id": order_id, "result": PENDING}, {"_id": 0}, sort=[("created_at", -1)]
+    ) if order_id else None
+    if pending:
+        for k in ("qc_id", "created_at", "request_date", "requested_by", "requested_by_id", "auto_generated"):
+            if k in pending:
+                doc[k] = pending[k]
+        if body.get("request_date"):
+            doc["request_date"] = body["request_date"]
+        await db.qc_records.replace_one({"qc_id": pending["qc_id"]}, doc)
+    else:
+        await db.qc_records.insert_one(doc)
     doc.pop("_id", None)
 
     if order_id:
@@ -674,6 +692,16 @@ async def update_qc_record(qc_id: str, request: Request):
     ]
     update = {k: body[k] for k in allowed if k in body}
     update["updated_at"] = now_iso()
+    # Quien captura la inspección queda como inspector (las solicitudes
+    # automáticas nacen sin inspector).
+    if not existing.get("inspector"):
+        update["inspector"] = user.get("name", user.get("email", ""))
+        update["inspector_id"] = user.get("user_id", "")
+    if existing.get("result") == PENDING:
+        if update.get("result") in (None, PENDING):
+            update["result"] = "PASS"
+        if "inspection_date" not in body:
+            update["inspection_date"] = datetime.now(timezone.utc).date().isoformat()
 
     changes = diff_record(existing, update, allowed)
     if changes:
@@ -718,7 +746,7 @@ async def update_qc_record(qc_id: str, request: Request):
 async def get_qc_history(qc_id: str, request: Request):
     await require_auth(request)
     existing = await db.qc_records.find_one(
-        {"qc_id": qc_id}, {"_id": 0, "created_at": 1, "inspector": 1}
+        {"qc_id": qc_id}, {"_id": 0, "created_at": 1, "inspector": 1, "requested_by": 1}
     )
     if not existing:
         raise HTTPException(404, "QC record not found")
@@ -726,7 +754,7 @@ async def get_qc_history(qc_id: str, request: Request):
     return {
         "history": entries,
         "created_at": existing.get("created_at"),
-        "created_by": existing.get("inspector"),
+        "created_by": existing.get("requested_by") or existing.get("inspector"),
     }
 
 

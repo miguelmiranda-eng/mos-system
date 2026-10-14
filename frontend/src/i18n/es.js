@@ -2198,6 +2198,7 @@ const es = {
   qc_inspection_details: "Detalles de Inspección",
   qc_history: "Historial",
   qc_inspector: "Inspector",
+  qc_requested_by: "Solicitado por",
   qc_insp_rejected_short: "Insp. / Rechazadas",
   qc_no_link: "Sin enlace",
   qc_findings_images: "Hallazgos e Imágenes",

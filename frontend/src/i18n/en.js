@@ -2384,6 +2384,7 @@ const en = {
   qc_inspection_details: "Inspection Details",
   qc_history: "History",
   qc_inspector: "Inspector",
+  qc_requested_by: "Requested by",
   qc_insp_rejected_short: "Insp. / Rejected",
   qc_no_link: "No link",
   qc_findings_images: "Findings & Images",

@@ -333,7 +333,8 @@ function QCDetailModal({ open, onClose, record, isDark }) {
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 {[
                   { label: t('date'), value: record.inspection_date },
-                  { label: t('qc_inspector'), value: record.inspector },
+                  { label: t('qc_inspector'), value: record.inspector || '—' },
+                  ...(record.requested_by ? [{ label: t('qc_requested_by'), value: record.requested_by }] : []),
                   { label: t('qc_result'), value: <ResultBadge value={record.result} /> },
                   { label: t('qc_severity'), value: <SeverityBadge value={record.severity} /> },
                 ].map(item => (
