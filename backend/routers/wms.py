@@ -1334,6 +1334,54 @@ async def _assert_curated_identity(customer: str, values: dict):
         )
 
 
+async def _canonical_fabric(customer: str, value: str) -> str:
+    """Forma CANÓNICA de una composición, casada por CÓDIGO de fibras y no por
+    texto, para que '100% ALGODÓN' (como lo manda el proveedor de SPEKTRUM) se
+    guarde como '100% COTTON' (como está el catálogo y TODO el inventario del
+    cliente). El motor de número de parte ya sabe que ALGODON == COTTON == 'C',
+    así que dos composiciones casan si su código ('100C') coincide, sin importar
+    el idioma ni el formato.
+
+    - Si el valor YA es una opción del catálogo curado, no se toca (respeta
+      '100%C' o '100% COMBED COTTON' que el líder haya decidido conservar).
+    - Si no lo es, se mapea a la forma del MISMO código que YA DOMINA el
+      inventario de ese cliente: así la caja nueva se une al bucket grande en
+      vez de abrir una identidad nueva en otro idioma.
+    - Si el cliente aún no tiene ese código, cae a una opción del catálogo con
+      el mismo código; si tampoco hay, devuelve el valor tal cual y la guardia
+      de catálogo decide si pasa (sin canónico que ofrecer, no se inventa uno).
+    """
+    v = re.sub(r"\s+", " ", str(value or "")).strip()
+    if not v:
+        return v
+    # Ya curado (exacto, sin importar mayúsculas) → intocable.
+    if await db.wms_catalog_options.find_one(
+            {"type": "fabrics", "value": {"$regex": f"^{re.escape(v)}$", "$options": "i"}}, {"_id": 1}):
+        return v
+    cfg = await _pn_config()
+    code = (pn.normalize_composition(v, cfg) or {}).get("code") or ""
+    if not code:
+        return v  # no parsea como composición: no es asunto de este helper
+    same_code = lambda s: ((pn.normalize_composition(s, cfg) or {}).get("code") or "") == code
+    # Dominante en el inventario del cliente con ese mismo código.
+    cu = (customer or "").strip()
+    if cu:
+        rows = await db.wms_inventory.aggregate([
+            {"$match": {"customer": {"$regex": f"^{re.escape(cu)}$", "$options": "i"},
+                        "fabric_content": {"$nin": [None, ""]}}},
+            {"$group": {"_id": "$fabric_content", "n": {"$sum": 1}}},
+            {"$sort": {"n": -1}},
+        ]).to_list(2000)
+        for r in rows:
+            fc = (r.get("_id") or "").strip()
+            if fc and same_code(fc):
+                return fc
+    # El cliente no tiene ese código aún: una opción del catálogo con ese código.
+    cat = await db.wms_catalog_options.find({"type": "fabrics"}, {"_id": 0, "value": 1}).to_list(5000)
+    matches = sorted((c["value"].strip() for c in cat if c.get("value") and same_code(c["value"])), key=len)
+    return matches[0] if matches else v
+
+
 async def _build_identity_checker():
     """Checker EN MEMORIA para validaciones masivas (imports de Excel).
 
@@ -2960,6 +3008,12 @@ async def create_receiving(request: Request):
 
     if not style:
         raise HTTPException(400, "Style requerido")
+    # La composición se canoniza por CÓDIGO antes de validar y guardar: el
+    # proveedor la manda en español ('100% ALGODÓN') pero el catálogo y todo el
+    # inventario están en inglés ('100% COTTON'). Sin esto, el modo estricto
+    # rechazaba el español y el operador quedaba trabado (solo veía el dropdown
+    # en inglés, select-only).
+    fabric_content = await _canonical_fabric(customer, fabric_content)
     # Guardia de catalogo: los 6 campos de identidad deben venir del catalogo
     # curado del cliente (o global). Si el catalogo esta vacio, bootstrap.
     await _assert_curated_identity(customer, {
@@ -11676,6 +11730,17 @@ async def get_part_number_config(request: Request):
     fusionados con los defaults. La UI los usa para los selectores."""
     await require_auth(request)
     return await _pn_config()
+
+
+@router.get("/catalog/resolve-fabric")
+async def resolve_fabric(request: Request, customer: str = "", value: str = ""):
+    """Forma canónica de una composición para un cliente (casa por código de
+    fibras, no por texto): '100% ALGODÓN' → '100% COTTON'. La usa el autollenado
+    de recepción para elegir la opción correcta del dropdown (select-only) a
+    partir de lo que trae la línea del ASN en el idioma del proveedor."""
+    await require_auth(request)
+    cust = await _canonical_customer(customer)
+    return {"value": await _canonical_fabric(cust, value)}
 
 
 @router.put("/asn/part-number/config")

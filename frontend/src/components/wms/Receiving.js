@@ -349,7 +349,7 @@ export const ReceivingModule = () => {
   // función sobreescribía cliente/estilo con los valores del ASN y pisaba la
   // identidad del UPC (bug reportado). Cada campo solo se llena si el valor del
   // ASN resuelve a una entrada del dropdown curado; si no, se omite.
-  const pickAsnLine = (line) => {
+  const pickAsnLine = async (line) => {
     setSelectedAsnLine(line.line_no);
 
     const updates = {};
@@ -382,24 +382,29 @@ export const ReceivingModule = () => {
       else if (line.description) skipped.push(t('description'));
     }
 
-    // Tela: en entradas con número de parte se elige la opción del catálogo
-    // cuya composición compone IGUAL que la línea (50C50P). El match difuso por
-    // texto que se usaba antes emparejó "50% ALGODON 50% POLIESTER" con
-    // "25% COTTON 50% POLYESTER 25% RAYON" por el token "50%" y el cartón dejó
-    // de casar con su propia línea. Entradas viejas siguen con el difuso.
+    // Tela: se casa por CÓDIGO de composición (50C50P), no por parecido de
+    // texto — así '100% ALGODÓN' que manda el proveedor cae en '100% COTTON'
+    // del catálogo (el campo es select-only, en inglés). El servidor resuelve
+    // la forma canónica (la que DOMINA el inventario del cliente para ese
+    // código); si no responde, se casa localmente por código contra el dropdown.
+    const rawFabric = line.fabric || line.fabric_content || '';
     let fabric = '';
-    if (line.part_number_auto && line.composition_code) {
-      const target = line.composition_code;
-      const exact = fabricOptions.filter(o => previewComposition(o, pnFibers).code === target);
-      // Varias opciones con la misma composición (COTTON vs COMBED COTTON): la
-      // más corta es la genérica. Si el catálogo no tiene ninguna, va el texto
-      // canónico de la línea: la composición es identidad de la línea.
-      fabric = exact.sort((a, b) => a.length - b.length)[0] || line.fabric || line.fabric_content || '';
-    } else {
-      fabric = findInOptions(line.fabric || line.fabric_content, fabricOptions);
+    if (rawFabric && form.customer) {
+      try {
+        const r = await fetcher(`/catalog/resolve-fabric?customer=${encodeURIComponent(form.customer)}&value=${encodeURIComponent(rawFabric)}`);
+        const canon = (r?.value || '').trim();
+        if (canon && fabricOptions.some(o => o.toUpperCase() === canon.toUpperCase())) fabric = canon;
+      } catch { /* cae al match local por código */ }
+    }
+    if (!fabric && rawFabric) {
+      // Fallback local: código de la línea (el que traiga o el del texto) contra
+      // el dropdown; si no hay código, al match difuso por texto de siempre.
+      const target = line.composition_code || (pnFibers.length ? previewComposition(rawFabric, pnFibers).code : '');
+      if (target) fabric = fabricOptions.filter(o => previewComposition(o, pnFibers).code === target).sort((a, b) => a.length - b.length)[0] || '';
+      if (!fabric) fabric = findInOptions(rawFabric, fabricOptions);
     }
     if (fabric) { updates.fabric_content = fabric; matched.push(t('wms_rcv_fabric_short')); }
-    else if (line.fabric || line.fabric_content) skipped.push(t('wms_rcv_fabric_short'));
+    else if (rawFabric) skipped.push(t('wms_rcv_fabric_short'));
 
     setForm(p => ({ ...p, ...updates }));
 
