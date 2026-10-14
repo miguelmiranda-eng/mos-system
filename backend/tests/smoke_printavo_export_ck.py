@@ -242,7 +242,7 @@ check("HANG TAG / NECK PRINT ya no se pega al paso 3",
                                      "3) Packed by Size"], f"{tb['packing_instructions']}")
 rtb = _spektrum_record(tb)
 qtb = build_quote_input(rtb, "CID", category_id="CAT")
-check("nickname con la tienda", qtb["nickname"] == "THREADBEAST - PO#5448 - RICH SCRIPT TEE", f"{qtb['nickname']!r}")
+check("nickname con la tienda y su PO de tienda", qtb["nickname"] == "THREADBEAST - PO#5448 - SPTB092926-L4 - RICH SCRIPT TEE", f"{qtb['nickname']!r}")
 g1tb = [it["description"] for it in qtb["lineItemGroups"][0]["lineItems"]]
 check("molde de Spektrum (#3182), no el de Spencers, aunque la tienda no diga CULTURE KINGS",
       g1tb[0].startswith("PRODUCTION DEPARTMENT") and any(x.startswith("SETUP FEE") for x in g1tb), f"{g1tb}")

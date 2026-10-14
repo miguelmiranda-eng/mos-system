@@ -1204,7 +1204,13 @@ def build_quote_input(r: dict, contact_id: str, contact: dict = None, owner_id: 
     elif is_spektrum:
         # Calcado al #3182: "CULTURE KINGS - PO#4004615 - DOOM VERSUS AVENGERS TEE - NEW".
         # El status ('NEW'/'REORDER') lo agrega Viviana en la revisión (el PO no lo trae).
-        nickname = f"{brand} - PO#{r['po_number']} - {r['description']}"
+        # Si la tienda trae su PROPIO PO (Threadbeast: CUSTOMER PO#), va después
+        # del PO: "THREADBEAST - PO#5448 - SPTB092926-L4 - PROPER GOODS LABEL TEE".
+        # Culture Kings no lo trae y queda igual. printavo_sync lo lee de vuelta
+        # (_parse_nickname_spektrum) para el store_po de la orden.
+        tienda_po = (r.get("store_po") or "").strip()
+        medio = f"{tienda_po} - " if tienda_po and tienda_po != str(r.get("po_number") or "") else ""
+        nickname = f"{brand} - PO#{r['po_number']} - {medio}{r['description']}"
     elif quote_tpl and quote_tpl.get("nickname"):
         nickname = _texto_plantilla(quote_tpl["nickname"], r)
     else:

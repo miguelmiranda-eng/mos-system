@@ -358,6 +358,44 @@ def _map_sizes(line_item: dict):
     return sizes_out, total
 
 
+# Nombre de quote de SPEKTRUM (lo arma printavo_export para sus tiendas):
+#   "CULTURE KINGS - PO#4005609 - WOLVERINE VINTAGE TEE - REORDER"
+#   "THREADBEAST - PO#5448 - SPTB092926-L4 - PROPER GOODS LABEL TEE"
+# Se distingue del de Goodie ("SPENCERS PO#23258 - 327049 - DISEÑO") por el " - "
+# ANTES de "PO#". _HEADER_PO_RE no lo entendía: las órdenes de Spektrum llegaban
+# sin PO ni diseño y con marca "CULTURE" (primera palabra), y se corregían a mano
+# una por una (207 órdenes; p.ej. 3775-3790 el 2026-10-13).
+_SPK_NICK_RE = re.compile(r"^\s*(?P<tienda>\S.*?)\s+-\s+PO#\s*(?P<po>[\w-]+)\s+-\s+(?P<resto>.+?)\s*$", re.I)
+# Estado que se le agrega al final al revisar la quote ("- NEW", "- REORDER").
+_SPK_STATUS = {"NEW", "REORDER", "RE-ORDER", "ROLLOUT", "REPEAT", "ORIGINAL"}
+# Un PO de tienda es UN token con algún dígito ("SPTB092926-L4"); un diseño trae
+# espacios ("PROPER GOODS LABEL TEE").
+_SPK_STORE_PO_RE = re.compile(r"[A-Z0-9][A-Z0-9-]*\d[A-Z0-9-]*", re.I)
+
+# Cliente de Printavo -> cliente de MOS cuando no coinciden. El contacto de
+# Spektrum en Printavo es "Spektrum California LLC" y en MOS el cliente es
+# SPEKTRUM (asi esta en las 207 ordenes corregidas a mano).
+CLIENT_ALIASES = {"SPEKTRUM CALIFORNIA": "SPEKTRUM"}
+
+
+def _parse_nickname_spektrum(nickname: str):
+    """(tienda, customer_po, store_po, design_#) de un nombre de Spektrum, o None
+    si el nombre no tiene ese formato (entonces manda _parse_nickname)."""
+    m = _SPK_NICK_RE.match(nickname or "")
+    if not m:
+        return None
+    partes = [p.strip() for p in m.group("resto").split(" - ") if p.strip()]
+    if partes and partes[-1].upper() in _SPK_STATUS:
+        partes = partes[:-1]
+    store_po = ""
+    if len(partes) >= 2 and _SPK_STORE_PO_RE.fullmatch(partes[0]):
+        store_po, partes = partes[0], partes[1:]
+    design = " - ".join(partes)
+    if not design:
+        return None
+    return m.group("tienda").strip(), m.group("po"), store_po, design
+
+
 def _parse_nickname(nickname: str):
     """Extract (branding, customer_po, store_po, design_#) from the invoice nickname."""
     if not nickname:
@@ -408,6 +446,7 @@ def invoice_to_orders(invoice: dict) -> list:
     customer = (contact.get("customer") or {}).get("companyName")
     # Strip legal suffix: "GOODIE TWO SLEEVES LLC" -> "GOODIE TWO SLEEVES".
     client = _up(_strip_company_suffix(customer or contact.get("fullName") or ""))
+    client = CLIENT_ALIASES.get(client, client)
 
     due = invoice.get("customerDueAt") or invoice.get("dueAt") or ""
     if isinstance(due, str) and len(due) >= 10:
@@ -416,7 +455,13 @@ def invoice_to_orders(invoice: dict) -> list:
     nickname = (invoice.get("nickname") or "").strip()
     # Branding = first word of the nickname (e.g. "SPENCERS TEST PO#..." -> "SPENCERS").
     branding = _up(nickname.split()[0]) if nickname else ""
-    _, customer_po, store_po, design_num = _parse_nickname(nickname)
+    spk = _parse_nickname_spektrum(nickname)
+    if spk:
+        # Spektrum: la marca es la TIENDA completa ("CULTURE KINGS", no "CULTURE").
+        tienda, customer_po, store_po, design_num = spk
+        branding = _up(tienda)
+    else:
+        _, customer_po, store_po, design_num = _parse_nickname(nickname)
 
     # Work order link (for JOB TITLE A) and the customer-note link (for the order's
     # links section shown in the comments modal).
