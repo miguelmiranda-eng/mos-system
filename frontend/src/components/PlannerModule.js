@@ -1585,7 +1585,7 @@ const AppliedMovesCard = ({ rows, canEdit, onRevert, lastResults, tr }) => {
 };
 
 const ScheduleTab = ({ config, efficiency, run, running, onRun, canEdit, onToggle, onAdjust, onReorder, overrides, history, onUndo,
-  onApplyMoves, applied, onRevertMove, lastApply, tr }) => {
+  onApplyMoves, applied, onRevertMove, lastApply, onReleaseHolds, tr }) => {
   const [status, setStatus] = useState("");
   const [kindF, setKindF] = useState("");
   const [extraOnly, setExtraOnly] = useState(false);
@@ -1638,6 +1638,20 @@ const ScheduleTab = ({ config, efficiency, run, running, onRun, canEdit, onToggl
       return true;
     });
   }, [blockedAll, miss, onlyThat, blockedSearch, dFrom, dTo]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Retenciones activas que dejan fuera a un trabajo: la de su posición o la
+  // de la orden completa ("*", que libera todas sus posiciones).
+  const holdIds = (rows) => [...new Set(rows.flatMap((b) => (overrides || [])
+    .filter((o) => o.kind === "hold" && o.order_id === b.order_id && (o.position === "*" || o.position === b.position))
+    .map((o) => o.override_id)))];
+  const [releasing, setReleasing] = useState(false);
+  const release = async (rows) => {
+    const ids = holdIds(rows);
+    if (!ids.length) return;
+    if (rows.length > 1 && !window.confirm(tr("plan_hold_release_confirm", { n: rows.length }))) return;
+    setReleasing(true);
+    try { await onReleaseHolds(ids); } finally { setReleasing(false); }
+  };
 
   // Exporta los bloqueados a Excel con UNA HOJA POR DEPARTAMENTO (lo que le
   // falta a cada uno), para mandarles su pendiente. Cada hoja lista las órdenes
@@ -1893,6 +1907,14 @@ const ScheduleTab = ({ config, efficiency, run, running, onRun, canEdit, onToggl
               </div>
               <input value={blockedSearch} onChange={(e) => setBlockedSearch(e.target.value)} placeholder={tr("plan_search_order_client")}
                 className="ml-auto h-8 px-2 rounded-lg border border-slate-200 text-xs w-52" />
+              {canEdit && miss === "held" && blockedRows.some((b) => b.held) && (
+                <button onClick={() => release(blockedRows.filter((b) => b.held))} disabled={releasing}
+                  title={tr("plan_hold_release_hint")}
+                  className="h-8 px-3 rounded-lg bg-blue-600 text-white text-xs font-bold inline-flex items-center gap-1.5 hover:bg-blue-700 disabled:opacity-50">
+                  {releasing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Undo2 className="w-3.5 h-3.5" />}
+                  {tr("plan_hold_release_all", { n: blockedRows.filter((b) => b.held).length })}
+                </button>
+              )}
               <button onClick={exportBlocked} title={tr("plan_export_blocked_hint")}
                 className="h-8 px-3 rounded-lg bg-green-600 text-white text-xs font-bold inline-flex items-center gap-1.5 hover:bg-green-700">
                 <Download className="w-3.5 h-3.5" />{tr("plan_export_excel")}
@@ -1923,10 +1945,18 @@ const ScheduleTab = ({ config, efficiency, run, running, onRun, canEdit, onToggl
                       {b.held ? <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-red-50 text-red-700">{tr("plan_ov_kind_hold")}</span>
                         : <ReadyBadges ready={b.ready} tr={tr} />}
                     </td>
-                    <td>{canEdit && (
-                      <button onClick={() => onAdjust(b)} className="px-2 h-7 rounded-lg border border-slate-200 text-xs font-bold inline-flex items-center gap-1 hover:border-blue-300 hover:text-blue-700">
-                        <SlidersHorizontal className="w-3.5 h-3.5" />{tr("plan_adjust")}
-                      </button>
+                    <td className="whitespace-nowrap">{canEdit && (
+                      <span className="inline-flex gap-1">
+                        {b.held && (
+                          <button onClick={() => release([b])} disabled={releasing} title={tr("plan_hold_release_hint")}
+                            className="px-2 h-7 rounded-lg border border-blue-200 bg-blue-50 text-blue-700 text-xs font-bold inline-flex items-center gap-1 hover:bg-blue-100 disabled:opacity-50">
+                            <Undo2 className="w-3.5 h-3.5" />{tr("plan_hold_release")}
+                          </button>
+                        )}
+                        <button onClick={() => onAdjust(b)} className="px-2 h-7 rounded-lg border border-slate-200 text-xs font-bold inline-flex items-center gap-1 hover:border-blue-300 hover:text-blue-700">
+                          <SlidersHorizontal className="w-3.5 h-3.5" />{tr("plan_adjust")}
+                        </button>
+                      </span>
                     )}</td>
                   </tr>
                 ))}
@@ -3738,6 +3768,18 @@ const PlannerModule = () => {
     if (on) await runEngine("override");
   };
 
+  // Liberar retenidas (una o varias): quita sus retenciones y recalcula UNA
+  // vez para que el motor las vuelva a programar.
+  const releaseHolds = async (ids) => {
+    if (!ids.length) return;
+    let ok = 0;
+    for (const id of ids) {
+      try { await planner(`/overrides/${id}`, { method: "DELETE" }); ok += 1; } catch (e) { toast.error(e.message); }
+    }
+    if (ok) toast.success(tr("plan_hold_released", { n: ok }));
+    await afterOverride(false);
+  };
+
   const undoOverride = async (id) => {
     try {
       await planner(`/overrides/${id}`, { method: "DELETE" });
@@ -3823,7 +3865,7 @@ const PlannerModule = () => {
           <>
             {tab === "schedule" && <ScheduleTab config={cfgData.config} efficiency={cfgData.efficiency} run={run} running={running} onRun={() => runEngine("manual")} canEdit={canEdit}
               onToggle={toggleEngine} onAdjust={setAdjusting} onReorder={reorderMachine} overrides={ovData.active} history={ovData.history}
-              onUndo={undoOverride} onApplyMoves={applyMoves} applied={applied} onRevertMove={revertMove}
+              onUndo={undoOverride} onReleaseHolds={releaseHolds} onApplyMoves={applyMoves} applied={applied} onRevertMove={revertMove}
               lastApply={lastApply} tr={tr} />}
             {tab === "projection" && <ProjectionTab canEdit={canEdit} run={run} onCalendarSaved={afterConfigChange} calendar={cfgData.calendar}
               hitsPerShift={cfgData.config.hits_per_shift} tr={tr} />}
