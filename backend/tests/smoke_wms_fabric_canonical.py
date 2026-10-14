@@ -162,6 +162,16 @@ async def main():
         r = await c.get("/api/wms/catalog/resolve-fabric", params={"customer": CUST, "value": "100% ALGODÓN"})
         check("ahora '100% ALGODÓN' → '100%C' (el que domina)", r.json()["value"] == "100%C", r.text[:160])
 
+        print("\n== ASN conserva el calificativo COMBED al guardar (bug reportado) ==")
+        sdb.wms_part_number_config.insert_one({"config_id": "main", "customers": {CUST: "SKT"}})
+        r = await c.post("/api/wms/asn", json={"asn_id": "CMB-1", "customer": CUST, "items": [
+            {"garment": "SS", "fabric": "100% COMBED COTTON", "country": "CHN", "qty_expected": 10}]})
+        check("ASN creado", r.status_code == 200, r.text[:160])
+        fab = (r.json().get("items") or [{}])[0].get("fabric") if r.status_code == 200 else None
+        check("guarda '100% COMBED COTTON' (no lo reduce a '100% COTTON')", fab == "100% COMBED COTTON", fab)
+        pn_code = (r.json().get("items") or [{}])[0].get("composition_code") if r.status_code == 200 else None
+        check("el código del número de parte sigue siendo 100C (COMBED no entra al código)", pn_code == "100C", pn_code)
+
         print("\n== Cliente NO estricto con catálogo vacío: bootstrap deja capturar ==")
         b = recibo("100% ALGODON", "M"); b["customer"] = "CLIENTE LIBRE"
         r = await c.post("/api/wms/receiving", json=b)

@@ -130,7 +130,11 @@ async def main():
         check("crea", r.status_code == 200, r.text[:200])
         it = d["items"]
         check("línea 1: compuesta, ignora el part_number que mandó el cliente", it[0]["part_number"] == "GTS-SS100CCN" and it[0]["part_number_auto"] is True, it[0])
-        check("línea 1: composición canónica y código", it[0]["fabric"] == "100% ALGODON" and it[0]["composition_code"] == "100C" and it[0]["country_code"] == "CN", it[0])
+        # Sin catálogo Contenido/Fabric sembrado, la composición se conserva TAL
+        # CUAL (ya no se reduce con composition_text, que tiraba el calificativo
+        # COMBED y la volvía al español). En prod hay catálogo → '100% COTTON'.
+        # El código del número de parte sigue saliendo por fibras (100C).
+        check("línea 1: composición conservada y código", it[0]["fabric"] == "100% ALGODÓN" and it[0]["composition_code"] == "100C" and it[0]["country_code"] == "CN", it[0])
         check("línea 1: datos de aduana y opcionales", it[0]["unit"] == "PZA" and it[0]["import_type"] == "Temporal" and it[0]["po"] == "19736" and it[0]["color"] == "BRACKEN" and it[0]["unit_cost"] == 2.0 and it[0]["bundles"] == 1.0 and it[0]["package_type"] == "PALLET", it[0])
         check("línea 2: muestra → MS", it[1]["part_number"] == "GTS-SS100CCNMS" and it[1]["sample"] is True, it[1])
         check("línea 3: sin prenda/composición conserva '5000' (auto=False)", it[2]["part_number"] == "5000" and it[2]["part_number_auto"] is False, it[2])

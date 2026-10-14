@@ -11900,12 +11900,12 @@ async def propose_part_number(request: Request):
                      "fabric": await _canonical_fabric(cust, pn.composition_text(prop["fibers"], cfg)),
                      "unknown_fibers": prop["unknown_fibers"]},
         "garment": garment, "gender": gender,
-        "fabric": await _canonical_fabric(cust, pn.composition_text(fibers, cfg)),
+        "fabric": await _canonical_fabric(cust, fabric or pn.composition_text(fibers, cfg)),
         **result,
     }
 
 
-def _normalize_asn_line_format(it: dict, customer: str, cfg: dict) -> dict:
+async def _normalize_asn_line_format(it: dict, customer: str, cfg: dict) -> dict:
     """Campos del formato único + número de parte compuesto.
 
     Si la línea trae prenda + composición + país y el cliente tiene prefijo,
@@ -11941,9 +11941,14 @@ def _normalize_asn_line_format(it: dict, customer: str, cfg: dict) -> dict:
             out["part_number"] = r["part_number"]
             out["part_number_auto"] = True
             out["composition_code"] = r["composition_code"]
-            # forma canónica de la composición para que recibo/inventario la
-            # comparen sin ambigüedad ("100% ALGODON", no "100%C")
-            out["fabric"] = pn.composition_text(pn.parse_fibers(fabric, cfg)[0], cfg)
+            # La composición se guarda en su forma CANÓNICA del catálogo único
+            # (Contenido/Fabric), CONSERVANDO el calificativo que eligió la
+            # persona (COMBED/RING-SPUN). Antes se reducía con composition_text,
+            # que tiraba 'COMBED' y la volvía al español ('100% ALGODON') — por
+            # eso '100% COMBED COTTON' se guardaba como '100% COTTON'. El código
+            # del número de parte ya salió de parse_fibers (arriba), sin el
+            # calificativo, que es lo correcto para aduana.
+            out["fabric"] = await _canonical_fabric(customer, fabric)
     return out
 ASN_COLUMN_TYPES = {"text", "number", "date", "link", "checkbox", "select", "formula"}
 _ASN_COLUMN_KEY_RE = re.compile(r"^[a-z0-9_]{1,40}$")
@@ -12202,7 +12207,7 @@ async def create_asn(request: Request):
             "size": str(it.get("size", "")).strip().upper(),
             "fabric": str(it.get("fabric", it.get("fabric_content", ""))).strip().upper(),
             "extra": _normalize_asn_extra(it.get("extra"), custom_cols),
-            **_normalize_asn_line_format(it, customer, pn_cfg),
+            **(await _normalize_asn_line_format(it, customer, pn_cfg)),
         })
     strict = _asn_strict_errors(normalized_items, customer, pn_cfg)
     if strict:
@@ -12572,7 +12577,7 @@ async def update_asn(asn_id: str, request: Request):
                 "size": str(it.get("size", "")).strip().upper(),
                 "fabric": str(it.get("fabric", it.get("fabric_content", ""))).strip().upper(),
                 "extra": _normalize_asn_extra(it.get("extra"), custom_cols),
-                **_normalize_asn_line_format(it, line_customer, pn_cfg),
+                **(await _normalize_asn_line_format(it, line_customer, pn_cfg)),
             })
         # Entradas viejas (sin número de parte compuesto) siguen permisivas:
         # su vocabulario es el legado y no se van a recibir con match-line.
