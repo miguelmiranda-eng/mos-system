@@ -320,7 +320,9 @@ export default function WMS() {
     const tab = params.get('tab');
     if (tab) {
       if (tab === 'tintas') setActiveModule('inventory');
-      if (tab === 'logs') setActiveModule('movements');
+      else if (tab === 'logs') setActiveModule('movements');
+      // Enlace directo a cualquier módulo: /wms?tab=asn abre Entradas.
+      else if (MODULES.some(m => m.id === tab)) setActiveModule(tab);
       window.history.replaceState({}, document.title, window.location.pathname);
     }
   }, []);
