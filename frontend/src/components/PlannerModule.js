@@ -3789,12 +3789,6 @@ const PlannerModule = () => {
             </button>
           </div>
 
-          {alertCount > 0 && (
-            <button onClick={() => setTab("alerts")}
-              className="h-10 px-3 rounded-xl bg-red-50 border border-red-200 text-red-700 text-sm font-bold inline-flex items-center gap-2 hover:bg-red-100">
-              <BellRing className="w-4 h-4" /> {tr("plan_al_chip", { n: alertCount })}
-            </button>
-          )}
           <button onClick={() => runEngine("manual")} disabled={!on || running}
             className="h-10 px-4 rounded-xl bg-white border border-slate-200 text-sm font-bold text-slate-600 flex items-center gap-2 hover:border-blue-300 disabled:opacity-50">
             {running ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
