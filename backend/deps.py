@@ -666,6 +666,11 @@ API_SURFACE_PERMITIDA = (
     ("POST",   re.compile(r"^/api/scheduled-shipments$")),
     ("PUT",    re.compile(r"^/api/scheduled-shipments/[^/]+$")),
     ("DELETE", re.compile(r"^/api/scheduled-shipments/[^/]+$")),
+    # Home de dirección (app externa): plan, capacidad y envíos de la semana.
+    # Solo lectura y agregados de planta, sin filtro por cliente.
+    ("GET",    re.compile(r"^/api/scheduled-shipments/week$")),
+    ("GET",    re.compile(r"^/api/planner/dashboard$")),
+    ("GET",    re.compile(r"^/api/planner/shadow-run/latest$")),
 )
 
 
