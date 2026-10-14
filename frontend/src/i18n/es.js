@@ -1019,6 +1019,7 @@ const es = {
   ppo_regla_otra: "Regla guardada ({tipo})",
   ppo_ya_lo_lee: "Este PDF ya lo lee el motor de {m} ({n} estilo(s)). Ese motor va primero, así que una plantilla para este cliente nunca se usaría. Las plantillas son para clientes que ningún motor reconoce.",
   ppo_validar_ya_lo_lee: "No se validó: ese PDF ya lo lee el motor de {m}. Esta plantilla nunca se usaría con ese cliente.",
+  ppo_bloqueada_motor: "Esta plantilla no se puede activar: los PDFs de este cliente ya los lee el motor de {m} ({f}), que va primero. No la necesitas: puedes borrarla. Probar con otro PDF del mismo cliente da lo mismo.",
   ppo_sin_pdf: "Esta plantilla tiene {n} dato(s) guardado(s). El PDF no se guarda con ella: sube uno del cliente para ver qué lee cada regla.",
   ppo_h_titulo: "Huella del cliente",
   ppo_h_ayuda: "Textos que sólo traen los PDFs de este cliente. Sin al menos uno en «Debe contener» la plantilla no se puede activar: intentaría leer el PDF de cualquiera. Cambiarla la apaga y hay que volver a validarla.",

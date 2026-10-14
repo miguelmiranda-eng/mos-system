@@ -208,7 +208,8 @@ export default function PlantillasPO() {
             : d.ya_lo_lee ? t('ppo_validar_ya_lo_lee', { m: d.ya_lo_lee.motor })
               : t('ppo_no_valida'));
         cargarLista();
-        setSel((s) => ({ ...s, validada_con: d.valida ? file.name : null }));
+        setSel((s) => ({ ...s, validada_con: d.valida ? file.name : null,
+          bloqueada_por_motor: d.ya_lo_lee ? { ...d.ya_lo_lee, archivo: file.name } : null }));
       } else {
         const r = await fetch(`${API}/po-templates/borrador`, {
           method: "POST", credentials: "include", body: fd });
@@ -599,7 +600,16 @@ export default function PlantillasPO() {
                 </button>
               </div>
 
-              {draft?.ya_lo_lee && (
+              {/* Aviso FIJO de la plantilla (no depende del PDF cargado): su
+                  validación falló porque un motor ya lee los PDFs de ese
+                  cliente. Antes solo salía un toast y "Activar" pedía "otro PDF"
+                  en un ciclo sin salida. */}
+              {sel.bloqueada_por_motor ? (
+                <div className="text-sm bg-destructive/10 border border-destructive/40 text-destructive rounded-lg px-3 py-2 flex items-start gap-2">
+                  <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                  <span>{t('ppo_bloqueada_motor', { m: sel.bloqueada_por_motor.motor, f: sel.bloqueada_por_motor.archivo || '' })}</span>
+                </div>
+              ) : draft?.ya_lo_lee && (
                 <div className="text-sm bg-destructive/10 border border-destructive/40 text-destructive rounded-lg px-3 py-2 flex items-start gap-2">
                   <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
                   <span>{t('ppo_ya_lo_lee', { m: draft.ya_lo_lee.motor, n: draft.ya_lo_lee.estilos })}</span>
@@ -612,7 +622,7 @@ export default function PlantillasPO() {
                 </div>
               )}
 
-              {!sel.validada_con && (
+              {!sel.validada_con && !sel.bloqueada_por_motor && (
                 <div className="text-xs bg-amber-500/10 border border-amber-500/30 text-amber-600 rounded-lg px-3 py-2">
                   {t('ppo_falta_validar')}
                 </div>

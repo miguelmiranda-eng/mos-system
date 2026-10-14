@@ -245,6 +245,69 @@ def _motor_existente():
     return malas
 
 
+def _bloqueo_por_motor():
+    """Validar con un PDF que ya lee un motor GUARDA el motivo en la plantilla, y
+    Activar lo dice — antes pedia "pruebala contra un segundo PDF" y cualquier
+    otro PDF del mismo cliente daba lo mismo: ciclo sin salida (THREADBEAST)."""
+    import asyncio
+    import copy
+    from fastapi import HTTPException
+    import routers.po_templates as rpt
+
+    class Col:
+        def __init__(self, docs):
+            self.docs = docs
+
+        async def find_one(self, q, proj=None):
+            return next((copy.deepcopy(d) for d in self.docs
+                         if all(d.get(k) == v for k, v in q.items())), None)
+
+        async def update_one(self, q, upd):
+            for d in self.docs:
+                if all(d.get(k) == v for k, v in q.items()):
+                    d.update(copy.deepcopy(upd.get("$set", {})))
+
+    class DB:
+        po_templates = Col([{"template_id": "t1", "nombre": "THREADBEAST", "activa": False,
+                             "validada_con": None, "huella": {"contiene": ["X"]},
+                             "campos": {"design_num": {"tipo": "fijo", "valor": "X"}}, "tallas": {}}])
+
+    class Archivo:
+        filename = CASOS[0]
+
+        async def read(self):
+            with open(os.path.join(CORPUS, CASOS[0]), "rb") as fh:
+                return fh.read()
+
+    class Req:
+        async def json(self):
+            return {"activa": True}
+
+    async def admin(*a, **kw):
+        return {"user_id": "u", "email": "x@prosper-mfg.com"}
+
+    async def log(*a, **kw):
+        pass
+
+    viejos = (rpt.db, rpt.require_admin, rpt.require_admin_level, rpt.log_activity)
+    rpt.db, rpt.require_admin, rpt.require_admin_level, rpt.log_activity = DB(), admin, admin, log
+    malas = []
+    try:
+        res = asyncio.run(rpt.validar(Req(), "t1", Archivo()))
+        guardado = DB.po_templates.docs[0].get("bloqueada_por_motor") or {}
+        if res.get("valida") or guardado.get("motor") != "Goodie" or guardado.get("archivo") != CASOS[0]:
+            malas.append(f"bloqueo: validar no guardo el motivo ({res.get('valida')}, {guardado})")
+        try:
+            asyncio.run(rpt.activar(Req(), "t1"))
+            malas.append("bloqueo: activar debia negarse")
+        except HTTPException as e:
+            if "ya los lee el motor de Goodie" not in e.detail or "segundo PDF" in e.detail:
+                malas.append(f"bloqueo: activar no dio el motivo real: {e.detail!r}")
+    finally:
+        rpt.db, rpt.require_admin, rpt.require_admin_level, rpt.log_activity = viejos
+    return malas
+
+
 def _debajo_alineado_derecha():
     """`debajo_de` con un valor que ARRANCA antes que su encabezado.
 
@@ -309,6 +372,7 @@ def main():
     difs += _salida()
     difs += _debajo_alineado_derecha()
     difs += _motor_existente()
+    difs += _bloqueo_por_motor()
 
     print("=" * 60)
     if difs:

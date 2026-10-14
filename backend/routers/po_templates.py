@@ -286,9 +286,15 @@ async def validar(request: Request, tid: str, file: UploadFile = File(...)):
     # usarse con ese cliente. Sin validar no se puede activar.
     ya = await run_in_threadpool(motor_existente, data)
     ok = res["estilos"] > 0 and not ya
+    # El motivo se GUARDA en la plantilla: antes solo salia en un aviso de unos
+    # segundos y despues "Activar" pedia "un segundo PDF" — cualquier PDF de ese
+    # cliente lo lee el mismo motor, asi que era un ciclo sin salida (THREADBEAST,
+    # 2026-10-14). Un PDF que valida bien lo limpia.
+    bloqueo = ({**ya, "archivo": file.filename, "fecha": _ahora()} if ya else None)
     await db.po_templates.update_one(
         {"template_id": tid},
-        {"$set": {"validada_con": file.filename if ok else None, "updated_at": _ahora()}})
+        {"$set": {"validada_con": file.filename if ok else None,
+                  "bloqueada_por_motor": bloqueo, "updated_at": _ahora()}})
     await log_activity(user, "po_template_validate",
                        {"template_id": tid, "archivo": file.filename, "estilos": res["estilos"],
                         "ya_lo_lee": (ya or {}).get("motor")})
@@ -305,6 +311,14 @@ async def activar(request: Request, tid: str):
     plantilla = await db.po_templates.find_one({"template_id": tid}, {"_id": 0})
     if not plantilla:
         raise HTTPException(404, "No existe")
+    bloqueo = plantilla.get("bloqueada_por_motor")
+    if activa and bloqueo:
+        # El motivo real, no "pruebala con otro PDF": con otro PDF del mismo
+        # cliente pasaria lo mismo.
+        raise HTTPException(400, (
+            f"No se puede activar: los PDFs de este cliente ya los lee el motor de "
+            f"{bloqueo.get('motor')} ({bloqueo.get('archivo') or 'PDF de prueba'}). Esa lectura va "
+            f"primero, así que esta plantilla nunca se usaría: no la necesitas, puedes borrarla."))
     if activa and not plantilla.get("validada_con"):
         raise HTTPException(400, "Pruébala contra un segundo PDF antes de activarla")
     if activa and not (plantilla.get("campos") or {}).get("design_num"):
