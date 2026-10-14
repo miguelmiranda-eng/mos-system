@@ -23,7 +23,10 @@ import { previewComposition } from "./composition";
 // guardándolo con valor vacío (el backend lo descarta al fusionar).
 // (Las descripciones NO viven aquí: la hoja de Entradas usa el catálogo
 // curado de Configuración → Catálogos, el mismo que Recepción.)
-const TABS = ["customers", "garments", "fibers", "compositions", "countries", "import_types"];
+// 'compositions' se quitó: la composición es UNA sola fuente de la verdad y se
+// administra en Catálogos → Contenido/Fabric (el mismo catálogo que usa
+// Recepción). El número de parte deriva sus composiciones de ahí (_pn_config).
+const TABS = ["customers", "garments", "fibers", "countries", "import_types"];
 // Listas de texto plano (una fila = un string): comparten editor.
 const LIST_TABS = new Set(["import_types", "compositions"]);
 // Listas que se capturan en MAYÚSCULAS (van a la hoja tal cual).

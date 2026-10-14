@@ -77,7 +77,7 @@ def sembrar():
     # Catálogo curado EN INGLÉS (+ identidad mínima para pasar el gate estricto).
     cat = []
     for t, vals in {
-        "fabrics": ["100% COTTON", "100%C", "95% COTTON 5% SPANDEX"],
+        "fabrics": ["100% COTTON", "100%C", "95% COTTON 5% SPANDEX", "100% COMBED COTTON", "100% RING-SPUN COMBED COTTON"],
         "colors": ["BLACK"], "sizes": ["S", "M", "L", "XL", "2X", "3X", "4X"], "descriptions": ["CAMISETA"],
         "countries": ["CHINA"], "manufacturers": ["GILDAN"],
     }.items():
@@ -140,6 +140,19 @@ async def main():
         check("resolve '100% ALGODÓN' → '100% COTTON'", r.status_code == 200 and r.json()["value"] == "100% COTTON", r.text[:160])
         r = await c.get("/api/wms/catalog/resolve-fabric", params={"customer": CUST, "value": "80% ALGODÓN 20% POLIÉSTER"})
         check("resolve sin catálogo → devuelve el valor tal cual", r.json()["value"] == "80% ALGODÓN 20% POLIÉSTER", r.text[:160])
+
+        print("\n== Calificativo COMBED: no se pierde ni se inventa ==")
+        async def rf(v):
+            r = await c.get("/api/wms/catalog/resolve-fabric", params={"customer": CUST, "value": v})
+            return r.json().get("value")
+        check("'100% ALGODÓN' → '100% COTTON' (plano, aunque exista combed)", await rf("100% ALGODÓN") == "100% COTTON")
+        check("'100% ALGODÓN PEINADO' → '100% COMBED COTTON'", await rf("100% ALGODÓN PEINADO") == "100% COMBED COTTON")
+        check("'100% COMBED COTTON' (exacto) se queda", await rf("100% COMBED COTTON") == "100% COMBED COTTON")
+        check("'100% ALGODON ANILLADO PEINADO' → ring-spun combed",
+              await rf("100% ALGODON ANILLADO PEINADO") == "100% RING-SPUN COMBED COTTON")
+        # Calificativo sin forma en catálogo: NO se degrada al genérico.
+        check("'100% ALGODÓN SANFORIZADO' (preshrunk sin catálogo) se deja tal cual",
+              await rf("100% ALGODÓN SANFORIZADO") == "100% ALGODÓN SANFORIZADO")
 
         print("\n== Dominancia: si manda '100%C', el canónico cambia ==")
         sdb.wms_inventory.delete_many({})

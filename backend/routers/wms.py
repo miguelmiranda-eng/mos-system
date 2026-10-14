@@ -1334,6 +1334,35 @@ async def _assert_curated_identity(customer: str, values: dict):
         )
 
 
+# Calificativos de la tela que el CÓDIGO de fibras no distingue: 'COMBED COTTON'
+# y 'COTTON' son ambos 100C, pero son telas distintas. Se normalizan español e
+# inglés a una etiqueta común para no perder la distinción al canonizar.
+_FABRIC_QUALIFIER_MAP = {
+    "COMBED": "COMBED", "PEINADO": "COMBED", "PEINADA": "COMBED",
+    "RINGSPUN": "RINGSPUN", "RING": "RINGSPUN", "SPUN": "RINGSPUN", "ANILLADO": "RINGSPUN",
+    "PRESHRUNK": "PRESHRUNK", "PREENCOGIDO": "PRESHRUNK", "SANFORIZADO": "PRESHRUNK",
+    "RECYCLED": "RECYCLED", "RECICLADO": "RECYCLED",
+}
+
+
+# Etiqueta en inglés por código de fibra, para traducir una composición del
+# compositor (español) a la forma canónica inglesa del catálogo único.
+_FIBER_EN = {"C": "COTTON", "P": "POLYESTER", "S": "SPANDEX", "R": "RAYON", "M": "MODAL", "N": "NYLON"}
+
+
+def _english_composition(pairs) -> str:
+    """[(100,'C')] -> '100% COTTON'; [(60,'C'),(40,'P')] -> '60% COTTON 40% POLYESTER'."""
+    return " ".join(f"{p}% {_FIBER_EN.get(c, c)}" for p, c in pairs)
+
+
+def _fabric_qualifiers(text) -> frozenset:
+    """Conjunto de calificativos (COMBED/RINGSPUN/PRESHRUNK/RECYCLED) de una
+    composición, sin acentos y traduciendo español↔inglés. 'RING-SPUN' y
+    'RINGSPUN' dan {RINGSPUN}; '100% ALGODÓN PEINADO' da {COMBED}."""
+    t = unicodedata.normalize("NFKD", str(text or "")).encode("ascii", "ignore").decode().upper()
+    return frozenset(_FABRIC_QUALIFIER_MAP[w] for w in re.findall(r"[A-Z]+", t) if w in _FABRIC_QUALIFIER_MAP)
+
+
 async def _canonical_fabric(customer: str, value: str) -> str:
     """Forma CANÓNICA de una composición, casada por CÓDIGO de fibras y no por
     texto, para que '100% ALGODÓN' (como lo manda el proveedor de SPEKTRUM) se
@@ -1344,12 +1373,14 @@ async def _canonical_fabric(customer: str, value: str) -> str:
 
     - Si el valor YA es una opción del catálogo curado, no se toca (respeta
       '100%C' o '100% COMBED COTTON' que el líder haya decidido conservar).
-    - Si no lo es, se mapea a la forma del MISMO código que YA DOMINA el
-      inventario de ese cliente: así la caja nueva se une al bucket grande en
-      vez de abrir una identidad nueva en otro idioma.
-    - Si el cliente aún no tiene ese código, cae a una opción del catálogo con
-      el mismo código; si tampoco hay, devuelve el valor tal cual y la guardia
-      de catálogo decide si pasa (sin canónico que ofrecer, no se inventa uno).
+    - Si no lo es, se mapea a la forma del MISMO código Y MISMO CALIFICATIVO que
+      YA DOMINA el inventario de ese cliente: así '100% ALGODÓN' cae en
+      '100% COTTON' pero '100% ALGODÓN PEINADO' cae en '100% COMBED COTTON' (el
+      código '100C' es el mismo; lo que las separa es el calificativo COMBED).
+    - Si el cliente aún no tiene ese código/calificativo, cae a una opción del
+      catálogo igual; si tampoco hay, devuelve el valor tal cual y la guardia
+      de catálogo decide (sin canónico que ofrecer, no se inventa uno). Un valor
+      CON calificativo nunca se degrada al genérico: mejor dejarlo pasar al gate.
     """
     v = re.sub(r"\s+", " ", str(value or "")).strip()
     if not v:
@@ -1362,9 +1393,12 @@ async def _canonical_fabric(customer: str, value: str) -> str:
     code = (pn.normalize_composition(v, cfg) or {}).get("code") or ""
     if not code:
         return v  # no parsea como composición: no es asunto de este helper
-    same_code = lambda s: ((pn.normalize_composition(s, cfg) or {}).get("code") or "") == code
-    # Dominante en el inventario del cliente con ese mismo código.
+    want_q = _fabric_qualifiers(v)
+    _code = lambda s: (pn.normalize_composition(s, cfg) or {}).get("code") or ""
+    same = lambda s: _code(s) == code and _fabric_qualifiers(s) == want_q
+    # Dominante en el inventario del cliente con el MISMO código y calificativo.
     cu = (customer or "").strip()
+    rows = []
     if cu:
         rows = await db.wms_inventory.aggregate([
             {"$match": {"customer": {"$regex": f"^{re.escape(cu)}$", "$options": "i"},
@@ -1374,12 +1408,31 @@ async def _canonical_fabric(customer: str, value: str) -> str:
         ]).to_list(2000)
         for r in rows:
             fc = (r.get("_id") or "").strip()
-            if fc and same_code(fc):
+            if fc and same(fc):
                 return fc
-    # El cliente no tiene ese código aún: una opción del catálogo con ese código.
-    cat = await db.wms_catalog_options.find({"type": "fabrics"}, {"_id": 0, "value": 1}).to_list(5000)
-    matches = sorted((c["value"].strip() for c in cat if c.get("value") and same_code(c["value"])), key=len)
-    return matches[0] if matches else v
+    # El cliente no tiene esa forma aún: una opción del catálogo igual (código +
+    # calificativo). Entre varias, la más corta es la genérica de ESE calificativo.
+    cat = [c["value"].strip() for c in await db.wms_catalog_options.find(
+        {"type": "fabrics"}, {"_id": 0, "value": 1}).to_list(5000) if c.get("value")]
+    # Entre varias formas del catálogo con el mismo código+calificativo, se
+    # prefiere la DELETREADA ('100% COTTON') sobre la abreviatura ('100%C'):
+    # más letras de fibra primero, luego la más corta. Así el canónico es legible.
+    spelled = lambda s: (-sum(ch.isalpha() for ch in s), len(s))
+    matches = sorted((cv for cv in cat if same(cv)), key=spelled)
+    if matches:
+        return matches[0]
+    # Sin match exacto de calificativo: solo colapsamos al genérico cuando el
+    # valor NO trae calificativo (p. ej. '100% ALGODÓN' → '100% COTTON'). Un
+    # '…PEINADO/COMBED' sin su forma en catálogo se deja tal cual (no se degrada).
+    if not want_q:
+        for r in rows:
+            fc = (r.get("_id") or "").strip()
+            if fc and _code(fc) == code:
+                return fc
+        plain = sorted((cv for cv in cat if _code(cv) == code and not _fabric_qualifiers(cv)), key=spelled)
+        if plain:
+            return plain[0]
+    return v
 
 
 async def _build_identity_checker():
@@ -11721,7 +11774,37 @@ ASN_LINE_FIXED_FIELDS = {
 # ── Número de parte: configuración y compositor ─────────────────────────────
 async def _pn_config() -> dict:
     doc = await db.wms_part_number_config.find_one({"config_id": "main"}, {"_id": 0, "config_id": 0})
-    return pn.merge_config(doc)
+    cfg = pn.merge_config(doc)
+    # UNA SOLA FUENTE DE LA VERDAD: las composiciones del número de parte (y por
+    # tanto el desplegable del ASN) se toman del catálogo Contenido/Fabric
+    # (wms_catalog_options type=fabrics), el MISMO que usa Recepción. Antes había
+    # dos listas —esta en español y Contenido en inglés— y la composición del ASN
+    # no mostraba lo de Contenido (p. ej. '100% COMBED COTTON'). El motor calcula
+    # el código ('100C') sin importar el idioma, así que validar por código
+    # contra Contenido/Fabric cubre lo mismo. Unión durante la transición: tras
+    # la migración (que vacía la lista vieja y suma a Contenido lo que faltaba),
+    # la fuente queda SOLO en Contenido/Fabric.
+    fabrics = [(c.get("value") or "").strip() for c in await db.wms_catalog_options.find(
+        {"type": "fabrics"}, {"_id": 0, "value": 1}).to_list(5000) if (c.get("value") or "").strip()]
+    if fabrics:
+        # Relleno de huecos EN INGLÉS: los defaults del compositor traen códigos
+        # (nylon, modal, rayón…) que Contenido/Fabric aún no tiene; se agregan
+        # traducidos para no perderlos, sin duplicar el idioma (nunca el español
+        # del default junto al inglés). Al migrar, esos huecos ya viven en
+        # Contenido/Fabric y este relleno queda en cero.
+        have = set()
+        for s in fabrics:
+            r = pn.normalize_composition(s, cfg)
+            if r.get("ok"):
+                have.add(r["code"])
+        extra = []
+        for s in cfg.get("compositions") or []:
+            r = pn.normalize_composition(s, cfg)
+            if r.get("ok") and r["code"] not in have:
+                have.add(r["code"])
+                extra.append(_english_composition(pn.parse_fibers(s, cfg)[0]))
+        cfg["compositions"] = sorted(set(fabrics) | set(extra))
+    return cfg
 
 
 @router.get("/asn/part-number/config")
@@ -11808,10 +11891,16 @@ async def propose_part_number(request: Request):
         # Que el mensaje nombre la fibra: "composición vacía" no le dice nada al capturista.
         result.update(ok=False, part_number="",
                       errors=[f"fibra no reconocida: {', '.join(unknown)}"] + [e for e in result["errors"] if e != "composición vacía"])
+    # La composición se devuelve en su forma CANÓNICA del catálogo único
+    # (Contenido/Fabric), no en el texto español del compositor: así lo que el
+    # ASN guarda y muestra es exactamente lo que está en la configuración del WMS.
+    cust = body.get("customer", "")
     return {
         "proposed": {"garment": prop["garment"], "gender": prop["gender"],
-                     "fabric": pn.composition_text(prop["fibers"], cfg), "unknown_fibers": prop["unknown_fibers"]},
-        "garment": garment, "gender": gender, "fabric": pn.composition_text(fibers, cfg),
+                     "fabric": await _canonical_fabric(cust, pn.composition_text(prop["fibers"], cfg)),
+                     "unknown_fibers": prop["unknown_fibers"]},
+        "garment": garment, "gender": gender,
+        "fabric": await _canonical_fabric(cust, pn.composition_text(fibers, cfg)),
         **result,
     }
 
