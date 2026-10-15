@@ -508,6 +508,44 @@ def _moves(scheduled: list, orders: list, now: datetime, cfg: dict, machine_name
     return sorted(moves, key=lambda m: m["start"])
 
 
+def _row_moves(rows: dict, scheduled: list, jobs: list, orders: list, machine_names) -> list:
+    """Carrusel (min_orders_per_machine): los movimientos son las órdenes que
+    completan la FILA de cada máquina y todavía no están en un tablero MAQUINA.
+    Lo que ya está en una máquina no se propone mover. Incluye el relleno
+    (órdenes a las que les falta un componente), marcado con lo que falta."""
+    machine_names = set(machine_names)
+    order_by = {o["order_id"]: o for o in orders}
+    sched_by, jobs_by = {}, {}
+    for j in scheduled:
+        sched_by.setdefault(j["order_id"], []).append(j)
+    for j in jobs:
+        jobs_by.setdefault(j["order_id"], []).append(j)
+    target = rows.get("_target") or 0
+    out, seen = [], set()
+    for mname in sorted((k for k in rows if not k.startswith("_")), key=lambda n: machine_number(n) or 0):
+        for slot, r in enumerate(rows[mname], 1):
+            oid = r["order_id"]
+            o = order_by.get(oid) or {}
+            board = o.get("board")
+            if oid in seen or board in machine_names:
+                continue
+            seen.add(oid)
+            js = sched_by.get(oid) or []
+            starts = [j["start"] for j in js if j.get("start")]
+            positions = ([{"position": j["position"], "machines": j.get("machines") or [mname]} for j in js]
+                         or [{"position": j["position"], "machines": [mname]} for j in jobs_by.get(oid, [])])
+            filler = r.get("kind") == "filler"
+            out.append({"order_id": oid, "order_number": str(o.get("order_number") or ""),
+                        "client": o.get("client") or "", "from_board": board, "to_board": mname,
+                        "start": min(starts) if starts else None, "positions": positions,
+                        "slot": slot, "row_size": len(rows[mname]), "row_target": target,
+                        "kind": "filler" if filler else "row", "missing": r.get("missing") or [],
+                        "cancel_date": o.get("cancel_date"),
+                        "reason": "Relleno: le falta " + ", ".join(r.get("missing") or []) if filler
+                        else f"Completa la fila de {mname} ({slot} de {target})"})
+    return out
+
+
 def _calendar_windows(ctx) -> list:
     """Todos los turnos del horizonte, semana completa (lunes a domingo),
     con cuántas cuadrillas corren y el festivo si lo hay. La grilla los pinta
@@ -551,9 +589,10 @@ async def shadow_run(request: Request, trigger: str = "manual", max_age: int = 0
                                                 "blocked.job_id": 1, "locks": 1}, sort=[("created_at", -1)])
     job_ids = {j["job_id"] for j in ctx["jobs"]}
     prev_locks = {k: v for k, v in ((prev or {}).get("locks") or {}).items() if k in job_ids}
+    rows = {}
     scheduled = pe.schedule(ctx["jobs"], ctx["machines"], ctx["cfg"], ctx["cal"], ctx["now"],
                             ctx["eff"]["applied"], board_of, ov,
-                            ctx["eff"]["measured"].get("run_rates"), prev_locks)
+                            ctx["eff"]["measured"].get("run_rates"), prev_locks, rows)
     in_plan = {j["job_id"] for j in scheduled}
     # El candado sobrevive a una corrida en que el trabajo no se programó
     # (retenido, o le faltó un requisito un rato): al volver, regresa a su máquina.
@@ -600,7 +639,14 @@ async def shadow_run(request: Request, trigger: str = "manual", max_age: int = 0
                   "hits_scheduled": sum(j["remaining"] for j in scheduled)},
         "jobs": sorted(scheduled, key=lambda j: j.get("start") or "9999"),
         "blocked": sorted(blocked, key=lambda j: j.get("target_date") or "9999"),
-        "moves": _moves(scheduled, ctx["orders"], ctx["now"], ctx["cfg"], [m["machine"] for m in ctx["machines"]]),
+        "moves": (_row_moves(rows, scheduled, ctx["jobs"], ctx["orders"], [m["machine"] for m in ctx["machines"]])
+                  if int(ctx["cfg"].get("min_orders_per_machine") or 0) > 0
+                  else _moves(scheduled, ctx["orders"], ctx["now"], ctx["cfg"], [m["machine"] for m in ctx["machines"]])),
+        # Fila de cada máquina (carrusel): cuántas órdenes trae y de qué tipo.
+        "rows": {m: {"total": len(r), "filler": sum(1 for x in r if x.get("kind") == "filler")}
+                 for m, r in rows.items() if not m.startswith("_")},
+        "row_target": rows.get("_target") or 0,
+        "row_min": int(ctx["cfg"].get("min_orders_per_machine") or 0),
         "impact": impact,
         "overrides_active": len(active_ov),
         "locks": locks,

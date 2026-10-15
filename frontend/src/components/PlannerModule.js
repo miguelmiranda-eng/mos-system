@@ -1424,6 +1424,9 @@ const PlannerTV = () => {
    desde "Movimientos autorizados". */
 const MovesCard = ({ run, canEdit, onApply, onAdjust, tr }) => {
   const moves = run.moves || [];
+  const rowMode = (run.row_min || 0) > 0;
+  const fillers = moves.filter((m) => m.kind === "filler").length;
+  const shortRows = Object.values(run.rows || {}).filter((r) => r.total < (run.row_min || 0)).length;
   const [sel, setSel] = useState([]);
   const [confirm, setConfirm] = useState(null);     // lista de movimientos a autorizar
   const [busy, setBusy] = useState(false);
@@ -1437,9 +1440,23 @@ const MovesCard = ({ run, canEdit, onApply, onAdjust, tr }) => {
   return (
     <Card className="p-4">
       <div className="flex flex-wrap items-start gap-2">
-        <SectionTitle hint={canEdit ? tr("plan_moves_hint_auth") : tr("plan_moves_hint")}>
+        <SectionTitle hint={rowMode ? tr("plan_moves_hint_rows", { n: run.row_min })
+          : (canEdit ? tr("plan_moves_hint_auth") : tr("plan_moves_hint"))}>
           {tr("plan_moves_title")} ({moves.length})
         </SectionTitle>
+        {rowMode && (
+          <div className="w-full flex flex-wrap gap-2 text-xs">
+            <span className="px-2 py-1 rounded-lg bg-slate-100 text-slate-700 font-bold">
+              {tr("plan_rows_target", { n: run.row_target, k: run.row_min })}
+            </span>
+            {fillers > 0 && (
+              <span className="px-2 py-1 rounded-lg bg-amber-50 text-amber-800 font-bold">{tr("plan_rows_fillers", { n: fillers })}</span>
+            )}
+            {shortRows > 0 && (
+              <span className="px-2 py-1 rounded-lg bg-red-50 text-red-700 font-bold">{tr("plan_rows_short", { n: shortRows })}</span>
+            )}
+          </div>
+        )}
         {canEdit && moves.length > 0 && (
           <div className="ml-auto flex gap-2">
             <button onClick={() => setConfirm(moves.filter((m) => sel.includes(m.order_id)))} disabled={!sel.length}
@@ -1472,14 +1489,25 @@ const MovesCard = ({ run, canEdit, onApply, onAdjust, tr }) => {
                   {canEdit && (
                     <td className="py-2 pr-2"><input type="checkbox" checked={sel.includes(m.order_id)} onChange={() => toggle(m.order_id)} className="w-4 h-4" /></td>
                   )}
-                  <td className="py-2 pr-4 font-black">{m.order_number}</td>
+                  <td className="py-2 pr-4 font-black whitespace-nowrap">
+                    {m.order_number}
+                    {m.kind === "filler" && (
+                      <span className="ml-1.5 px-1.5 py-0.5 rounded bg-amber-50 text-amber-800 text-[10px] font-bold"
+                        title={tr("plan_rows_filler_hint")}>
+                        {tr("plan_rows_filler", { x: (m.missing || []).map((k) => tr(`plan_miss_${k}`)).join(", ") })}
+                      </span>
+                    )}
+                  </td>
                   <td className="pr-4 text-slate-500">{m.client}</td>
                   <td className="pr-4">{m.from_board}</td>
-                  <td className="pr-4 font-bold text-blue-700">{m.to_board}</td>
+                  <td className="pr-4 font-bold text-blue-700 whitespace-nowrap">
+                    {m.to_board}
+                    {m.slot && <span className="ml-1 text-[10px] font-bold text-slate-400 tabular-nums">{tr("plan_rows_slot", { n: m.slot })}</span>}
+                  </td>
                   <td className="pr-4 text-xs text-slate-500">
                     {m.positions.map((p) => `${p.position} → ${p.machines.join(", ").replace(/MAQUINA/g, "M")}`).join(" · ")}
                   </td>
-                  <td className="pr-4 tabular-nums text-slate-500">{dday(m.start)} {hhmm(m.start)}</td>
+                  <td className="pr-4 tabular-nums text-slate-500">{m.start ? `${dday(m.start)} ${hhmm(m.start)}` : tr("plan_rows_no_start")}</td>
                   <td className="whitespace-nowrap">{canEdit && (
                     <span className="inline-flex gap-1.5">
                       <button onClick={() => onAdjust((run.jobs || []).find((j) => j.order_id === m.order_id) || {
@@ -1513,7 +1541,7 @@ const MovesCard = ({ run, canEdit, onApply, onAdjust, tr }) => {
                 <li key={m.order_id} className="py-1.5 flex gap-2">
                   <b className="w-14">{m.order_number}</b>
                   <span className="text-slate-500">{m.from_board}</span>→<b className="text-blue-700">{m.to_board}</b>
-                  <span className="ml-auto text-xs text-slate-400 tabular-nums">{dday(m.start)} {hhmm(m.start)}</span>
+                  <span className="ml-auto text-xs text-slate-400 tabular-nums">{m.start ? `${dday(m.start)} ${hhmm(m.start)}` : tr("plan_rows_no_start")}</span>
                 </li>
               ))}
             </ul>
@@ -2872,6 +2900,8 @@ const RULE_FIELDS = [
   ["volume_high_min", "plan_r_high"],
   ["horizon_weeks", "plan_r_horizon"],
   ["lock_machine_days", "plan_r_lock_days"],
+  ["min_orders_per_machine", "plan_r_min_orders"],
+  ["fill_max_overdue_days", "plan_r_fill_max_overdue"],
   ["printed_complete_pct", "plan_r_printed_pct"],
   ["printed_alert_days", "plan_r_alert_days"],
   ["audit_printed_pct", "plan_r_audit_pct"],
@@ -2882,6 +2912,7 @@ const RULE_FIELDS = [
 const LIST_FIELDS = [
   ["ready_blank_statuses", "plan_r_ready_blank"],
   ["ready_production_statuses", "plan_r_ready_prod"],
+  ["label_pending_statuses", "plan_r_label_pending"],
   ["demand_boards", "plan_r_demand_boards"],
   ["printed_statuses", "plan_r_printed"],
   ["sample_reorder_values", "plan_r_sample_reorder"],
@@ -2919,6 +2950,8 @@ const RulesTab = ({ cfgData, canEdit, onSaved, tr }) => {
     body.efficiency_manual_pct = form.efficiency_manual_pct;
     body.crews_share_machines = !!form.crews_share_machines;
     body.group_same_design = !!form.group_same_design;
+    body.fill_with_incomplete = !!form.fill_with_incomplete;
+    body.positions_in_sequence = !!form.positions_in_sequence;
     body.auto_recalc = !!form.auto_recalc;
     body.auto_recalc_minutes = form.auto_recalc_minutes;
     try {
@@ -2951,6 +2984,14 @@ const RulesTab = ({ cfgData, canEdit, onSaved, tr }) => {
           <span>{tr("plan_r_group_design")}
             <span className="block text-xs text-slate-400">{tr("plan_r_group_design_hint")}</span></span>
         </label>
+        {[["fill_with_incomplete", "plan_r_fill_incomplete"], ["positions_in_sequence", "plan_r_pos_sequence"]].map(([k, label]) => (
+          <label key={k} className="mt-3 flex items-start gap-2 text-sm text-slate-700">
+            <input type="checkbox" checked={!!form[k]} disabled={!canEdit}
+              onChange={(e) => setForm({ ...form, [k]: e.target.checked })} className="w-4 h-4 mt-0.5" />
+            <span>{tr(label)}
+              <span className="block text-xs text-slate-400">{tr(`${label}_hint`)}</span></span>
+          </label>
+        ))}
       </Card>
       <Card className="p-4">
         <SectionTitle hint={tr("plan_auto_hint")}>{tr("plan_auto_title")}</SectionTitle>

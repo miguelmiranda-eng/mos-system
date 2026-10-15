@@ -190,8 +190,15 @@ cfg2 = cfg_with(shifts=[{"key": "DIA", "start": "07:00", "hours": 12, "crews": 2
 cal2b = pe.Calendar(cfg2, [], max_machines=2)
 j2, _ = pe.build_jobs([order(20, 3000, ["FRENTE", "ESPALDA"])], {}, cfg2, cal2b, ["MAQUINA1", "MAQUINA2"], LUNES.date())
 plan2 = pe.schedule(j2, machines(2), cfg2, cal2b, LUNES, 1.0, {})
-ms = sorted(m for j in plan2 for m in j["machines"])
-check("frente y espalda en paralelo en 2 máquinas", ms == ["MAQUINA1", "MAQUINA2"], ms)
+p2 = {j["position"]: j for j in plan2}
+check("frente y espalda NO al mismo tiempo: la espalda arranca cuando termina el frente",
+      p2["ESPALDA"]["start"] >= p2["FRENTE"]["end"], (p2["FRENTE"]["end"], p2["ESPALDA"]["start"]))
+plan2b = {j["position"]: j for j in pe.schedule(j2, machines(2), {**cfg2, "min_orders_per_machine": 0}, cal2b, LUNES, 1.0, {})}
+check("aunque vayan en otra máquina, la espalda espera al frente",
+      plan2b["ESPALDA"]["start"] >= plan2b["FRENTE"]["end"], (plan2b["FRENTE"]["end"], plan2b["ESPALDA"]["start"]))
+plan2c = {j["position"]: j for j in pe.schedule(j2, machines(2), {**cfg2, "min_orders_per_machine": 0,
+                                                                    "positions_in_sequence": False}, cal2b, LUNES, 1.0, {})}
+check("(control) sin la regla sí irían en paralelo", plan2c["ESPALDA"]["start"] < plan2c["FRENTE"]["end"])
 check("board sugerido = máquina del job más grande", pe.board_for_order(plan2) in ("MAQUINA1", "MAQUINA2"))
 
 mh = [{"machine": "MAQUINA1", "active": True, "heads": 8, "preferred_client": ""},
@@ -513,7 +520,7 @@ check("lo que arranca después de la ventana no se amarra (se sigue acomodando)"
 print("== Cuadrillas compartidas (crews_share_machines) ==")
 cfgS = cfg_with(shifts=[{"key": "DIA", "start": "07:00", "hours": 12, "crews": 2},
                         {"key": "NOCHE", "start": "19:00", "hours": 12, "crews": 0}],
-                setup_min_per_color=0, lock_machine_days=0)
+                setup_min_per_color=0, lock_machine_days=0, min_orders_per_machine=0)
 calS = pe.Calendar(cfgS, [], max_machines=4)
 MS4 = [f"MAQUINA{i}" for i in range(1, 5)]
 jS, _ = pe.build_jobs([order(800 + i, 1500, ["FRENTE"], cancel=f"2026-10-{10 + i}") for i in range(8)],
@@ -553,6 +560,48 @@ jR, _ = pe.build_jobs([order(910, 1000, ["FRENTE"], board="MAQUINA1", **{"design
 pr = {j["order_number"]: j for j in pe.schedule(jR, machines(1), cfgG1, calG, LUNES, 1.0, {"o910": "MAQUINA1"})}
 check("una RUSH sí pasa antes que el hermano de arte", pr["911"]["start"] < pr["912"]["start"],
       (pr["911"]["start"], pr["912"]["start"]))
+
+print("== Carrusel: fila mínima por máquina ==")
+cfgC = cfg_with(shifts=[{"key": "DIA", "start": "07:00", "hours": 12, "crews": 3},
+                        {"key": "NOCHE", "start": "19:00", "hours": 12, "crews": 1}],
+                lock_machine_days=0, min_orders_per_machine=4)
+calC = pe.Calendar(cfgC, [], max_machines=3)
+MS3 = ["MAQUINA1", "MAQUINA2", "MAQUINA3"]
+lista = [order(1000 + i, 800, ["FRENTE"], cancel=f"2026-10-{10 + i:02d}") for i in range(9)]
+falta = [order(1100 + i, 800, ["FRENTE"], cancel=f"2026-10-{5 + i:02d}", ready=False) for i in range(5)]
+label = [order(1200, 800, ["FRENTE"], production_status="NECESITA LABEL")]
+jC, _ = pe.build_jobs(lista + falta + label, {}, cfgC, calC, MS3, LUNES.date())
+rows = {}
+plC = pe.schedule(jC, machines(3), cfgC, calC, LUNES, 1.0, {}, None, None, None, rows)
+cnt = {m: len(rows[m]) for m in MS3}
+check("NECESITA LABEL entra al plan como lista", any(j["order_number"] == "1200" for j in plC))
+check("10 listas + relleno: las 3 máquinas llegan a 4", cnt == {m: 4 for m in MS3}, cnt)
+fil = [r for m in MS3 for r in rows[m] if r["kind"] == "filler"]
+check("faltan 2 → 2 de relleno, las de cancel más cercano (1100, 1101)",
+      sorted(r["order_id"] for r in fil) == ["o1100", "o1101"], fil)
+check("el relleno va al FINAL de su fila", all(rows[m].index(r) == len(rows[m]) - 1 for m in MS3 for r in rows[m]
+                                              if r["kind"] == "filler"), rows)
+check("el relleno dice qué le falta", fil and "contado" in fil[0]["missing"], fil[:1])
+check("el relleno no se imprime (no está en el programa)", not any(j["order_number"] in ("1100", "1101") for j in plC))
+check("número parejo cumplido = 4", rows["_target"] == 4, rows["_target"])
+rows2 = {}
+pe.schedule(jC, machines(3), {**cfgC, "fill_with_incomplete": False}, calC, LUNES, 1.0, {}, None, None, None, rows2)
+cnt2 = sorted(len(rows2[m]) for m in MS3)
+check("sin relleno: 10 listas = 4, 3, 3 (las más cortas primero)", cnt2 == [3, 3, 4], cnt2)
+check("sin relleno: el número parejo baja a 3", rows2["_target"] == 3, rows2["_target"])
+vieja = order(1300, 800, ["FRENTE"], cancel="2026-08-01", ready=False)   # vencida hace ~2 meses
+jV, _ = pe.build_jobs(lista + falta + label + [vieja], {}, cfgC, calC, MS3, LUNES.date())
+rows3 = {}
+pe.schedule(jV, machines(3), cfgC, calC, LUNES, 1.0, {}, None, None, None, rows3)
+fil3 = sorted(r["order_id"] for m in MS3 for r in rows3[m] if r["kind"] == "filler")
+check("relleno ignora cancel vencido hace más de 30 días", "o1300" not in fil3 and fil3 == ["o1100", "o1101"], fil3)
+rows4 = {}
+pe.schedule(jV, machines(3), {**cfgC, "fill_max_overdue_days": 0}, calC, LUNES, 1.0, {}, None, None, None, rows4)
+check("(control) sin tope, la vieja entra primero por cancel date",
+      "o1300" in [r["order_id"] for m in MS3 for r in rows4[m] if r["kind"] == "filler"])
+cxl = {j["order_id"]: j["cancel_date"] for j in jC}
+urg = [cxl[r["order_id"]] for r in rows2["MAQUINA1"]]
+check("la fila va por cancel date (golden rule)", urg == sorted(urg), urg)
 
 print(f"\n{ok} PASS, {fail} FAIL")
 sys.exit(1 if fail else 0)

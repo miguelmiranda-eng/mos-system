@@ -529,9 +529,13 @@ async def main():
             return {m: [jid for _, jid in sorted(v)] for m, v in por.items()}
 
         filas = fila(run3)
-        maq = next((m for m, v in filas.items() if len(v) >= 2), None)
-        check("hay una máquina con 2+ trabajos para reordenar", maq is not None, filas)
-        a, b = filas[maq][0], filas[maq][1]
+        # Dos trabajos de órdenes DISTINTAS: las posiciones de una misma orden
+        # no se pueden invertir (la espalda espera al frente).
+        dos = lambda v: [v[0], next(x for x in v if x.split(":")[0] != v[0].split(":")[0])] \
+            if len({x.split(":")[0] for x in v}) >= 2 else None
+        maq = next((m for m, v in filas.items() if dos(v)), None)
+        check("hay una máquina con 2+ órdenes para reordenar", maq is not None, filas)
+        a, b = dos(filas[maq])
         it = lambda jid: {"order_id": jid.split(":")[0], "position": jid.split(":")[1]}
         r = await op.post("/api/planner/overrides/reorder", json={"machine": maq, "items": [it(b), it(a)]})
         check("operador NO reordena", r.status_code == 403, r.status_code)
@@ -584,6 +588,9 @@ async def main():
             run4 = (await sup.post("/api/planner/shadow-run")).json()
             mv = run4.get("moves") or []
             check("hay movimientos propuestos", len(mv) >= 2, len(mv))
+            check("carrusel: los movimientos llenan la fila de cada máquina",
+                  run4.get("row_min") == 4 and all(m.get("slot") and m.get("to_board") for m in mv)
+                  and isinstance(run4.get("rows"), dict), (run4.get("row_min"), run4.get("row_target"), mv[:1]))
             check("sólo órdenes que van a ENTRAR (ninguna sale de un tablero MAQUINA)",
                   not any(str(m["from_board"] or "").startswith("MAQUINA") for m in mv), [m["from_board"] for m in mv])
             m1, m2 = mv[0], mv[1]

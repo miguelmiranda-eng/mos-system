@@ -45,6 +45,23 @@ DEFAULT_CONFIG = {
     "ready_blank_statuses": ["CONTADO", "CONTADO/PICKED", "SURTIDO"],
     "ready_require_screens": True,
     "ready_production_statuses": ["LABEL LISTO"],
+    # Status que también entran al plan aunque el label aún no esté listo
+    # (el label llega mientras la orden espera su turno en la máquina).
+    "label_pending_statuses": ["NECESITA LABEL"],
+    # Carrusel: cada máquina lleva al menos N órdenes en su fila (su tablero).
+    # Si no alcanzan las listas para todas, se usa el número más alto que
+    # todas puedan cumplir. 0 = sin fila mínima.
+    "min_orders_per_machine": 4,
+    # Si ni así alcanza, se rellena con órdenes a las que les falta algún
+    # componente (blank, cuadros, label, ejemplo), por cancel date y AL FINAL
+    # de la fila. No se programan (no se imprimen) hasta estar listas.
+    "fill_with_incomplete": True,
+    # El relleno ignora órdenes con cancel vencido hace más de N días (suelen
+    # ser órdenes olvidadas en BLANKS que ya no van a producirse). 0 = sin tope.
+    "fill_max_overdue_days": 30,
+    # Las posiciones de una orden NO se imprimen al mismo tiempo: la espalda
+    # arranca cuando termina el frente (pueden ir en otra máquina).
+    "positions_in_sequence": True,
     # Tableros cuya demanda cuenta (además de las MAQUINA<n>).
     "demand_boards": ["SCHEDULING", "READY TO SCHEDULED", "BLANKS", "SCREENS", "NECK"],
     # Orden en que se programan las posiciones de una orden (frente antes que
@@ -347,7 +364,8 @@ def readiness(order: dict, cfg: dict, sample_approved: Optional[set] = None) -> 
     return {
         "contado": blank in {s.upper() for s in cfg["ready_blank_statuses"]},
         "cuadros": (order.get("screens") is True) if cfg["ready_require_screens"] else True,
-        "label": prod in {s.upper() for s in cfg["ready_production_statuses"]},
+        "label": prod in {s.upper() for s in (list(cfg["ready_production_statuses"])
+                                               + list(cfg.get("label_pending_statuses") or []))},
         # Nueva = necesita ejemplo aprobado; reorden no. Sin Approval Type no
         # se sabe: se bloquea para que alguien lo capture.
         "ejemplo": (info["state"] in SAMPLE_OK_STATES) if cfg["ready_require_sample"] else True,
@@ -595,7 +613,7 @@ def _held(ov: dict, today: date) -> bool:
 def schedule(jobs: List[dict], machines: List[dict], cfg: dict, cal: Calendar,
              start: datetime, efficiency: float, board_of: Dict[str, str],
              overrides: Optional[Dict[str, dict]] = None, run_rates: Optional[dict] = None,
-             locks: Optional[Dict[str, str]] = None):
+             locks: Optional[Dict[str, str]] = None, rows_out: Optional[dict] = None):
     """Simulación turno por turno.
 
     machines: [{"machine": "MAQUINA1", "active": bool, "heads": int, "preferred_client": str}]
@@ -609,6 +627,9 @@ def schedule(jobs: List[dict], machines: List[dict], cfg: dict, cal: Calendar,
       Un trabajo amarrado sólo lo toma SU máquina; compite ahí por urgencia con
       lo nuevo. Se suelta si la máquina ya no está activa o no le alcanzan las
       cabezas. Ajustes manuales y tablero MAQUINA mandan sobre el candado.
+    rows_out: si viene un dict, se llena con la FILA de cada máquina (carrusel,
+      min_orders_per_machine): {máquina: [{order_id, kind: queue|row|filler,
+      missing}]}, más "_target" (órdenes por máquina que se pudo cumplir).
     El motor RESPETA los ajustes: no los mueve ni los discute; sólo avisa si
     algo no cuadra (máquina inactiva, colores > cabezas).
     """
@@ -629,11 +650,14 @@ def schedule(jobs: List[dict], machines: List[dict], cfg: dict, cal: Calendar,
         return float(_rates.get(j["volume"]) or _glob or rate_pph)
 
     pool = []
+    waiting = []          # no listas: candidatas a relleno de la fila
     for j in jobs:
         ov = overrides.get(j["job_id"], {})
         if _held(ov, today):
             continue
         if not (j["is_ready"] or j["started"] or "force" in ov):
+            if j.get("sample_state") != "HOLD":
+                waiting.append(j)
             continue
         jj = dict(j)
         jj["_manual"] = sorted(k for k in ov if k != "hold" or _held(ov, today))
@@ -668,9 +692,9 @@ def schedule(jobs: List[dict], machines: List[dict], cfg: dict, cal: Calendar,
 
     # 2) Lo que ya está en un tablero MAQUINA<n> es la cola de esa máquina (la
     # asignó una persona): se respeta en su orden de urgencia. Sólo la primera
-    # posición pendiente de la orden queda fija; las demás pueden ir en
-    # paralelo a otra máquina. La primera de la cola se toma como montada
-    # (sin setup).
+    # posición pendiente de la orden queda fija; las demás pueden ir a otra
+    # máquina (nunca al mismo tiempo: positions_in_sequence). La primera de la
+    # cola se toma como montada (sin setup).
     fixed = set()
     for j in list(pool):
         mname = board_of.get(j["order_id"])
@@ -730,32 +754,18 @@ def schedule(jobs: List[dict], machines: List[dict], cfg: dict, cal: Calendar,
         for j in ([st["current"]] if st["current"] else []) + st["queue"]:
             bind_siblings(j, mname)
 
-    def taken(mname, j):
-        """Al montar un trabajo: amarra a sus hermanos; si es el mismo arte que
-        lo anterior de la máquina, los cuadros ya están puestos (sin setup)."""
-        m = state[mname]
-        if group_on and art_key(j) and art_key(j) == m["last_key"]:
-            j["setup_left"] = 0
-        bind_siblings(j, mname)
-        return j
-
-    def pick(mname, alto_in_shift, running, d):
-        m = state[mname]
-        for i, j in enumerate(m["queue"]):
-            if eligible(j, d):
-                return taken(mname, m["queue"].pop(i))
-        cands = [j for j in pool if fits(m, j) and eligible(j, d) and j.get("_lock") in (None, mname)]
-        if not cands:
-            return None
+    def select(mname, m, cands, alto_in_shift=None, running=()):
+        """Qué toma la máquina de entre `cands` (ya en orden de urgencia). La
+        usan pick() en la simulación y el llenado de filas del carrusel.
+        m: estado con cfg y lo último que corrió (last_key/po/design/color)."""
         # Mismo arte que lo que acaba de salir: sigue de corrido, salvo que haya
         # algo de más prioridad (RUSH…) o subido a mano.
-        if group_on and m["last_key"]:
+        if group_on and m.get("last_key"):
             top = _sort_key(cands[0])
             sib = next((j for j in cands if art_key(j) == m["last_key"]
                         and _sort_key(j)[0] <= top[0] and _sort_key(j)[2] <= top[2]), None)
             if sib:
-                pool.remove(sib)
-                return taken(mname, sib)
+                return sib
         # Dedicación: si la máquina está dedicada a un cliente y ese cliente
         # tiene trabajo elegible, prioriza FUERTE (toma lo suyo aunque otro
         # cliente traiga algo más urgente); si no hay, toma los demás para no
@@ -776,14 +786,153 @@ def schedule(jobs: List[dict], machines: List[dict], cfg: dict, cal: Calendar,
         same.sort(key=lambda j: (0 if pref and pref in j["client"].upper() else 1,
                                  0 if j.get("customer_po") and j["customer_po"] == m.get("last_po") else 1,
                                  0 if j.get("design") and j["design"] == m.get("last_design") else 1,
-                                 0 if j["color"] and j["color"] == m["last_color"] else 1))
+                                 0 if j["color"] and j["color"] == m.get("last_color") else 1))
         choice = same[0]
         # Mezcla de volumen: no un segundo Alto aquí si otra máquina que
         # corre no tiene ninguno — toma el siguiente no-Alto si existe.
-        if choice["volume"] == "ALTO" and alto_in_shift.get(mname, 0) >= 1 and                 any(alto_in_shift.get(r, 0) == 0 for r in running if r != mname):
+        if alto_in_shift is not None and choice["volume"] == "ALTO" and alto_in_shift.get(mname, 0) >= 1 and \
+                any(alto_in_shift.get(r, 0) == 0 for r in running if r != mname):
             alt = next((j for j in cands if j["volume"] != "ALTO"), None)
             if alt:
                 choice = alt
+        return choice
+
+    # 4) Carrusel: cada máquina lleva al menos K órdenes en su fila. Las listas
+    # se reparten por urgencia (cancel date manda) a la máquina con la fila más
+    # corta (su cliente dedicado primero); si no alcanzan, relleno al final con
+    # las que les falta algún componente, por cancel date. Lo de la fila va a
+    # la cola de la máquina con todas sus posiciones (una tras otra).
+    K = int(cfg.get("min_orders_per_machine") or 0)
+    rows = {n: [] for n in state}
+    k_eff = 0
+
+    def insert_by_urgency(q, j):
+        for i, x in enumerate(q):
+            if (i == 0 and x.get("_mounted")) or "assign" in (x.get("_manual") or []):
+                continue
+            if _sort_key(x) > _sort_key(j):
+                q.insert(i, j)
+                return
+        q.append(j)
+
+    if K > 0 and state:
+        for n, st in state.items():
+            for j in st["queue"]:
+                if j["order_id"] not in [r["order_id"] for r in rows[n]]:
+                    rows[n].append({"order_id": j["order_id"], "kind": "queue"})
+        # Las demás posiciones de una orden que ya está en una fila la siguen.
+        for n, st in state.items():
+            mine = {r["order_id"] for r in rows[n]}
+            for j in [x for x in pool if x["order_id"] in mine and x.get("_lock") in (None, n) and fits(st, x)]:
+                pool.remove(j)
+                insert_by_urgency(st["queue"], j)
+        fill = {}
+        if cfg.get("fill_with_incomplete"):
+            max_od = int(cfg.get("fill_max_overdue_days") or 0)
+            oldest = (today - timedelta(days=max_od)).isoformat() if max_od > 0 else ""
+            for j in sorted(waiting, key=lambda x: (x.get("target_date") or "9999-12-31", _sort_key(x))):
+                if oldest and (j.get("cancel_date") or "9999-12-31") < oldest:
+                    continue
+                fill.setdefault(j["order_id"], []).append(j)
+        have = {n: len(rows[n]) for n in state}
+        avail = len({j["order_id"] for j in pool}) + len(fill)
+        k_eff = next((k for k in range(K, 0, -1)
+                      if sum(max(0, k - have[n]) for n in state) <= avail), 0)
+        # "Lo último" de cada fila, para seguir de corrido (mismo PO, arte, color).
+        rowst = {}
+        for n, st in state.items():
+            last = st["queue"][-1] if st["queue"] else None
+            rowst[n] = {"cfg": st["cfg"], "last_key": art_key(last) if last else None,
+                        "last_po": (last or {}).get("customer_po"), "last_design": (last or {}).get("design"),
+                        "last_color": (last or {}).get("color")}
+        # Rondas: en cada una, la máquina con la fila más corta escoge su
+        # siguiente orden con la MISMA lógica que pick() (dedicada, urgencia,
+        # de corrido…). Así las filas quedan parejas y en orden de urgencia.
+        # Las listas llenan hasta K (la fila más corta primero, así quedan
+        # parejas); el relleno incompleto sólo completa hasta k_eff.
+        while True:
+            short = sorted((n for n in state if len(rows[n]) < K),
+                           key=lambda n: (len(rows[n]), machine_order[n]))
+            progressed = False
+            for n in short:
+                cands = [j for j in pool if fits(state[n], j) and j.get("_lock") in (None, n)]
+                if not cands:
+                    continue
+                choice = select(n, rowst[n], cands)
+                js = sorted([x for x in pool if x["order_id"] == choice["order_id"]],
+                            key=lambda x: (x.get("_pos_rank", 0), str(x["position"])))
+                for x in js:
+                    pool.remove(x)
+                    x["_row"] = True
+                    state[n]["queue"].append(x)
+                    bind_siblings(x, n)
+                last = js[-1]
+                rowst[n].update(last_key=art_key(last), last_po=last.get("customer_po"),
+                                last_design=last.get("design"), last_color=last.get("color"))
+                rows[n].append({"order_id": choice["order_id"], "kind": "row"})
+                progressed = True
+            if not progressed:
+                break
+        # Relleno: lo que falta para la fila, por cancel date, al final.
+        for oid, js in fill.items():
+            short = [n for n in state if len(rows[n]) < k_eff and all(fits(state[n], x) for x in js)]
+            if not short:
+                if all(len(rows[n]) >= k_eff for n in state):
+                    break
+                continue
+            n = min(short, key=lambda n: (len(rows[n]), machine_order[n]))
+            missing = sorted({k for x in js for k, v in (x.get("ready") or {}).items() if not v})
+            rows[n].append({"order_id": oid, "kind": "filler", "missing": missing})
+    if rows_out is not None:
+        rows_out.update(rows)
+        rows_out["_target"] = k_eff
+
+    # Posiciones en secuencia: un trabajo espera a que terminen las posiciones
+    # anteriores de su orden (frente → espalda → manga), en cualquier máquina.
+    seq_on = bool(cfg.get("positions_in_sequence"))
+    family: Dict[str, list] = {}
+    for j in meta.values():
+        family.setdefault(j["order_id"], []).append(j)
+    for lst in family.values():
+        lst.sort(key=lambda x: (x.get("_pos_rank", 0), str(x["position"])))
+
+    def pred_end(j):
+        """None = puede arrancar ya; False = una posición anterior no termina;
+        datetime = arranca no antes de esa hora (fin de la anterior)."""
+        if not seq_on:
+            return None
+        end = None
+        for x in family.get(j["order_id"], []):
+            if x is j:
+                break
+            if x["remaining"] > 1e-6:
+                return False
+            e = x.get("_end_dt")
+            if e and (end is None or e > end):
+                end = e
+        return end
+
+    def ok(j, d):
+        return eligible(j, d) and pred_end(j) is not False
+
+    def taken(mname, j):
+        """Al montar un trabajo: amarra a sus hermanos; si es el mismo arte que
+        lo anterior de la máquina, los cuadros ya están puestos (sin setup)."""
+        m = state[mname]
+        if group_on and art_key(j) and art_key(j) == m["last_key"]:
+            j["setup_left"] = 0
+        bind_siblings(j, mname)
+        return j
+
+    def pick(mname, alto_in_shift, running, d):
+        m = state[mname]
+        for i, j in enumerate(m["queue"]):
+            if ok(j, d):
+                return taken(mname, m["queue"].pop(i))
+        cands = [j for j in pool if fits(m, j) and ok(j, d) and j.get("_lock") in (None, mname)]
+        if not cands:
+            return None
+        choice = select(mname, m, cands, alto_in_shift, running)
         pool.remove(choice)
         return taken(mname, choice)
 
@@ -833,6 +982,11 @@ def schedule(jobs: List[dict], machines: List[dict], cfg: dict, cal: Calendar,
                     open_m.discard(mname)
                     continue
                 m["current"] = j
+                # Su posición anterior terminó más tarde en otra máquina: espera.
+                pe_ = pred_end(j)
+                if pe_ and pe_ > w0 + (w1 - w0) * (used[mname] / cap):
+                    used[mname] = min(cap, cap * ((pe_ - w0) / (w1 - w0)))
+                    continue
             if j["volume"] == "ALTO" and not j.get("_counted_alto"):
                 alto_in_shift[mname] = alto_in_shift.get(mname, 0) + 1
                 j["_counted_alto"] = True
@@ -853,6 +1007,7 @@ def schedule(jobs: List[dict], machines: List[dict], cfg: dict, cal: Calendar,
             if mname not in rec["machines"]:
                 rec["machines"].append(mname)
             if j["remaining"] <= 1e-6:
+                j["_end_dt"] = seg_end
                 rec["end"] = seg_end.isoformat()
                 rec["end_date"] = seg_end.date().isoformat()
                 m["current"] = None
