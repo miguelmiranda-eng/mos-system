@@ -475,10 +475,13 @@ async def simulate_projection(request: Request):
 
 
 # ── Motor en modo sombra ───────────────────────────────────────────────────
-def _moves(scheduled: list, orders: list, now: datetime, cfg: dict):
-    """Movimientos de tablero que el motor HARÍA: órdenes cuyo trabajo arranca
-    dentro del turno en curso o el siguiente y cuyo tablero no es la máquina
-    que les toca (regla: la máquina con el job más grande)."""
+def _moves(scheduled: list, orders: list, now: datetime, cfg: dict, machine_names=()):
+    """Movimientos de tablero que el motor HARÍA: órdenes que van a ENTRAR a
+    máquina (su trabajo arranca dentro del turno en curso o el siguiente) y
+    cuyo tablero no es la máquina que les toca (regla: la máquina con el job
+    más grande). Lo que ya está en un tablero MAQUINA no se propone mover:
+    ahí lo puso una persona."""
+    machine_names = set(machine_names)
     by_order = {}
     for j in scheduled:
         by_order.setdefault(j["order_id"], []).append(j)
@@ -488,6 +491,8 @@ def _moves(scheduled: list, orders: list, now: datetime, cfg: dict):
     for oid, js in by_order.items():
         starts = [j["start"] for j in js if j.get("start")]
         if not starts or datetime.fromisoformat(min(starts)) > horizon:
+            continue
+        if board_now.get(oid) in machine_names:
             continue
         # Si alguna posición ya corre en la máquina donde está la orden, la
         # orden se queda ahí: no se desmonta lo que está montado.
@@ -595,7 +600,7 @@ async def shadow_run(request: Request, trigger: str = "manual", max_age: int = 0
                   "hits_scheduled": sum(j["remaining"] for j in scheduled)},
         "jobs": sorted(scheduled, key=lambda j: j.get("start") or "9999"),
         "blocked": sorted(blocked, key=lambda j: j.get("target_date") or "9999"),
-        "moves": _moves(scheduled, ctx["orders"], ctx["now"], ctx["cfg"]),
+        "moves": _moves(scheduled, ctx["orders"], ctx["now"], ctx["cfg"], [m["machine"] for m in ctx["machines"]]),
         "impact": impact,
         "overrides_active": len(active_ov),
         "locks": locks,

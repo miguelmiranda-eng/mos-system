@@ -5639,7 +5639,7 @@ const en = {
   plan_st_blocked: "Blocked",
   plan_st_hits: "Hits scheduled",
   plan_moves_title: "Moves it would make",
-  plan_moves_hint: "Orders starting in the current or next shift that would change board. Not applied.",
+  plan_moves_hint: "Orders about to enter a machine in the current or next shift. Anything already on a machine board is not proposed to move.",
   plan_moves_empty: "No board moves right now.",
   plan_grid_title: "Schedule by machine",
   plan_grid_hint: "Full week, day and night. Color = status against target date. Gray = no shift (holiday or weekend without overtime).",

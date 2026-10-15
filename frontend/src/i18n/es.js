@@ -5453,7 +5453,7 @@ const es = {
   plan_st_blocked: "Bloqueados",
   plan_st_hits: "Hits programados",
   plan_moves_title: "Movimientos que haría",
-  plan_moves_hint: "Órdenes que arrancan en el turno actual o el siguiente y cambiarían de tablero. No se aplican.",
+  plan_moves_hint: "Órdenes que van a entrar a máquina en el turno actual o el siguiente. Lo que ya está en un tablero de máquina no se propone mover.",
   plan_moves_empty: "Ningún movimiento de tablero por ahora.",
   plan_grid_title: "Programa por máquina",
   plan_grid_hint: "Semana completa, día y noche. Color = estatus contra la fecha objetivo. Gris = sin turno (festivo o fin de semana sin tiempo extra).",

@@ -584,6 +584,8 @@ async def main():
             run4 = (await sup.post("/api/planner/shadow-run")).json()
             mv = run4.get("moves") or []
             check("hay movimientos propuestos", len(mv) >= 2, len(mv))
+            check("sólo órdenes que van a ENTRAR (ninguna sale de un tablero MAQUINA)",
+                  not any(str(m["from_board"] or "").startswith("MAQUINA") for m in mv), [m["from_board"] for m in mv])
             m1, m2 = mv[0], mv[1]
             r = await op.post("/api/planner/moves/apply", json={"run_id": run4["run_id"], "order_ids": [m1["order_id"]]})
             check("operador NO autoriza movimientos", r.status_code == 403, r.status_code)
