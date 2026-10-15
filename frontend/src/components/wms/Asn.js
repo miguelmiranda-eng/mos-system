@@ -9,6 +9,7 @@ import { AsnStatus } from "./constants";
 import { StatCard, Btn, EmptyState, ModuleToolbar } from "./ui";
 import { AddColumnModal } from "../dashboard/AddColumnModal";
 import { AsnConfigModal } from "./AsnConfigModal";
+import AsnDocuments from "./AsnDocuments";
 import { evalFormula, formatResult } from "../../lib/formula";
 
 const STATUS_STYLES = {
@@ -481,8 +482,15 @@ export const AsnModule = ({ currentUser, initialDetail }) => {
     const items = live.map(it => ({ ...lineToPayload(it), brand: d.vendor }));
     setSavingCreate(true);
     try {
-      const res = await poster('/asn', { asn_id: d.asn_id.trim(), tipo: d.tipo, customer: d.customer, vendor: d.vendor, po_number: d.po_number, expected_date: d.expected_date, items });
-      const r = await res.json().catch(() => ({}));
+      const payload = { asn_id: d.asn_id.trim(), tipo: d.tipo, customer: d.customer, vendor: d.vendor, po_number: d.po_number, expected_date: d.expected_date, items };
+      let res = await poster('/asn', payload);
+      let r = await res.json().catch(() => ({}));
+      // El portal ya dio de alta este cliente + PO: avisar antes de duplicar.
+      if (res.status === 409 && r.detail?.code === 'portal_asn_open') {
+        if (!window.confirm(t('wms_asn_portal_dup_confirm', { msg: r.detail.msg }))) return;
+        res = await poster('/asn', { ...payload, confirm_duplicate: true });
+        r = await res.json().catch(() => ({}));
+      }
       if (res.ok) { toast.success(t('wms_asn_entry_created', { id: d.asn_id })); setShowCreate(false); setCreateDraft(null); loadAsns(); }
       else toast.error(r.detail || t('wms_asn_entry_create_err'));
     } catch (err) { logLoadError('create entry')(err); toast.error(t('wms_conn_error')); }
@@ -1034,7 +1042,10 @@ export const AsnModule = ({ currentUser, initialDetail }) => {
                       className="hover:bg-muted/40 cursor-pointer transition-colors"
                       data-testid={`asn-row-${a.asn_id}`}
                     >
-                      <td className="px-3 py-2.5 font-mono font-medium text-foreground text-xs">{a.asn_id}</td>
+                      <td className="px-3 py-2.5 font-mono font-medium text-foreground text-xs">
+                        {a.asn_id}
+                        {a.source === 'portal' && <span className="ml-1.5 px-1.5 py-0.5 rounded bg-sky-500/10 text-sky-600 dark:text-sky-300 font-sans text-[10px]">{t('wms_asn_portal_badge')}</span>}
+                      </td>
                       <td className="px-3 py-2.5 text-xs truncate max-w-[220px]" title={a.vendor}>{a.vendor || '—'}</td>
                       <td className="px-3 py-2.5 text-xs font-mono text-muted-foreground">{a.po_number || '—'}</td>
                       <td className="px-3 py-2.5 text-center">
@@ -1094,6 +1105,9 @@ export const AsnModule = ({ currentUser, initialDetail }) => {
                 <div className="min-w-0">
                   <h3 className="font-semibold text-sm truncate flex items-center gap-2">
                     ASN {detailFor}
+                    {detailData?.asn?.source === 'portal' && (
+                      <span className="px-2 py-0.5 rounded-md text-xs font-medium bg-sky-500/10 text-sky-600 dark:text-sky-300">{t('wms_asn_portal_badge')}</span>
+                    )}
                     {detailData?.asn?.closed && (
                       <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border text-xs font-medium bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-300 dark:border-emerald-500/25"><Lock className="w-3 h-3" /> {t('wms_asn_closed_badge')}</span>
                     )}
@@ -1175,6 +1189,7 @@ export const AsnModule = ({ currentUser, initialDetail }) => {
                 </div>
               ) : detailData ? (
                 <div className="p-5 space-y-6">
+                  <AsnDocuments asnId={detailFor} documents={detailData.asn?.documents || []} onChanged={refreshDetail} />
                   {/* Trazabilidad: summary cards + recepciones agregadas */}
                   {detailData.summary && (
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-3">

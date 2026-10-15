@@ -1,8 +1,9 @@
 """WMS (Warehouse Management System) routes."""
-from fastapi import APIRouter, HTTPException, Request, Response, UploadFile, File, Query
+from fastapi import APIRouter, HTTPException, Request, Response, UploadFile, File, Form, Query
 from typing import Optional
-from fastapi.responses import StreamingResponse, HTMLResponse
-from deps import db, get_current_user, require_auth, require_admin, require_admin_level, require_supersu, get_admin_level, require_inventory_level, get_inventory_level, log_activity, DEFAULT_OPTIONS, require_api_customer
+from pathlib import Path
+from fastapi.responses import StreamingResponse, HTMLResponse, FileResponse
+from deps import db, get_current_user, require_auth, require_admin, require_admin_level, require_supersu, get_admin_level, require_inventory_level, get_inventory_level, log_activity, DEFAULT_OPTIONS, require_api_customer, api_customer_scope
 from ws_manager import ws_manager
 import wms_actions as wa
 from wms_constants import (
@@ -12169,6 +12170,39 @@ async def match_asn_line(asn_id: str, request: Request):
     return {"formatted": True, **r}
 
 
+def _asn_scope_or_403(user, customer: str) -> None:
+    """Una llave de API solo da de alta entradas de los clientes de su alcance."""
+    scope = api_customer_scope(user)
+    if scope is None or "*" in scope:
+        return
+    if (customer or "").upper() not in {str(c).upper() for c in scope}:
+        raise HTTPException(403, f"Esta llave no tiene acceso al cliente '{customer}'.")
+
+
+def _asn_belongs_or_403(asn: dict, filtro_cliente) -> None:
+    """Con filtro de llave de API (require_api_customer), la entrada debe ser de
+    ese cliente; si no, 403 (mismo patrón que GET /api/orders/{id})."""
+    if not filtro_cliente:
+        return
+    rx = filtro_cliente["customer"]["$regex"]
+    if not re.match(rx, str(asn.get("customer") or ""), re.IGNORECASE):
+        raise HTTPException(403, "La entrada no pertenece al cliente consultado.")
+
+
+def _asn_portal_meta(raw) -> dict:
+    """Datos de encabezado que solo trae el portal (transportista, rastreo, BOL,
+    ruta, datos de importación…). Se guardan tal cual, como texto, para
+    mostrarlos; MOS no decide nada con ellos."""
+    if not isinstance(raw, dict):
+        return {}
+    out = {}
+    for k, v in list(raw.items())[:40]:
+        key = re.sub(r"[^a-z0-9_]", "_", str(k).strip().lower())[:40]
+        if key and v not in (None, ""):
+            out[key] = str(v).strip()[:300]
+    return out
+
+
 @router.post("/asn")
 async def create_asn(request: Request):
     """Manual ASN creation. Caller supplies asn_id; we don't auto-generate so the
@@ -12185,11 +12219,33 @@ async def create_asn(request: Request):
         raise HTTPException(400, "El ASN debe contener al menos un item")
 
     if await db.wms_asn.find_one({"asn_id": asn_id}, {"_id": 1}):
+        # El portal reintenta con el mismo número: el 409 le dice que ya quedó.
         raise HTTPException(409, f"ASN {asn_id} ya existe")
 
     custom_cols = await _asn_custom_columns()
     pn_cfg = await _pn_config()
     customer = str(body.get("customer", "")).strip().upper()
+    from_portal = bool(user.get("is_api"))
+    po_number = str(body.get("po_number", "")).strip()
+    if from_portal:
+        if not customer:
+            raise HTTPException(400, "customer requerido")
+        _asn_scope_or_403(user, customer)
+    elif customer and po_number and not body.get("confirm_duplicate"):
+        # Captura a mano de una entrada que el portal ya dio de alta: mismo
+        # cliente + PO, abierta. Un PO puede llegar en varios embarques, así
+        # que solo se avisa; con confirm_duplicate se guarda igual.
+        dup = await db.wms_asn.find_one(
+            {"source": "portal", "closed": {"$ne": True}, "po_number": po_number,
+             "customer": {"$regex": f"^{re.escape(customer)}$", "$options": "i"}},
+            {"_id": 0, "asn_id": 1})
+        if dup:
+            raise HTTPException(409, {
+                "code": "portal_asn_open",
+                "asn_id": dup["asn_id"],
+                "msg": f"El portal ya dio de alta la entrada {dup['asn_id']} para {customer} PO {po_number}. "
+                       "Recibe contra esa entrada en lugar de crear otra.",
+            })
     normalized_items = []
     for idx, it in enumerate(items, start=1):
         qty = int(it.get("qty_expected", it.get("quantity", 0)) or 0)
@@ -12219,7 +12275,7 @@ async def create_asn(request: Request):
         # Tipo de entrada: 'ASN' (aviso de llegada) o 'BPO' (blanket purchase
         # order). Ambos entran por el mismo numero; receiving recibe igual.
         "tipo": (str(body.get("tipo", "ASN")).strip().upper() or "ASN"),
-        "po_number": str(body.get("po_number", "")).strip(),
+        "po_number": po_number,
         "vendor": str(body.get("vendor", "")).strip().upper(),
         "expected_date": body.get("expected_date", ""),
         "source_sheet": "",
@@ -12228,15 +12284,25 @@ async def create_asn(request: Request):
         "status": AsnStatus.PENDING,
         "created_at": now_iso(),
         "created_by": user.get("user_id"),
+        # "portal" = dada de alta por el portal del cliente (Command Center) con
+        # su llave de API; Entradas la marca y Recepción recibe contra ella.
+        "source": "portal" if from_portal else "manual",
     }
+    if from_portal:
+        doc["created_by_name"] = user.get("name") or "Portal"
+        meta = _asn_portal_meta(body.get("portal_meta"))
+        if meta:
+            doc["portal_meta"] = meta
     await db.wms_asn.insert_one(doc)
     doc.pop("_id", None)
     return doc
 
 @router.get("/asn")
 async def list_asn(request: Request):
-    await require_auth(request)
-    return await db.wms_asn.find({}, {"_id": 0}).sort("created_at", -1).to_list(200)
+    user = await require_auth(request)
+    # Llave de API (portal): `customer` obligatorio y solo sus entradas.
+    filtro_cliente = require_api_customer(user, request, campo="customer")
+    return await db.wms_asn.find(filtro_cliente or {}, {"_id": 0}).sort("created_at", -1).to_list(200)
 
 # NOTE: declared BEFORE /asn/{asn_id} so "trace-sku" isn't captured as an asn_id.
 @router.get("/asn/trace-sku")
@@ -12301,10 +12367,12 @@ async def get_asn_detail(asn_id: str, request: Request):
     Trazabilidad: el frontend muestra un summary, una lista de recepciones
     (con quién, cuándo, lote, ubicación) y la tabla detallada de cajas.
     """
-    await require_auth(request)
+    user = await require_auth(request)
+    filtro_cliente = require_api_customer(user, request, campo="customer")
     asn = await db.wms_asn.find_one({"asn_id": asn_id}, {"_id": 0})
     if not asn:
         raise HTTPException(404, f"ASN {asn_id} no encontrado")
+    _asn_belongs_or_403(asn, filtro_cliente)
 
     boxes = await db.wms_boxes.find(
         {"asn_reference": asn_id}, {"_id": 0}
@@ -12674,6 +12742,102 @@ async def reopen_asn(asn_id: str, request: Request):
     })
     await log_movement(user, MovementType.ASN_RECEIPT, {"asn_id": asn_id, "reopened": True})
     return await db.wms_asn.find_one({"asn_id": asn_id}, {"_id": 0})
+
+# ── Documentos de la entrada (BOL, packing list, factura…) ────────────────────
+# Mismo esquema que los archivos de órdenes: el archivo va a disco y en la
+# entrada solo queda su ficha. Se descargan por doc_id, nunca por nombre, así
+# que acentos, '#', '%' o dos "image.jpg" en la misma entrada no chocan.
+ASN_DOCS_DIR = Path("uploads") / "asn"
+ASN_DOC_KINDS = ("bol", "packing_list", "commercial_invoice", "other")
+ASN_DOC_MAX_BYTES = 20 * 1024 * 1024
+ASN_DOC_TYPES = {
+    "application/pdf", "image/jpeg", "image/png", "image/webp", "image/heic",
+    "text/csv", "application/vnd.ms-excel",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/msword",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+}
+
+
+async def _asn_for_docs(asn_id: str, user, request: Request) -> dict:
+    filtro_cliente = require_api_customer(user, request, campo="customer")
+    asn = await db.wms_asn.find_one({"asn_id": asn_id}, {"_id": 0, "asn_id": 1, "customer": 1, "documents": 1})
+    if not asn:
+        raise HTTPException(404, f"Entrada {asn_id} no encontrada")
+    _asn_belongs_or_403(asn, filtro_cliente)
+    return asn
+
+
+@router.post("/asn/{asn_id}/documents")
+async def upload_asn_document(asn_id: str, request: Request,
+                              file: UploadFile = File(...), kind: str = Form("other")):
+    user = await require_auth(request)
+    await _asn_for_docs(asn_id, user, request)
+    kind = (kind or "other").strip().lower()
+    if kind not in ASN_DOC_KINDS:
+        raise HTTPException(400, f"kind inválido; usa uno de: {', '.join(ASN_DOC_KINDS)}")
+    content_type = (file.content_type or "").split(";")[0].strip().lower()
+    if content_type not in ASN_DOC_TYPES:
+        raise HTTPException(400, f"Tipo de archivo no permitido: {content_type or 'desconocido'}")
+    data = await file.read()
+    if not data:
+        raise HTTPException(400, "Archivo vacío")
+    if len(data) > ASN_DOC_MAX_BYTES:
+        raise HTTPException(400, "Archivo mayor a 20 MB")
+
+    filename = (file.filename or "documento").replace("\\", "/").split("/")[-1][:150] or "documento"
+    doc_id = f"doc_{uuid.uuid4().hex[:12]}"
+    safe_asn = re.sub(r"[^A-Za-z0-9_-]", "_", asn_id)[:60]
+    storage_key = f"{safe_asn}_{doc_id}"
+    ASN_DOCS_DIR.mkdir(parents=True, exist_ok=True)
+    (ASN_DOCS_DIR / storage_key).write_bytes(data)
+
+    entry = {
+        "doc_id": doc_id, "kind": kind, "filename": filename,
+        "content_type": content_type, "size": len(data), "storage_key": storage_key,
+        "uploaded_at": now_iso(), "uploaded_by": user.get("user_id"),
+        "uploaded_by_name": user.get("name") or user.get("email") or "",
+        "source": "portal" if user.get("is_api") else "mos",
+    }
+    await db.wms_asn.update_one({"asn_id": asn_id}, {"$push": {"documents": entry}})
+    await log_movement(user, MovementType.ASN_RECEIPT, {
+        "asn_id": asn_id, "document_added": filename, "kind": kind})
+    return {k: v for k, v in entry.items() if k != "storage_key"}
+
+
+@router.get("/asn/{asn_id}/documents/{doc_id}")
+async def download_asn_document(asn_id: str, doc_id: str, request: Request):
+    user = await require_auth(request)
+    asn = await _asn_for_docs(asn_id, user, request)
+    entry = next((d for d in asn.get("documents") or [] if d.get("doc_id") == doc_id), None)
+    if not entry:
+        raise HTTPException(404, "Documento no encontrado")
+    path = ASN_DOCS_DIR / entry["storage_key"]
+    if not path.is_file():
+        raise HTTPException(404, "El archivo ya no está en el servidor")
+    return FileResponse(path, media_type=entry.get("content_type") or "application/octet-stream",
+                        filename=entry.get("filename") or doc_id)
+
+
+@router.delete("/asn/{asn_id}/documents/{doc_id}")
+async def delete_asn_document(asn_id: str, doc_id: str, request: Request):
+    """Solo personal de MOS (asn.edit); el portal no borra documentos."""
+    user = await require_action(request, "asn.edit")
+    asn = await db.wms_asn.find_one({"asn_id": asn_id}, {"_id": 0, "documents": 1})
+    if not asn:
+        raise HTTPException(404, f"Entrada {asn_id} no encontrada")
+    entry = next((d for d in asn.get("documents") or [] if d.get("doc_id") == doc_id), None)
+    if not entry:
+        raise HTTPException(404, "Documento no encontrado")
+    await db.wms_asn.update_one({"asn_id": asn_id}, {"$pull": {"documents": {"doc_id": doc_id}}})
+    try:
+        (ASN_DOCS_DIR / entry["storage_key"]).unlink(missing_ok=True)
+    except OSError:
+        logging.getLogger(__name__).warning("No se pudo borrar %s", entry["storage_key"])
+    await log_movement(user, MovementType.ASN_RECEIPT, {
+        "asn_id": asn_id, "document_removed": entry.get("filename"), "kind": entry.get("kind")})
+    return {"ok": True}
+
 
 async def _apply_receiving_to_asn(
     asn_id: str,

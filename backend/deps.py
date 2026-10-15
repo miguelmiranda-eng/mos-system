@@ -671,6 +671,15 @@ API_SURFACE_PERMITIDA = (
     ("GET",    re.compile(r"^/api/scheduled-shipments/week$")),
     ("GET",    re.compile(r"^/api/planner/dashboard$")),
     ("GET",    re.compile(r"^/api/planner/shadow-run/latest$")),
+    # Envíos entrantes desde el portal: el portal da de alta la entrada y sube
+    # sus documentos; MOS recibe y concilia; el portal solo LEE el avance.
+    # Alcance por cliente dentro de cada handler (require_api_customer).
+    # trace-sku queda fuera: busca en todos los clientes.
+    ("POST",   re.compile(r"^/api/wms/asn$")),
+    ("GET",    re.compile(r"^/api/wms/asn$")),
+    ("GET",    re.compile(r"^/api/wms/asn/(?!trace-sku$)[^/]+$")),
+    ("POST",   re.compile(r"^/api/wms/asn/[^/]+/documents$")),
+    ("GET",    re.compile(r"^/api/wms/asn/[^/]+/documents/[^/]+$")),
 )
 
 
