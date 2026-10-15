@@ -564,6 +564,9 @@ def build_jobs(orders: List[dict], produced: Dict[str, Dict[str, int]], cfg: dic
                 "sample_state": sinfo["state"],
                 "is_ready": all(ready.values()),
                 "started": started,
+                # De verdad imprimiéndose (no sólo en el tablero de la máquina):
+                # sólo esto va antes del cancel date.
+                "printing": prod_status == "EN PRODUCCION" or prog["made"] > 0,
                 "target_date": target.isoformat() if target else None,
                 "is_test": is_test_branding(o.get("branding"), cfg),
                 "_pos_rank": pos_rank.get(str(pos).upper(), len(pos_order)),
@@ -598,8 +601,10 @@ MANUAL_RANK = {"TOP": 0, "UP": 1, "DOWN": 3}   # sin ajuste = 2
 
 
 def _sort_key(j):
+    # Regla de oro = cancel date. Sólo lo que de verdad se está imprimiendo va
+    # antes (estar en el tablero de la máquina no basta para brincar fechas).
     return (j.get("_manual_rank", 2),
-            0 if j["started"] else 1,
+            0 if j.get("printing", j["started"]) else 1,
             PRIORITY_RANK.get(j["priority"], 9),
             j["target_date"] or "9999-12-31",
             j.get("_pack_rank", 0),  # prioridad por tipo de empaque (tras la urgencia)
@@ -779,9 +784,11 @@ def schedule(jobs: List[dict], machines: List[dict], cfg: dict, cal: Calendar,
             pool.remove(j)
     for st in state.values():
         st["queue"].sort(key=_sort_key)
-    for mname, pos, j in sorted(assigned, key=lambda x: (x[1] or 10**6)):
-        q = state[mname]["queue"]
-        q.insert(max(0, pos - 1) if pos else len(q), j)
+    # Con lugar (arrastre o "lugar en la cola"): en ese lugar. Sin lugar: entran
+    # por cancel date más abajo (insert_by_urgency), no al final de la cola.
+    for mname, pos, j in sorted((a for a in assigned if a[1]), key=lambda x: x[1]):
+        state[mname]["queue"].insert(max(0, pos - 1), j)
+    assigned_free = [(mname, j) for mname, pos, j in assigned if not pos]
 
     # 3) Candados: lo que ya quedó amarrado a una máquina sólo lo toma ella.
     lock_days = float(cfg.get("lock_machine_days") or 0)
@@ -880,14 +887,25 @@ def schedule(jobs: List[dict], machines: List[dict], cfg: dict, cal: Calendar,
     rows = {n: [] for n in state}
     k_eff = 0
 
-    def insert_by_urgency(q, j):
+    def insert_by_urgency(q, j, mname=None):
+        """Mete j en la cola por urgencia (cancel date), sin mover lo montado ni
+        lo fijado a mano. En máquina dedicada, su cliente va primero."""
+        mc = state[mname]["cfg"] if mname in state else {}
+        pc = (mc.get("preferred_client") or "").strip().upper() if mc.get("dedicated") else ""
+
+        def key(x):
+            return (0 if pc and pc in str(x.get("client") or "").upper() else 1, _sort_key(x))
         for i, x in enumerate(q):
-            if (i == 0 and x.get("_mounted")) or "assign" in (x.get("_manual") or []):
+            if (i == 0 and x.get("_mounted") and x.get("printing")) or "assign" in (x.get("_manual") or []):
                 continue
-            if _sort_key(x) > _sort_key(j):
+            if key(x) > key(j):
                 q.insert(i, j)
                 return
         q.append(j)
+
+    for mname, j in assigned_free:
+        j["setup_left"] = j["colors"] * setup_hits_per_color
+        insert_by_urgency(state[mname]["queue"], j, mname)
 
     if K > 0 and state:
         for n, st in state.items():
@@ -899,7 +917,7 @@ def schedule(jobs: List[dict], machines: List[dict], cfg: dict, cal: Calendar,
             mine = {r["order_id"] for r in rows[n]}
             for j in [x for x in pool if x["order_id"] in mine and x.get("_lock") in (None, n) and fits(st, x)]:
                 pool.remove(j)
-                insert_by_urgency(st["queue"], j)
+                insert_by_urgency(st["queue"], j, n)
         fill = {}
         if cfg.get("fill_with_incomplete"):
             max_od = int(cfg.get("fill_max_overdue_days") or 0)
@@ -929,16 +947,20 @@ def schedule(jobs: List[dict], machines: List[dict], cfg: dict, cal: Calendar,
                            key=lambda n: (len(rows[n]), machine_order[n]))
             progressed = False
             for n in short:
-                cands = [j for j in pool if fits(state[n], j) and j.get("_lock") in (None, n)]
+                # Una orden con alguna posición amarrada a OTRA máquina no
+                # entra a esta fila (se llevaría todas sus posiciones).
+                taken_elsewhere = {x["order_id"] for x in pool if x.get("_lock") not in (None, n)}
+                cands = [j for j in pool if fits(state[n], j) and j.get("_lock") in (None, n)
+                         and j["order_id"] not in taken_elsewhere]
                 if not cands:
                     continue
                 choice = select(n, rowst[n], cands)
-                js = sorted([x for x in pool if x["order_id"] == choice["order_id"]],
+                js = sorted([x for x in pool if x["order_id"] == choice["order_id"] and x.get("_lock") in (None, n)],
                             key=lambda x: (x.get("_pos_rank", 0), str(x["position"])))
                 for x in js:
                     pool.remove(x)
                     x["_row"] = True
-                    state[n]["queue"].append(x)
+                    insert_by_urgency(state[n]["queue"], x, n)   # el cancel date manda también contra lo del tablero
                     bind_siblings(x, n)
                 last = js[-1]
                 rowst[n].update(last_key=art_key(last), last_po=last.get("customer_po"),
@@ -967,8 +989,10 @@ def schedule(jobs: List[dict], machines: List[dict], cfg: dict, cal: Calendar,
     family: Dict[str, list] = {}
     for j in meta.values():
         family.setdefault(j["order_id"], []).append(j)
+    # La posición que ya se empezó a imprimir va primero (si ya arrancaron por
+    # la espalda, el frente espera a la espalda); luego frente → espalda → manga.
     for lst in family.values():
-        lst.sort(key=lambda x: (x.get("_pos_rank", 0), str(x["position"])))
+        lst.sort(key=lambda x: (0 if x.get("produced") else 1, x.get("_pos_rank", 0), str(x["position"])))
 
     def pred_end(j):
         """None = puede arrancar ya; False = una posición anterior no termina;
@@ -998,14 +1022,44 @@ def schedule(jobs: List[dict], machines: List[dict], cfg: dict, cal: Calendar,
         bind_siblings(j, mname)
         return j
 
-    def pick(mname, alto_in_shift, running, d):
+    WAIT = object()      # la máquina guarda su lugar a algo fijado que espera
+
+    def need_of(x):
+        """Lo que le falta a x, en hits de referencia (setup + impresión)."""
+        return x["setup_left"] + x["remaining"] * rate_pph / _rate_of(x)
+
+    def gap_for(j, mname, used, depth=0):
+        """Hits de referencia que faltan para que terminen las posiciones
+        anteriores de j (en la máquina donde corren)."""
+        g = 0.0
+        for x in family.get(j["order_id"], []):
+            if x is j or depth > 3:
+                break
+            if x["remaining"] <= 1e-6:
+                continue
+            on = next((n for n, s in state.items() if s["current"] is x), None)
+            if on in used:
+                g = max(g, used[on] - used.get(mname, 0.0) + need_of(x))
+            else:
+                g = max(g, need_of(x) + gap_for(x, mname, used, depth + 1))
+        return g
+
+    def pick(mname, alto_in_shift, running, d, used=None):
         m = state[mname]
+        used = used or {}
+        # Algo FIJADO A MANO que espera a su posición anterior (que corre en
+        # otra máquina): la máquina le guarda el lugar. Mientras, sólo toma lo
+        # que termine antes de que se libere; si nada cabe, espera.
+        limit = None
         for i, j in enumerate(m["queue"]):
-            if ok(j, d):
+            if ok(j, d) and (limit is None or need_of(j) <= limit):
                 return taken(mname, m["queue"].pop(i))
-        cands = [j for j in pool if fits(m, j) and ok(j, d) and j.get("_lock") in (None, mname)]
+            if limit is None and "assign" in (j.get("_manual") or []) and eligible(j, d) and pred_end(j) is False:
+                limit = gap_for(j, mname, used)
+        cands = [j for j in pool if fits(m, j) and ok(j, d) and j.get("_lock") in (None, mname)
+                 and (limit is None or need_of(j) <= limit)]
         if not cands:
-            return None
+            return WAIT if limit is not None else None
         choice = select(mname, m, cands, alto_in_shift, running)
         pool.remove(choice)
         return taken(mname, choice)
@@ -1051,7 +1105,19 @@ def schedule(jobs: List[dict], machines: List[dict], cfg: dict, cal: Calendar,
                 continue
             j = m["current"]
             if j is None:
-                j = pick(mname, alto_in_shift, running, d)
+                j = pick(mname, alto_in_shift, running, d, used)
+                if j is WAIT:
+                    # Espera a que avance otra máquina (ahí termina la posición
+                    # anterior); sin nadie más en el turno, pierde lo que queda.
+                    others = [used[n] for n in open_m if n != mname]
+                    if not others:
+                        open_m.discard(mname)
+                        continue
+                    later = [u for u in others if u > used[mname] + 1e-9]
+                    used[mname] = min(later) if later else used[mname] + cap / 200.0
+                    if cap - used[mname] <= 1e-6:
+                        open_m.discard(mname)
+                    continue
                 if j is None:
                     open_m.discard(mname)
                     continue

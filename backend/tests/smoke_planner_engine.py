@@ -634,5 +634,53 @@ check("y ya no sale en sugerencias", "1401" not in [s["order_number"] for s in p
 pT3 = {j["order_number"] for j in pe.schedule(jT, machines(2), {**cfgT, "tests_manual": False}, calT, LUNES, 1.0, {})}
 check("(control) con la regla apagada el motor sí las programa", "1401" in pT3)
 
+print("== Fijada a mano que espera a su FRENTE: se le guarda el lugar ==")
+cfgW = cfg_with(shifts=[{"key": "DIA", "start": "07:00", "hours": 12, "crews": 2},
+                        {"key": "NOCHE", "start": "19:00", "hours": 12, "crews": 0}],
+                setup_min_per_color=0, lock_machine_days=0, min_orders_per_machine=0)
+calW = pe.Calendar(cfgW, [], max_machines=2)
+jW, _ = pe.build_jobs([order(1500, 2000, ["FRENTE", "ESPALDA"], cancel="2026-10-01"),
+                       order(1501, 3000, ["FRENTE"], cancel="2026-10-20"),
+                       order(1502, 200, ["FRENTE"], cancel="2026-10-25")], {}, cfgW, calW, MS2, LUNES.date())
+ovW = {"o1500:FRENTE": {"assign": {"machine": "MAQUINA2", "queue_pos": 1}},
+       "o1500:ESPALDA": {"assign": {"machine": "MAQUINA1", "queue_pos": 1}},
+       "o1501:FRENTE": {"assign": {"machine": "MAQUINA1", "queue_pos": 2}}}
+pw = {f'{j["order_number"]}{j["position"][0]}': j for j in pe.schedule(jW, machines(2), cfgW, calW, LUNES, 1.0, {}, ovW)}
+check("la ESPALDA fijada #1 arranca en cuanto termina su FRENTE (no se la brinca la grande)",
+      pw["1500E"]["start"] == pw["1500F"]["end"] and pw["1500E"]["machines"] == ["MAQUINA1"],
+      (pw["1500F"]["end"], pw["1500E"]["start"]))
+check("la grande (#2) va después de la ESPALDA", pw["1501F"]["start"] >= pw["1500E"]["end"],
+      (pw["1500E"]["end"], pw["1501F"]["start"]))
+check("mientras espera, la máquina hace lo chico que sí cabe",
+      pw["1502F"]["machines"] == ["MAQUINA1"] and pw["1502F"]["end"] <= pw["1500E"]["start"],
+      (pw["1502F"]["machines"], pw["1502F"].get("end"), pw["1500E"]["start"]))
+
+print("== Cancel date manda sobre 'está en el tablero' ==")
+jB, _ = pe.build_jobs([order(1600, 1000, ["FRENTE"], cancel="2026-10-28", board="MAQUINA1"),
+                       order(1601, 1000, ["FRENTE"], cancel="2026-10-02", board="MAQUINA1"),
+                       order(1602, 1000, ["FRENTE"], cancel="2026-10-29", board="MAQUINA1",
+                             production_status="EN PRODUCCION")], {}, cfgW, calW, MS2, LUNES.date())
+pb = {j["order_number"]: j["start"] for j in pe.schedule(jB, machines(1), cfgW, calW, LUNES, 1.0,
+                                                         {"o1600": "MAQUINA1", "o1601": "MAQUINA1", "o1602": "MAQUINA1"})}
+check("lo que se está imprimiendo sigue primero; luego por cancel (02-oct antes que 28-oct)",
+      pb["1602"] < pb["1601"] < pb["1600"], pb)
+jF, _ = pe.build_jobs([order(1700, 1000, ["FRENTE"], cancel="2026-10-28", board="MAQUINA1"),
+                       order(1701, 1000, ["FRENTE"], cancel="2026-10-02")], {}, cfgW, calW, MS2, LUNES.date())
+pf = {j["order_number"]: j["start"] for j in pe.schedule(jF, machines(1), cfgW, calW, LUNES, 1.0, {"o1700": "MAQUINA1"},
+                                                         {"o1701:FRENTE": {"assign": {"machine": "MAQUINA1"}}})}
+check("fijada a mano SIN lugar entra por cancel date (no al final)", pf["1701"] < pf["1700"], pf)
+jE, _ = pe.build_jobs([order(1800, 1000, ["FRENTE", "ESPALDA"])], {"o1800": {"ESPALDA": 100}}, cfgW, calW, MS2, LUNES.date())
+pe_ = {j["position"]: j for j in pe.schedule(jE, machines(2), cfgW, calW, LUNES, 1.0, {})}
+check("si ya arrancaron por la ESPALDA, el FRENTE espera a la espalda (nunca al mismo tiempo)",
+      pe_["FRENTE"]["start"] >= pe_["ESPALDA"]["end"], (pe_["ESPALDA"]["end"], pe_["FRENTE"]["start"]))
+
+print("== Carrusel respeta el candado de cada posición ==")
+cfgL2 = {**cfgW, "min_orders_per_machine": 4, "lock_machine_days": 3}
+jL5, _ = pe.build_jobs([order(1900, 1000, ["FRENTE", "ESPALDA"]), order(1901, 1000, ["FRENTE"])],
+                       {}, cfgL2, calW, MS2, LUNES.date())
+p5 = {j["job_id"]: j["machines"] for j in pe.schedule(jL5, machines(2), cfgL2, calW, LUNES, 1.0, {}, None, None,
+                                                       {"o1900:FRENTE": "MAQUINA1"}, {})}
+check("la fila de otra máquina no se lleva una orden con posición amarrada", p5.get("o1900:FRENTE") == ["MAQUINA1"], p5)
+
 print(f"\n{ok} PASS, {fail} FAIL")
 sys.exit(1 if fail else 0)
