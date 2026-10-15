@@ -90,6 +90,13 @@ DEFAULT_CONFIG = {
     # pasan a otra (sí lo pueden reacomodar dentro de la misma por urgencia) y
     # reparten sólo lo nuevo según el avance real. 0 = sin candado.
     "lock_machine_days": 3,
+    # Cuadrillas compartidas: la gente del turno se reparte entre TODAS las
+    # máquinas activas con trabajo (medido en piso: ~13 máquinas producen con
+    # 9 cuadrillas). Cada máquina avanza a cuadrillas/máquinas de un turno; la
+    # capacidad total de la planta no cambia, pero el trabajo se reparte
+    # parejo y nada se queda parado en una máquina "sin gente".
+    # False = una cuadrilla fija por máquina (sólo corren N máquinas).
+    "crews_share_machines": True,
     # off = apagado (no calcula nada) | shadow = calcula y muestra, NO mueve
     # órdenes. El modo que mueve tableros no existe todavía: se habilita en
     # otra fase, con autorización explícita del responsable.
@@ -753,11 +760,18 @@ def schedule(jobs: List[dict], machines: List[dict], cfg: dict, cal: Calendar,
                 next((j for j in pool if j.get("_lock") == n), None)
         heads = {n: head(n) for n in state}
         busy = sorted([n for n in state if heads[n]], key=lambda n: _sort_key(heads[n]))
-        free_pool = any(j.get("_lock") is None for j in pool)
-        idle = [n for n in state if not heads[n]] if free_pool else []
-        running = (busy + idle)[:crews]
+        # Libres: sólo tantas como trabajos sin amarrar hay que tomar (una
+        # máquina vacía sin nada que hacer no le quita gente a las demás).
+        free = [j for j in pool if j.get("_lock") is None]
+        idle = [n for n in state if not heads[n] and any(fits(state[n], j) for j in free)][:len(free)]
+        if cfg.get("crews_share_machines"):
+            running = busy + idle
+            share = min(1.0, crews / len(running)) if running else 1.0
+        else:
+            running = (busy + idle)[:crews]
+            share = 1.0
         alto_in_shift: Dict[str, int] = {}
-        cap = cap_shift * frac
+        cap = cap_shift * frac * share
         used = {n: 0.0 for n in running}
         open_m = set(running)
         # Tiempo real dentro del turno: siempre avanza la máquina que va más

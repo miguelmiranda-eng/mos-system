@@ -510,5 +510,22 @@ check("lo que arranca después de la ventana no se amarra (se sigue acomodando)"
       r5["704"].get("locked_machine") == "MAQUINA1" and not r5["705"].get("locked_machine"),
       (r5["705"].get("start"), r5["705"].get("locked_machine")))
 
+print("== Cuadrillas compartidas (crews_share_machines) ==")
+cfgS = cfg_with(shifts=[{"key": "DIA", "start": "07:00", "hours": 12, "crews": 2},
+                        {"key": "NOCHE", "start": "19:00", "hours": 12, "crews": 0}],
+                setup_min_per_color=0, lock_machine_days=0)
+calS = pe.Calendar(cfgS, [], max_machines=4)
+MS4 = [f"MAQUINA{i}" for i in range(1, 5)]
+jS, _ = pe.build_jobs([order(800 + i, 1500, ["FRENTE"], cancel=f"2026-10-{10 + i}") for i in range(8)],
+                      {}, cfgS, calS, MS4, LUNES.date())
+cnt = lambda plan: sorted(sum(1 for j in plan if m in j["machines"]) for m in MS4)
+shared = pe.schedule(jS, machines(4), cfgS, calS, LUNES, 1.0, {})
+fixed = pe.schedule(jS, machines(4), {**cfgS, "crews_share_machines": False}, calS, LUNES, 1.0, {})
+check("compartidas: 8 órdenes iguales en 4 máquinas = 2 cada una", cnt(shared) == [2, 2, 2, 2], cnt(shared))
+check("(control) cuadrilla fija: sólo corren 2 máquinas", cnt(fixed) == [0, 0, 4, 4], cnt(fixed))
+day1 = lambda plan: sum(s["hits"] for j in plan for s in j["segments"] if s["date"] == "2026-09-28")
+check("la capacidad de la planta no cambia (2 cuadrillas × 4,500 el lunes)",
+      day1(shared) == day1(fixed) == 9000, (day1(shared), day1(fixed)))
+
 print(f"\n{ok} PASS, {fail} FAIL")
 sys.exit(1 if fail else 0)

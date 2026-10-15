@@ -2917,6 +2917,7 @@ const RulesTab = ({ cfgData, canEdit, onSaved, tr }) => {
     body.ready_require_sample = !!form.ready_require_sample;
     body.efficiency_mode = form.efficiency_mode;
     body.efficiency_manual_pct = form.efficiency_manual_pct;
+    body.crews_share_machines = !!form.crews_share_machines;
     body.auto_recalc = !!form.auto_recalc;
     body.auto_recalc_minutes = form.auto_recalc_minutes;
     try {
@@ -2937,6 +2938,12 @@ const RulesTab = ({ cfgData, canEdit, onSaved, tr }) => {
                 onChange={(v) => setForm({ ...form, [k]: v })} /></label>
           ))}
         </div>
+        <label className="mt-4 flex items-start gap-2 text-sm text-slate-700">
+          <input type="checkbox" checked={!!form.crews_share_machines} disabled={!canEdit}
+            onChange={(e) => setForm({ ...form, crews_share_machines: e.target.checked })} className="w-4 h-4 mt-0.5" />
+          <span>{tr("plan_r_crews_share")}
+            <span className="block text-xs text-slate-400">{tr("plan_r_crews_share_hint")}</span></span>
+        </label>
       </Card>
       <Card className="p-4">
         <SectionTitle hint={tr("plan_auto_hint")}>{tr("plan_auto_title")}</SectionTitle>

@@ -265,8 +265,12 @@ async def main():
         print("\n== Motor en modo sombra ==")
         r = await sup.put("/api/planner/config", json={"engine_mode": "shadow"})
         check("encender en modo sombra", r.status_code == 200 and r.json()["config"]["engine_mode"] == "shadow")
+        # MAQUINA3 apagada sólo para esta corrida (con cuadrillas compartidas
+        # toda máquina activa recibe trabajo; arriba se le borraron los ajustes).
+        await sup.put("/api/planner/machines/MAQUINA3", json={"active": False})
         antes = {o["order_id"]: o for o in sdb.orders.find({}, {"_id": 0})}
         r = await sup.post("/api/planner/shadow-run")
+        await sup.put("/api/planner/machines/MAQUINA3", json={"active": True})
         check("corrida 200", r.status_code == 200, r.text[:300])
         run = r.json()
         despues = {o["order_id"]: o for o in sdb.orders.find({}, {"_id": 0})}
@@ -277,7 +281,7 @@ async def main():
         check("SURTIDO sí se programa", "ord_b:FRENTE" in jobs)
         check("completada no entra", not any(j.startswith("ord_e") for j in jobs))
         check("máquina inactiva no recibe trabajo",
-              all("MAQUINA3" not in j["machines"] for j in run["jobs"]))
+              all("MAQUINA3" not in j["machines"] for j in run["jobs"]), [(j["job_id"], j["machines"]) for j in run["jobs"]])
         check("la que ya está en MAQUINA2 sigue ahí",
               any("MAQUINA2" in jobs[k]["machines"] for k in jobs if k.startswith("ord_d")))
         check("movimientos propuestos no incluyen la que ya está montada",
