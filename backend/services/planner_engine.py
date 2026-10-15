@@ -97,6 +97,10 @@ DEFAULT_CONFIG = {
     # parejo y nada se queda parado en una máquina "sin gente".
     # False = una cuadrilla fija por máquina (sólo corren N máquinas).
     "crews_share_machines": True,
+    # Mismo Design # (mismo arte) y misma posición = mismos cuadros: van a la
+    # MISMA máquina y, si no hay algo más urgente (prioridad o ajuste manual),
+    # una tras otra sin setup.
+    "group_same_design": True,
     # off = apagado (no calcula nada) | shadow = calcula y muestra, NO mueve
     # órdenes. El modo que mueve tableros no existe todavía: se habilita en
     # otra fase, con autorización explícita del responsable.
@@ -644,7 +648,7 @@ def schedule(jobs: List[dict], machines: List[dict], cfg: dict, cal: Calendar,
     pool.sort(key=_sort_key)
     meta = {j["job_id"]: j for j in pool}      # _manual / _warnings llegan a la salida
     state = {m["machine"]: {"cfg": m, "current": None, "last_color": None, "last_design": None,
-                            "last_po": None, "queue": []} for m in active}
+                            "last_po": None, "last_key": None, "queue": []} for m in active}
     machine_order = {m["machine"]: i for i, m in enumerate(active)}
 
     # 1) Reprogramados a mano: van a la cola de SU máquina, en su lugar.
@@ -705,14 +709,53 @@ def schedule(jobs: List[dict], machines: List[dict], cfg: dict, cal: Calendar,
     def eligible(j, d):
         return j.get("_not_before") is None or j["_not_before"] <= d
 
+    # Mismo arte: llave = (Design #, posición). Cuando una máquina tiene o toma
+    # un trabajo, sus hermanos del pool quedan amarrados a ella (compiten ahí
+    # por urgencia, como el candado).
+    group_on = bool(cfg.get("group_same_design"))
+
+    def art_key(j):
+        dz = str(j.get("design") or "").strip().upper()
+        return (dz, str(j.get("position") or "").upper()) if dz else None
+
+    def bind_siblings(j, mname):
+        k = art_key(j) if group_on else None
+        if not k:
+            return
+        for x in pool:
+            if x is not j and not x.get("_lock") and art_key(x) == k and fits(state[mname], x):
+                x["_lock"] = mname
+
+    for mname, st in state.items():
+        for j in ([st["current"]] if st["current"] else []) + st["queue"]:
+            bind_siblings(j, mname)
+
+    def taken(mname, j):
+        """Al montar un trabajo: amarra a sus hermanos; si es el mismo arte que
+        lo anterior de la máquina, los cuadros ya están puestos (sin setup)."""
+        m = state[mname]
+        if group_on and art_key(j) and art_key(j) == m["last_key"]:
+            j["setup_left"] = 0
+        bind_siblings(j, mname)
+        return j
+
     def pick(mname, alto_in_shift, running, d):
         m = state[mname]
         for i, j in enumerate(m["queue"]):
             if eligible(j, d):
-                return m["queue"].pop(i)
+                return taken(mname, m["queue"].pop(i))
         cands = [j for j in pool if fits(m, j) and eligible(j, d) and j.get("_lock") in (None, mname)]
         if not cands:
             return None
+        # Mismo arte que lo que acaba de salir: sigue de corrido, salvo que haya
+        # algo de más prioridad (RUSH…) o subido a mano.
+        if group_on and m["last_key"]:
+            top = _sort_key(cands[0])
+            sib = next((j for j in cands if art_key(j) == m["last_key"]
+                        and _sort_key(j)[0] <= top[0] and _sort_key(j)[2] <= top[2]), None)
+            if sib:
+                pool.remove(sib)
+                return taken(mname, sib)
         # Dedicación: si la máquina está dedicada a un cliente y ese cliente
         # tiene trabajo elegible, prioriza FUERTE (toma lo suyo aunque otro
         # cliente traiga algo más urgente); si no hay, toma los demás para no
@@ -742,7 +785,7 @@ def schedule(jobs: List[dict], machines: List[dict], cfg: dict, cal: Calendar,
             if alt:
                 choice = alt
         pool.remove(choice)
-        return choice
+        return taken(mname, choice)
 
     for d, shift, w0, w1, full, crews in _shift_windows(cfg, cal, start, cfg["horizon_weeks"]):
         if not pool and all(s["current"] is None and not s["queue"] for s in state.values()):
@@ -816,6 +859,7 @@ def schedule(jobs: List[dict], machines: List[dict], cfg: dict, cal: Calendar,
                 m["last_color"] = j["color"]
                 m["last_design"] = j.get("design")
                 m["last_po"] = j.get("customer_po")
+                m["last_key"] = art_key(j)
                 j.pop("_counted_alto", None)
 
     # Lo que quedó en máquina o en el pool sin terminar dentro del horizonte.

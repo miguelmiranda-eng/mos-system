@@ -527,5 +527,32 @@ day1 = lambda plan: sum(s["hits"] for j in plan for s in j["segments"] if s["dat
 check("la capacidad de la planta no cambia (2 cuadrillas × 4,500 el lunes)",
       day1(shared) == day1(fixed) == 9000, (day1(shared), day1(fixed)))
 
+print("== Mismo Design # en la misma máquina (group_same_design) ==")
+cfgG = cfg_with(shifts=[{"key": "DIA", "start": "07:00", "hours": 12, "crews": 2},
+                        {"key": "NOCHE", "start": "19:00", "hours": 12, "crews": 0}], lock_machine_days=0)
+calG = pe.Calendar(cfgG, [], max_machines=2)
+jG, _ = pe.build_jobs([order(900, 1500, ["FRENTE"], cancel="2026-10-10", **{"design_#": "TS00872M1000"}),
+                       order(901, 1500, ["FRENTE"], cancel="2026-10-11", **{"design_#": "OTRO1"}),
+                       order(902, 1500, ["FRENTE"], cancel="2026-10-12", **{"design_#": "OTRO2"}),
+                       order(903, 1500, ["FRENTE"], cancel="2026-10-20", **{"design_#": "ts00872m1000"})],
+                      {}, cfgG, calG, MS2, LUNES.date())
+pg = {j["order_number"]: j for j in pe.schedule(jG, machines(2), cfgG, calG, LUNES, 1.0, {})}
+pn = {j["order_number"]: j for j in pe.schedule(jG, machines(2), {**cfgG, "group_same_design": False}, calG, LUNES, 1.0, {})}
+check("(control) sin agrupar, la 903 cae en la otra máquina", pn["903"]["machines"] != pn["900"]["machines"],
+      (pn["900"]["machines"], pn["903"]["machines"]))
+check("mismo Design # = misma máquina", pg["903"]["machines"] == pg["900"]["machines"],
+      (pg["900"]["machines"], pg["903"]["machines"]))
+check("y de corrido, sin setup (mismos cuadros)",
+      pg["903"]["start"] == pg["900"]["end"] and pg["903"]["segments"][0]["setup_hits"] == 0,
+      (pg["900"]["end"], pg["903"]["start"], pg["903"]["segments"][0]["setup_hits"]))
+cfgG1 = {**cfgG, "shifts": [{"key": "DIA", "start": "07:00", "hours": 12, "crews": 1},
+                            {"key": "NOCHE", "start": "19:00", "hours": 12, "crews": 0}]}
+jR, _ = pe.build_jobs([order(910, 1000, ["FRENTE"], board="MAQUINA1", **{"design_#": "ARTE"}),
+                       order(911, 1000, ["FRENTE"], cancel="2026-10-20", priority="RUSH", **{"design_#": "URGE"}),
+                       order(912, 1000, ["FRENTE"], **{"design_#": "ARTE"})], {}, cfgG1, calG, ["MAQUINA1"], LUNES.date())
+pr = {j["order_number"]: j for j in pe.schedule(jR, machines(1), cfgG1, calG, LUNES, 1.0, {"o910": "MAQUINA1"})}
+check("una RUSH sí pasa antes que el hermano de arte", pr["911"]["start"] < pr["912"]["start"],
+      (pr["911"]["start"], pr["912"]["start"]))
+
 print(f"\n{ok} PASS, {fail} FAIL")
 sys.exit(1 if fail else 0)
