@@ -194,8 +194,12 @@ p2 = {j["position"]: j for j in plan2}
 check("frente y espalda NO al mismo tiempo: la espalda arranca cuando termina el frente",
       p2["ESPALDA"]["start"] >= p2["FRENTE"]["end"], (p2["FRENTE"]["end"], p2["ESPALDA"]["start"]))
 plan2b = {j["position"]: j for j in pe.schedule(j2, machines(2), {**cfg2, "min_orders_per_machine": 0}, cal2b, LUNES, 1.0, {})}
-check("aunque vayan en otra máquina, la espalda espera al frente",
-      plan2b["ESPALDA"]["start"] >= plan2b["FRENTE"]["end"], (plan2b["FRENTE"]["end"], plan2b["ESPALDA"]["start"]))
+check("en otra máquina, la espalda arranca con lo que ya salió del frente (flujo por lotes)",
+      plan2b["FRENTE"]["start"] < plan2b["ESPALDA"]["start"] < plan2b["FRENTE"]["end"]
+      and plan2b["ESPALDA"]["machines"] != plan2b["FRENTE"]["machines"],
+      (plan2b["FRENTE"]["start"], plan2b["ESPALDA"]["start"], plan2b["FRENTE"]["end"]))
+check("y nunca se adelanta: la espalda no termina antes que el frente",
+      plan2b["ESPALDA"]["end"] >= plan2b["FRENTE"]["end"], (plan2b["FRENTE"]["end"], plan2b["ESPALDA"]["end"]))
 plan2c = {j["position"]: j for j in pe.schedule(j2, machines(2), {**cfg2, "min_orders_per_machine": 0,
                                                                     "positions_in_sequence": False}, cal2b, LUNES, 1.0, {})}
 check("(control) sin la regla sí irían en paralelo", plan2c["ESPALDA"]["start"] < plan2c["FRENTE"]["end"])
@@ -634,26 +638,43 @@ check("y ya no sale en sugerencias", "1401" not in [s["order_number"] for s in p
 pT3 = {j["order_number"] for j in pe.schedule(jT, machines(2), {**cfgT, "tests_manual": False}, calT, LUNES, 1.0, {})}
 check("(control) con la regla apagada el motor sí las programa", "1401" in pT3)
 
-print("== Fijada a mano que espera a su FRENTE: se le guarda el lugar ==")
+print("== Flujo por lotes: el caso de la 2846 (1,588 frentes ya impresos) ==")
 cfgW = cfg_with(shifts=[{"key": "DIA", "start": "07:00", "hours": 12, "crews": 2},
                         {"key": "NOCHE", "start": "19:00", "hours": 12, "crews": 0}],
                 setup_min_per_color=0, lock_machine_days=0, min_orders_per_machine=0)
 calW = pe.Calendar(cfgW, [], max_machines=2)
-jW, _ = pe.build_jobs([order(1500, 2000, ["FRENTE", "ESPALDA"], cancel="2026-10-01"),
-                       order(1501, 3000, ["FRENTE"], cancel="2026-10-20"),
-                       order(1502, 200, ["FRENTE"], cancel="2026-10-25")], {}, cfgW, calW, MS2, LUNES.date())
+jW, _ = pe.build_jobs([order(1500, 3230, ["FRENTE", "ESPALDA"], cancel="2026-10-01"),
+                       order(1501, 3000, ["FRENTE"], cancel="2026-10-20")],
+                      {"o1500": {"FRENTE": 1588}}, cfgW, calW, MS2, LUNES.date())
 ovW = {"o1500:FRENTE": {"assign": {"machine": "MAQUINA2", "queue_pos": 1}},
        "o1500:ESPALDA": {"assign": {"machine": "MAQUINA1", "queue_pos": 1}},
        "o1501:FRENTE": {"assign": {"machine": "MAQUINA1", "queue_pos": 2}}}
 pw = {f'{j["order_number"]}{j["position"][0]}': j for j in pe.schedule(jW, machines(2), cfgW, calW, LUNES, 1.0, {}, ovW)}
-check("la ESPALDA fijada #1 arranca en cuanto termina su FRENTE (no se la brinca la grande)",
-      pw["1500E"]["start"] == pw["1500F"]["end"] and pw["1500E"]["machines"] == ["MAQUINA1"],
-      (pw["1500F"]["end"], pw["1500E"]["start"]))
+check("con 1,588 frentes ya impresos, la ESPALDA fijada #1 arranca YA en su máquina",
+      pw["1500E"]["start"] == LUNES.isoformat() and pw["1500E"]["machines"] == ["MAQUINA1"],
+      (pw["1500E"]["start"], pw["1500E"]["machines"]))
+check("la espalda no termina antes que el frente", pw["1500E"]["end"] >= pw["1500F"]["end"],
+      (pw["1500F"]["end"], pw["1500E"]["end"]))
 check("la grande (#2) va después de la ESPALDA", pw["1501F"]["start"] >= pw["1500E"]["end"],
       (pw["1500E"]["end"], pw["1501F"]["start"]))
-check("mientras espera, la máquina hace lo chico que sí cabe",
-      pw["1502F"]["machines"] == ["MAQUINA1"] and pw["1502F"]["end"] <= pw["1500E"]["start"],
-      (pw["1502F"]["machines"], pw["1502F"].get("end"), pw["1500E"]["start"]))
+
+print("== Fijada que espera a que su FRENTE saque piezas: se le guarda el lugar ==")
+cfgW2 = {**cfgW, "setup_min_per_color": 15}
+jW2, _ = pe.build_jobs([order(1550, 2000, ["FRENTE", "ESPALDA"], cancel="2026-10-01"),
+                        order(1551, 3000, ["FRENTE"], cancel="2026-10-20"),
+                        order(1552, 100, ["FRENTE"], cancel="2026-10-25", colors=1)], {}, cfgW2, calW, MS2, LUNES.date())
+ovW2 = {"o1550:FRENTE": {"assign": {"machine": "MAQUINA2", "queue_pos": 1}},
+        "o1550:ESPALDA": {"assign": {"machine": "MAQUINA1", "queue_pos": 1}},
+        "o1551:FRENTE": {"assign": {"machine": "MAQUINA1", "queue_pos": 2}}}
+pw2 = {f'{j["order_number"]}{j["position"][0]}': j for j in pe.schedule(jW2, machines(2), cfgW2, calW, LUNES, 1.0, {}, ovW2)}
+check("la ESPALDA arranca cuando su FRENTE ya sacó piezas (no espera a que termine)",
+      pw2["1550F"]["start"] < pw2["1550E"]["start"] < pw2["1550F"]["end"],
+      (pw2["1550F"]["start"], pw2["1550E"]["start"], pw2["1550F"]["end"]))
+check("la grande (#2) no se le adelanta", pw2["1551F"]["start"] >= pw2["1550E"]["end"],
+      (pw2["1550E"]["end"], pw2["1551F"]["start"]))
+check("mientras su frente monta, la máquina hace lo chico que sí cabe",
+      pw2["1552F"]["machines"] == ["MAQUINA1"] and pw2["1552F"]["end"] <= pw2["1550E"]["start"],
+      (pw2["1552F"]["machines"], pw2["1552F"].get("end"), pw2["1550E"]["start"]))
 
 print("== Cancel date manda sobre 'está en el tablero' ==")
 jB, _ = pe.build_jobs([order(1600, 1000, ["FRENTE"], cancel="2026-10-28", board="MAQUINA1"),
@@ -671,8 +692,8 @@ pf = {j["order_number"]: j["start"] for j in pe.schedule(jF, machines(1), cfgW, 
 check("fijada a mano SIN lugar entra por cancel date (no al final)", pf["1701"] < pf["1700"], pf)
 jE, _ = pe.build_jobs([order(1800, 1000, ["FRENTE", "ESPALDA"])], {"o1800": {"ESPALDA": 100}}, cfgW, calW, MS2, LUNES.date())
 pe_ = {j["position"]: j for j in pe.schedule(jE, machines(2), cfgW, calW, LUNES, 1.0, {})}
-check("si ya arrancaron por la ESPALDA, el FRENTE espera a la espalda (nunca al mismo tiempo)",
-      pe_["FRENTE"]["start"] >= pe_["ESPALDA"]["end"], (pe_["ESPALDA"]["end"], pe_["FRENTE"]["start"]))
+check("si ya arrancaron por la ESPALDA, el FRENTE va detrás de ella (nunca la adelanta)",
+      pe_["FRENTE"]["end"] >= pe_["ESPALDA"]["end"], (pe_["ESPALDA"]["end"], pe_["FRENTE"]["end"]))
 
 print("== Carrusel respeta el candado de cada posición ==")
 cfgL2 = {**cfgW, "min_orders_per_machine": 4, "lock_machine_days": 3}
