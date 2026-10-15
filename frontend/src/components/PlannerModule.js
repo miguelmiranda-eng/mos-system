@@ -714,8 +714,10 @@ const fmtDay = (iso, lang) => {
 const BoardCard = ({ job, segs, seq, live, today, onAdjust, draggable, tr, lang }) => {
   const first = segs[0];
   const last = segs[segs.length - 1];
-  const when = (s) => `${s.date === today ? tr("plan_board_today") : fmtDay(s.date, lang)} · ${
-    s.shift === "DIA" ? tr("plan_shift_day") : tr("plan_shift_night")}`;
+  // La fila es una cola (lo que no termina un turno lo termina el siguiente):
+  // no se dice turno, sólo cuándo termina aprox.
+  const endDay = (last.end || "").slice(0, 10);
+  const ends = endDay ? tr("plan_board_ends", { d: endDay === today ? tr("plan_board_today") : fmtDay(endDay, lang) }) : "";
   const pos = String(job.position || "").toUpperCase();
   const posLabel = tr(`plan_pos_${pos}`) === `plan_pos_${pos}` ? job.position : tr(`plan_pos_${pos}`);
   const status = live?.production_status || "";
@@ -764,10 +766,7 @@ const BoardCard = ({ job, segs, seq, live, today, onAdjust, draggable, tr, lang 
             </div>
           </div>
           <div className="ml-auto text-right shrink-0">
-            <div className="text-[11px] font-bold text-slate-600 whitespace-nowrap">{when(first)}</div>
-            {last !== first && (last.date !== first.date || last.shift !== first.shift) && (
-              <div className="text-[10px] text-slate-400 whitespace-nowrap">→ {when(last)}</div>
-            )}
+            <div className="text-[11px] font-bold text-slate-500 whitespace-nowrap">{ends}</div>
           </div>
         </div>
 
@@ -1118,8 +1117,11 @@ const TvTile = ({ col, live, op, today, now, wide, tr, lang }) => {
   const pos = String(job?.position || "").toUpperCase();
   const posLabel = tr(`plan_pos_${pos}`) === `plan_pos_${pos}` ? job?.position : tr(`plan_pos_${pos}`);
   const opStale = op?.at && now - new Date(op.at).getTime() > 12 * 3600000;
-  const when = (sg) => `${sg.date === today ? tr("plan_board_today") : fmtDay(sg.date, lang)} · ${
-    sg.shift === "DIA" ? tr("plan_shift_day") : tr("plan_shift_night")}`;
+  // Sin turno: la fila es una cola. Sólo cuándo termina aprox.
+  const ends = (segs) => {
+    const d = ((segs || []).slice(-1)[0]?.end || "").slice(0, 10);
+    return d ? tr("plan_board_ends", { d: d === today ? tr("plan_board_today") : fmtDay(d, lang) }) : "";
+  };
   const started = job && (job.started || printed > 0);
   const muted = { color: "#64748b" };
   return (
@@ -1174,7 +1176,7 @@ const TvTile = ({ col, live, op, today, now, wide, tr, lang }) => {
               <span className="text-[24px] leading-none font-black tabular-nums">{fmt(job.quantity)}</span>
               <span className="text-[12px]" style={muted}>{tr("plan_tv_pcs")}</span>
               {printed > 0 && <span className="text-[13px] font-bold tabular-nums" style={{ color: "#047857" }}>{pct}%</span>}
-              <span className="ml-auto min-w-0 truncate text-[12px] font-bold" style={{ color: "#475569" }}>{when(cur.segs[0])}</span>
+              <span className="ml-auto min-w-0 truncate text-[12px] font-bold" style={{ color: "#475569" }}>{ends(cur.segs)}</span>
             </div>
             <div className="h-1.5 rounded-full overflow-hidden" style={{ background: "#e2e8f0" }}>
               <div className="h-full" style={{ width: `${pct}%`, background: "#10b981" }} />
@@ -1217,7 +1219,7 @@ const TvTile = ({ col, live, op, today, now, wide, tr, lang }) => {
                   </div>
                   <div className="flex items-baseline gap-1.5 min-w-0 text-[11px]">
                     <span className="truncate" style={{ color: "#475569" }}>{x.job.branding || x.job.client}</span>
-                    <span className="ml-auto shrink-0" style={muted}>{when(x.segs[0])}</span>
+                    <span className="ml-auto shrink-0" style={muted}>{ends(x.segs)}</span>
                   </div>
                 </div>
               </div>

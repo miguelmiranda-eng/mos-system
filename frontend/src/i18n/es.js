@@ -6048,6 +6048,7 @@ const es = {
   plan_board_orders: "{n} en fila",
   plan_board_until: "ocupada hasta {d}",
   plan_board_today: "Hoy",
+  plan_board_ends: "Termina aprox. {d}",
   plan_board_pieces: "piezas",
   plan_board_printed: "{a} de {b} impresiones hechas",
   plan_board_colors: "{n} colores",

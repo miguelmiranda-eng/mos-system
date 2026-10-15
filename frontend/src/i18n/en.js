@@ -6234,6 +6234,7 @@ const en = {
   plan_board_orders: "{n} in queue",
   plan_board_until: "busy until {d}",
   plan_board_today: "Today",
+  plan_board_ends: "Ends approx. {d}",
   plan_board_pieces: "pieces",
   plan_board_printed: "{a} of {b} impressions done",
   plan_board_colors: "{n} colors",
