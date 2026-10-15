@@ -799,6 +799,9 @@ const BoardCard = ({ job, segs, seq, live, today, onAdjust, draggable, tr, lang 
               {garment}
             </span>
           )}
+          {job.is_test && (
+            <span className="px-1.5 py-0.5 rounded-md bg-violet-100 text-violet-800 text-[11px] font-black">TEST</span>
+          )}
           <KindBadge kind={job.kind === "NUEVA" ? job.kind : null} state={job.sample_state} tr={tr} />
           <ExtraWorkBadge extra={job.extra_work} tr={tr} />
           {others.length > 0 && (
@@ -1422,7 +1425,64 @@ const PlannerTV = () => {
    tablero MAQUINA por el mismo camino que un movimiento manual del CRM
    (candado QC, guardas, bitácora, automatizaciones). Todo se puede revertir
    desde "Movimientos autorizados". */
+/* Test Orders: el motor NO las programa (las programa una persona); aquí sólo
+   se sugiere máquina y desde cuándo, por cancel date. Sin autorizar: se suben
+   a mano (CRM) o se fijan con Ajustar, y desde ahí el motor ya las cuenta. */
+const TestSuggestions = ({ run, canEdit, onAdjust, tr }) => {
+  const rows = run.test_suggestions || [];
+  const { lang } = useLang();
+  if (!rows.length) return <Empty>{tr("plan_tests_empty")}</Empty>;
+  return (
+    <div className="overflow-x-auto">
+      <table className="min-w-full text-sm">
+        <thead><tr className="text-left text-[11px] uppercase tracking-wider text-slate-400">
+          <th className="py-2 pr-4">{tr("plan_order")}</th><th className="pr-4">{tr("plan_tests_branding")}</th>
+          <th className="pr-4">{tr("plan_board")}</th><th className="pr-4">{tr("plan_cancel")}</th>
+          <th className="pr-4 text-right">{tr("plan_board_pieces")}</th><th className="pr-4">{tr("plan_positions")}</th>
+          <th className="pr-4">{tr("plan_missing")}</th><th className="pr-4">{tr("plan_tests_suggested")}</th><th />
+        </tr></thead>
+        <tbody className="divide-y divide-slate-100">
+          {rows.map((r) => (
+            <tr key={r.order_id}>
+              <td className="py-2 pr-4 font-black whitespace-nowrap">{r.order_number}</td>
+              <td className="pr-4 text-xs text-slate-500">{r.branding}</td>
+              <td className="pr-4 text-xs">{r.board}</td>
+              <td className={`pr-4 text-xs tabular-nums whitespace-nowrap ${r.overdue ? "text-red-600 font-bold" : ""}`}>
+                {r.cancel_date ? fmtDate(r.cancel_date, lang) : "—"}
+              </td>
+              <td className="pr-4 text-right tabular-nums">{fmt(r.quantity)}</td>
+              <td className="pr-4 text-xs text-slate-500">{(r.positions || []).join(" → ")}</td>
+              <td className="pr-4">{r.is_ready
+                ? <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-50 text-emerald-700">{tr("plan_tests_ready")}</span>
+                : <ReadyBadges ready={r.ready} tr={tr} />}</td>
+              <td className="pr-4 whitespace-nowrap">
+                {r.suggested_machine ? (
+                  <span className="font-bold text-violet-700">{r.suggested_machine.replace("MAQUINA", "M")}
+                    <span className="ml-1 text-[11px] font-normal text-slate-400">
+                      {tr("plan_tests_from", { d: `${dday(r.est_start)} ${hhmm(r.est_start)}` })}
+                    </span>
+                  </span>
+                ) : <span className="text-xs text-red-600">{tr("plan_tests_no_machine")}</span>}
+              </td>
+              <td>{canEdit && (
+                <button onClick={() => onAdjust({ order_id: r.order_id, order_number: r.order_number, client: r.client,
+                  position: (r.positions || [])[0], machines: r.suggested_machine ? [r.suggested_machine] : [],
+                  target_date: r.target_date, ready: r.ready })}
+                  className="px-2.5 h-7 rounded-lg border border-slate-300 text-slate-700 text-xs font-bold inline-flex items-center gap-1 hover:border-violet-300 hover:text-violet-700">
+                  <SlidersHorizontal className="w-3.5 h-3.5" />{tr("plan_tests_program")}
+                </button>
+              )}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+};
+
 const MovesCard = ({ run, canEdit, onApply, onAdjust, tr }) => {
+  const [view, setView] = useState("moves");
+  const tests = run.test_suggestions || [];
   const moves = run.moves || [];
   const rowMode = (run.row_min || 0) > 0;
   const fillers = moves.filter((m) => m.kind === "filler").length;
@@ -1437,8 +1497,29 @@ const MovesCard = ({ run, canEdit, onApply, onAdjust, tr }) => {
     setBusy(true);
     try { await onApply(confirm.map((m) => m.order_id)); setConfirm(null); setSel([]); } finally { setBusy(false); }
   };
+  const tabs = (
+    <div className="mb-3 inline-flex rounded-lg border border-slate-200 p-0.5">
+      {[["moves", tr("plan_moves_title"), moves.length], ["tests", tr("plan_tests_tab"), tests.length]].map(([k, label, n]) => (
+        <button key={k} onClick={() => setView(k)}
+          className={`h-8 px-3 rounded-md text-xs font-bold ${view === k
+            ? (k === "tests" ? "bg-violet-700 text-white" : "bg-slate-800 text-white") : "text-slate-600"}`}>
+          {label} <span className="opacity-70 ml-0.5">{n}</span>
+        </button>
+      ))}
+    </div>
+  );
+  if (view === "tests") {
+    return (
+      <Card className="p-4">
+        {tabs}
+        <SectionTitle hint={tr("plan_tests_hint")}>{tr("plan_tests_title")} ({tests.length})</SectionTitle>
+        <TestSuggestions run={run} canEdit={canEdit} onAdjust={onAdjust} tr={tr} />
+      </Card>
+    );
+  }
   return (
     <Card className="p-4">
+      {tabs}
       <div className="flex flex-wrap items-start gap-2">
         <SectionTitle hint={rowMode ? tr("plan_moves_hint_rows", { n: run.row_min })
           : (canEdit ? tr("plan_moves_hint_auth") : tr("plan_moves_hint"))}>
@@ -2952,6 +3033,7 @@ const RulesTab = ({ cfgData, canEdit, onSaved, tr }) => {
     body.group_same_design = !!form.group_same_design;
     body.fill_with_incomplete = !!form.fill_with_incomplete;
     body.positions_in_sequence = !!form.positions_in_sequence;
+    body.tests_manual = !!form.tests_manual;
     body.auto_recalc = !!form.auto_recalc;
     body.auto_recalc_minutes = form.auto_recalc_minutes;
     try {
@@ -2984,7 +3066,8 @@ const RulesTab = ({ cfgData, canEdit, onSaved, tr }) => {
           <span>{tr("plan_r_group_design")}
             <span className="block text-xs text-slate-400">{tr("plan_r_group_design_hint")}</span></span>
         </label>
-        {[["fill_with_incomplete", "plan_r_fill_incomplete"], ["positions_in_sequence", "plan_r_pos_sequence"]].map(([k, label]) => (
+        {[["fill_with_incomplete", "plan_r_fill_incomplete"], ["positions_in_sequence", "plan_r_pos_sequence"],
+          ["tests_manual", "plan_r_tests_manual"]].map(([k, label]) => (
           <label key={k} className="mt-3 flex items-start gap-2 text-sm text-slate-700">
             <input type="checkbox" checked={!!form[k]} disabled={!canEdit}
               onChange={(e) => setForm({ ...form, [k]: e.target.checked })} className="w-4 h-4 mt-0.5" />

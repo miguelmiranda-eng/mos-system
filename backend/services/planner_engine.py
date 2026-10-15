@@ -79,6 +79,10 @@ DEFAULT_CONFIG = {
     # Test Orders (programa SPENCERS TEST): se identifican por el branding.
     # Se separan en el dashboard de producción. Patrón (contiene), editable.
     "test_branding_patterns": ["TEST"],
+    # Las Test Orders las programa una PERSONA: el motor no las mete al
+    # programa (filas, relleno, movimientos); sólo SUGIERE máquina. Si alguien
+    # ya la subió a un tablero de máquina o la fijó con Ajustar, sí cuenta.
+    "tests_manual": True,
     # Umbrales de la auditoría de producción (excepciones).
     "audit_printed_pct": 90,        # impresa ≥ esto pero status sin avanzar = atrasada
     "audit_no_movement_days": 3,    # orden en máquina sin registro en estos días
@@ -561,6 +565,7 @@ def build_jobs(orders: List[dict], produced: Dict[str, Dict[str, int]], cfg: dic
                 "is_ready": all(ready.values()),
                 "started": started,
                 "target_date": target.isoformat() if target else None,
+                "is_test": is_test_branding(o.get("branding"), cfg),
                 "_pos_rank": pos_rank.get(str(pos).upper(), len(pos_order)),
                 "_pack_rank": pack_rank.get(str(o.get("packing_type") or "").strip().upper(), len(pack_order)),
             })
@@ -610,6 +615,73 @@ def _held(ov: dict, today: date) -> bool:
     return until is None or until >= today
 
 
+def is_manual_test(j: dict, ov: dict, cfg: dict) -> bool:
+    """Test Order que el motor NO programa: la programa una persona
+    (tests_manual). Si ya arrancó / está en tablero de máquina o alguien la
+    fijó o forzó con Ajustar, ya la programó una persona y sí cuenta."""
+    return bool(cfg.get("tests_manual") and j.get("is_test") and not j.get("started")
+                and not ({"assign", "force"} & set(ov or {})))
+
+
+def suggest_tests(jobs: List[dict], scheduled: List[dict], machines: List[dict], cfg: dict,
+                  start: datetime, overrides: Optional[Dict[str, dict]] = None) -> List[dict]:
+    """Sugerencias para las Test Orders que programa una persona: a qué máquina
+    iría y desde cuándo (aprox.). Una orden por renglón, por cancel date.
+    Máquina = la que se libera primero de lo ya programado (su cliente
+    dedicado primero, que le alcancen las cabezas); cada sugerencia ocupa
+    esa máquina el tiempo estimado (hits ÷ rate_pph + setup), así se reparten.
+    No mueve nada ni entra al programa."""
+    overrides = overrides or {}
+    today = start.date()
+    active = [m for m in machines if m.get("active")]
+    free = {m["machine"]: start for m in active}
+    for j in scheduled:
+        for s in j.get("segments") or []:
+            if s["machine"] in free:
+                free[s["machine"]] = max(free[s["machine"]], datetime.fromisoformat(s["end"]))
+    rate = float(cfg["rate_pph"]) or 1.0
+    by_order: Dict[str, list] = {}
+    for j in jobs:
+        ov = overrides.get(j["job_id"], {})
+        if is_manual_test(j, ov, cfg) and not _held(ov, today):
+            by_order.setdefault(j["order_id"], []).append(j)
+    groups = sorted(by_order.values(), key=lambda js: (min(x.get("target_date") or "9999-12-31" for x in js),
+                                                      min(_sort_key(x) for x in js)))
+    order_idx = {m["machine"]: i for i, m in enumerate(active)}
+    out = []
+    for js in groups:
+        js.sort(key=lambda x: (x.get("_pos_rank", 0), str(x["position"])))
+        colors = max(int(x.get("colors") or 0) for x in js)
+        client = str(js[0].get("client") or "").upper()
+        opts = [m for m in active if colors <= int(m.get("heads") or HEADS_MAX)]
+        best = None
+        if opts:
+            def rank(m):
+                pc = (m.get("preferred_client") or "").strip().upper()
+                mine = bool(pc and pc in client)
+                return (0 if mine else (2 if m.get("dedicated") and pc else 1),
+                        free[m["machine"]], order_idx[m["machine"]])
+            best = min(opts, key=rank)["machine"]
+        hours = sum(x["remaining"] / rate + x["colors"] * cfg["setup_min_per_color"] / 60.0 for x in js)
+        est_start = free[best] if best else None
+        if best:
+            free[best] = est_start + timedelta(hours=hours)
+        missing = sorted({k for x in js for k, v in (x.get("ready") or {}).items() if not v})
+        j0 = js[0]
+        out.append({"order_id": j0["order_id"], "order_number": j0["order_number"], "client": j0["client"],
+                    "branding": j0["branding"], "board": j0["board"], "cancel_date": j0["cancel_date"],
+                    "target_date": j0.get("target_date"), "quantity": j0["quantity"],
+                    "positions": [x["position"] for x in js], "remaining": round(sum(x["remaining"] for x in js)),
+                    "colors": colors, "colors_known": all(x.get("colors_known", True) for x in js),
+                    "ready": {k: all((x.get("ready") or {}).get(k, True) for x in js) for k in (j0.get("ready") or {})},
+                    "missing": missing, "is_ready": not missing, "kind": j0.get("kind"),
+                    "sample_state": j0.get("sample_state"),
+                    "suggested_machine": best, "est_start": est_start.isoformat() if est_start else None,
+                    "est_hours": round(hours, 1),
+                    "overdue": bool(j0["cancel_date"] and j0["cancel_date"] < today.isoformat())})
+    return out
+
+
 def schedule(jobs: List[dict], machines: List[dict], cfg: dict, cal: Calendar,
              start: datetime, efficiency: float, board_of: Dict[str, str],
              overrides: Optional[Dict[str, dict]] = None, run_rates: Optional[dict] = None,
@@ -654,6 +726,8 @@ def schedule(jobs: List[dict], machines: List[dict], cfg: dict, cal: Calendar,
     for j in jobs:
         ov = overrides.get(j["job_id"], {})
         if _held(ov, today):
+            continue
+        if is_manual_test(j, ov, cfg):
             continue
         if not (j["is_ready"] or j["started"] or "force" in ov):
             if j.get("sample_state") != "HOLD":

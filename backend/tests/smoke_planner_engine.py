@@ -603,5 +603,36 @@ cxl = {j["order_id"]: j["cancel_date"] for j in jC}
 urg = [cxl[r["order_id"]] for r in rows2["MAQUINA1"]]
 check("la fila va por cancel date (golden rule)", urg == sorted(urg), urg)
 
+print("== Test Orders: las programa una persona (tests_manual) ==")
+cfgT = cfg_with(shifts=[{"key": "DIA", "start": "07:00", "hours": 12, "crews": 2},
+                        {"key": "NOCHE", "start": "19:00", "hours": 12, "crews": 0}], lock_machine_days=0)
+calT = pe.Calendar(cfgT, [], max_machines=2)
+ordsT = [order(1400, 800, ["FRENTE"], cancel="2026-10-01"),
+         order(1401, 500, ["FRENTE", "ESPALDA"], cancel="2026-09-30", branding="SPENCERS TEST"),
+         order(1402, 500, ["FRENTE"], cancel="2026-10-05", branding="SPIRIT TEST", ready=False),
+         order(1403, 500, ["FRENTE"], board="MAQUINA2", branding="SPENCERS TEST")]
+jT, _ = pe.build_jobs(ordsT, {}, cfgT, calT, MS2, LUNES.date())
+rowsT = {}
+pT = pe.schedule(jT, machines(2), cfgT, calT, LUNES, 1.0, {"o1403": "MAQUINA2"}, None, None, None, rowsT)
+enplan = {j["order_number"] for j in pT}
+enfila = {r["order_id"] for m in MS2 for r in rowsT[m]}
+check("Test Order lista NO se programa ni entra a la fila", "1401" not in enplan and "o1401" not in enfila, (enplan, enfila))
+check("Test Order incompleta tampoco entra de relleno", "o1402" not in enfila, enfila)
+check("la que una persona ya subió a máquina SÍ cuenta", "1403" in enplan)
+check("la orden normal sí se programa", "1400" in enplan)
+sug = pe.suggest_tests(jT, pT, machines(2), cfgT, LUNES)
+sn = [s["order_number"] for s in sug]
+check("sugerencias: sólo las Test sin programar, por cancel date", sn == ["1401", "1402"], sn)
+s0 = sug[0]
+check("sugerencia trae máquina, posiciones en orden y desde cuándo",
+      s0["suggested_machine"] in MS2 and s0["positions"] == ["FRENTE", "ESPALDA"] and s0["est_start"], s0)
+check("la incompleta dice qué le falta", "contado" in sug[1]["missing"] and not sug[1]["is_ready"], sug[1])
+ovT = {"o1401:FRENTE": {"assign": {"machine": "MAQUINA1"}}, "o1401:ESPALDA": {"assign": {"machine": "MAQUINA1"}}}
+pT2 = {j["order_number"] for j in pe.schedule(jT, machines(2), cfgT, calT, LUNES, 1.0, {"o1403": "MAQUINA2"}, ovT)}
+check("al fijarla con Ajustar, ya la programó una persona: entra", "1401" in pT2, pT2)
+check("y ya no sale en sugerencias", "1401" not in [s["order_number"] for s in pe.suggest_tests(jT, [], machines(2), cfgT, LUNES, ovT)])
+pT3 = {j["order_number"] for j in pe.schedule(jT, machines(2), {**cfgT, "tests_manual": False}, calT, LUNES, 1.0, {})}
+check("(control) con la regla apagada el motor sí las programa", "1401" in pT3)
+
 print(f"\n{ok} PASS, {fail} FAIL")
 sys.exit(1 if fail else 0)

@@ -588,6 +588,7 @@ async def main():
             run4 = (await sup.post("/api/planner/shadow-run")).json()
             mv = run4.get("moves") or []
             check("hay movimientos propuestos", len(mv) >= 2, len(mv))
+            check("la corrida trae la lista de Test Orders sugeridas", isinstance(run4.get("test_suggestions"), list))
             check("carrusel: los movimientos llenan la fila de cada máquina",
                   run4.get("row_min") == 4 and all(m.get("slot") and m.get("to_board") for m in mv)
                   and isinstance(run4.get("rows"), dict), (run4.get("row_min"), run4.get("row_target"), mv[:1]))

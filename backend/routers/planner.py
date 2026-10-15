@@ -604,6 +604,8 @@ async def shadow_run(request: Request, trigger: str = "manual", max_age: int = 0
     for j in ctx["jobs"]:
         if j["job_id"] in in_plan:
             continue
+        if pe.is_manual_test(j, ov.get(j["job_id"], {}), ctx["cfg"]):
+            continue          # va en su propia lista (test_suggestions)
         row = {k: j[k] for k in ("job_id", "order_id", "order_number", "client", "branding", "board",
                                  "position", "remaining", "cancel_date", "target_date", "ready", "volume",
                                  "kind", "sample_state", "has_extra_work", "extra_work")}
@@ -646,6 +648,8 @@ async def shadow_run(request: Request, trigger: str = "manual", max_age: int = 0
         "rows": {m: {"total": len(r), "filler": sum(1 for x in r if x.get("kind") == "filler")}
                  for m, r in rows.items() if not m.startswith("_")},
         "row_target": rows.get("_target") or 0,
+        # Test Orders: no las programa el motor; sólo sugiere (las programa una persona).
+        "test_suggestions": pe.suggest_tests(ctx["jobs"], scheduled, ctx["machines"], ctx["cfg"], ctx["now"], ov),
         "row_min": int(ctx["cfg"].get("min_orders_per_machine") or 0),
         "impact": impact,
         "overrides_active": len(active_ov),
