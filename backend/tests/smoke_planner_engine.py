@@ -703,5 +703,19 @@ p5 = {j["job_id"]: j["machines"] for j in pe.schedule(jL5, machines(2), cfgL2, c
                                                        {"o1900:FRENTE": "MAQUINA1"}, {})}
 check("la fila de otra máquina no se lleva una orden con posición amarrada", p5.get("o1900:FRENTE") == ["MAQUINA1"], p5)
 
+print("== Atasco de la MAQUINA8: ESPALDA #1 y su FRENTE #3 en la MISMA máquina ==")
+jM8, _ = pe.build_jobs([order(2000, 1000, ["FRENTE", "ESPALDA"]),
+                        order(2001, 2000, ["FRENTE"], board="MAQUINA1", production_status="EN PRODUCCION")],
+                       {"o2001": {"FRENTE": 500}}, cfgW, calW, MS2, LUNES.date())
+ovM8 = {"o2000:ESPALDA": {"assign": {"machine": "MAQUINA1", "queue_pos": 1}},
+        "o2000:FRENTE": {"assign": {"machine": "MAQUINA1", "queue_pos": 3}},
+        "o2001:FRENTE": {"assign": {"machine": "MAQUINA1"}}}
+pm8 = {f'{j["order_number"]}{j["position"][0]}': j for j in pe.schedule(jM8, machines(1), cfgW, calW, LUNES, 1.0,
+                                                                         {"o2001": "MAQUINA1"}, ovM8)}
+check("no se atasca: nada queda fuera de horizonte", all(j["status"] != "FUERA_DE_HORIZONTE" for j in pm8.values()),
+      {k: j["status"] for k, j in pm8.items()})
+check("el FRENTE (misma fila) va antes que su ESPALDA", pm8["2000F"]["start"] < pm8["2000E"]["start"],
+      (pm8["2000F"]["start"], pm8["2000E"]["start"]))
+
 print(f"\n{ok} PASS, {fail} FAIL")
 sys.exit(1 if fail else 0)

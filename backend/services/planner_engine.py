@@ -1067,20 +1067,35 @@ def schedule(jobs: List[dict], machines: List[dict], cfg: dict, cal: Calendar,
                 g = max(g, first + gap_for(x, mname, used, depth + 1))
         return g
 
+    def pred_running_elsewhere(j, mname, t=None):
+        """¿Van a salir piezas de su posición anterior? Sí si se está
+        imprimiendo en OTRA máquina, o si el programa ya le imprimió piezas
+        más adelante de la hora t. Si está en esta misma fila o no ha
+        arrancado, esperarla atasca la máquina (va primero ella)."""
+        for x in family.get(j["order_id"], []):
+            if x is j:
+                break
+            if x["remaining"] > 1e-6 and any(
+                    s["current"] is x or (not s["current"] and s["queue"] and s["queue"][0] is x)
+                    for n, s in state.items() if n != mname):
+                return True
+        return t is not None and avail_pieces(j) > avail_pieces(j, t) + 1e-6
+
     def pick(mname, alto_in_shift, running, d, used=None, t=None):
         m = state[mname]
         used = used or {}
 
         def ok_t(j, d):                  # a la hora de esta máquina (flujo por lotes)
             return ok(j, d, t)
-        # Algo FIJADO A MANO que espera a su posición anterior (que corre en
-        # otra máquina): la máquina le guarda el lugar. Mientras, sólo toma lo
-        # que termine antes de que se libere; si nada cabe, espera.
+        # Algo FIJADO A MANO que espera a su posición anterior (que se está
+        # imprimiendo en OTRA máquina): la máquina le guarda el lugar. Mientras,
+        # sólo toma lo que termine antes de que salgan piezas; si nada cabe, espera.
         limit = None
         for i, j in enumerate(m["queue"]):
             if ok_t(j, d) and (limit is None or need_of(j) <= limit):
                 return taken(mname, m["queue"].pop(i))
-            if limit is None and "assign" in (j.get("_manual") or []) and eligible(j, d) and avail_pieces(j, t) <= 1e-6:
+            if limit is None and "assign" in (j.get("_manual") or []) and eligible(j, d) \
+                    and avail_pieces(j, t) <= 1e-6 and pred_running_elsewhere(j, mname, t):
                 limit = gap_for(j, mname, used)
         cands = [j for j in pool if fits(m, j) and ok_t(j, d) and j.get("_lock") in (None, mname)
                  and (limit is None or need_of(j) <= limit)]
@@ -1092,7 +1107,7 @@ def schedule(jobs: List[dict], machines: List[dict], cfg: dict, cal: Calendar,
             # la máquina espera un rato en vez de quedarse sin trabajo.
             soon = [j for j in list(m["queue"]) + pool
                     if fits(m, j) and eligible(j, d) and j.get("_lock") in (None, mname)
-                    and avail_pieces(j, t) <= 1e-6 and avail_pieces(j) > 1e-6]
+                    and avail_pieces(j, t) <= 1e-6 and pred_running_elsewhere(j, mname, t)]
             return WAIT if soon else None
         choice = select(mname, m, cands, alto_in_shift, running)
         pool.remove(choice)
@@ -1173,12 +1188,19 @@ def schedule(jobs: List[dict], machines: List[dict], cfg: dict, cal: Calendar,
                 # (~media hora) para no adelantarse a lo que va saliendo.
                 need = min(need, j["setup_left"] + cap / 24.0)
             if need <= 1e-9:
+                # Alcanzó a su posición anterior. Si ésta se imprime en otra
+                # máquina, espera a que salgan piezas; si no (está en una fila o
+                # sin arrancar), se baja de la máquina para no atascarla.
+                if not pred_running_elsewhere(j, mname, t_now):
+                    m["current"] = None
+                    m["queue"].insert(0, j)
+                    continue
                 others = [used[n] for n in open_m if n != mname]
                 later = [u for u in others if u > used[mname] + 1e-9]
                 if not others:
                     open_m.discard(mname)
                     continue
-                used[mname] = min(later) if later else used[mname] + cap / 200.0
+                used[mname] = min(min(later) if later else INF, used[mname] + cap / 48.0)
                 if cap - used[mname] <= 1e-6:
                     open_m.discard(mname)
                 continue
@@ -1194,7 +1216,8 @@ def schedule(jobs: List[dict], machines: List[dict], cfg: dict, cal: Calendar,
             last = rec["segments"][-1] if rec["segments"] else None
             # Con flujo por lotes un trabajo avanza en pedacitos: se juntan los
             # del mismo turno y máquina en un solo segmento.
-            if last and last["machine"] == mname and last["date"] == d.isoformat() and last["shift"] == shift:
+            if (last and last["machine"] == mname and last["date"] == d.isoformat() and last["shift"] == shift
+                    and last["end"] == seg_start.isoformat()):
                 last["_hits"] = last.get("_hits", last["hits"]) + printed
                 last["_setup"] = last.get("_setup", last["setup_hits"]) + setup_take
                 last["hits"], last["setup_hits"] = round(last["_hits"]), round(last["_setup"])
