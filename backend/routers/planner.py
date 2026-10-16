@@ -546,6 +546,28 @@ def _row_moves(rows: dict, scheduled: list, jobs: list, orders: list, machine_na
     return out
 
 
+def _horizon_alerts(scheduled: list, active: list) -> dict:
+    """Lo que NO se pudo programar dentro del horizonte, con su razón, y las
+    máquinas ATASCADAS: con trabajo en su fila pero sin imprimir nada en todo
+    el horizonte (el caso de la MAQUINA8 del 16-oct). Para el aviso rojo del
+    Programa: que nunca pase desapercibido."""
+    rows = []
+    printed = set()
+    for j in scheduled:
+        for s in j.get("segments") or []:
+            if s.get("hits"):
+                printed.add(s["machine"])
+        if j.get("status") == "FUERA_DE_HORIZONTE":
+            r = j.get("horizon_reason") or {}
+            rows.append({"job_id": j["job_id"], "order_number": j["order_number"], "position": j["position"],
+                         "client": j.get("client"), "board": j.get("board"), "cancel_date": j.get("cancel_date"),
+                         "remaining": j.get("remaining_after_horizon"), **{f"r_{k}": v for k, v in r.items()}})
+    queued = {r["r_machine"] for r in rows if r.get("r_machine")}
+    stuck = sorted((m for m in queued if m in set(active) and m not in printed), key=lambda n: machine_number(n) or 0)
+    rows.sort(key=lambda r: (r.get("r_code") != "sin_avance", r.get("r_code") != "espera_posicion", r.get("cancel_date") or "9999"))
+    return {"jobs": rows, "stuck_machines": stuck}
+
+
 def _calendar_windows(ctx) -> list:
     """Todos los turnos del horizonte, semana completa (lunes a domingo),
     con cuántas cuadrillas corren y el festivo si lo hay. La grilla los pinta
@@ -649,6 +671,7 @@ async def shadow_run(request: Request, trigger: str = "manual", max_age: int = 0
                  for m, r in rows.items() if not m.startswith("_")},
         "row_target": rows.get("_target") or 0,
         # Test Orders: no las programa el motor; sólo sugiere (las programa una persona).
+        "horizon_alerts": _horizon_alerts(scheduled, [m["machine"] for m in ctx["active"]]),
         "test_suggestions": pe.suggest_tests(ctx["jobs"], scheduled, ctx["machines"], ctx["cfg"], ctx["now"], ov),
         "row_min": int(ctx["cfg"].get("min_orders_per_machine") or 0),
         "impact": impact,

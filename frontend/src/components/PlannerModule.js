@@ -1695,6 +1695,71 @@ const AppliedMovesCard = ({ rows, canEdit, onRevert, lastResults, tr }) => {
   );
 };
 
+/* Por qué un trabajo no terminó dentro del horizonte (horizon_reason del
+   motor). r viene del trabajo ({code, machine…}) o del aviso (con prefijo r_). */
+const horizonText = (r, tr, weeks) => {
+  const g = (k) => (r[k] !== undefined ? r[k] : r[`r_${k}`]);
+  const M = (m) => String(m || "").replace("MAQUINA", "M");
+  const code = g("code");
+  if (code === "espera_posicion") {
+    if (g("same_row")) return tr("plan_hz_wait_same_row", { p: g("position"), m: M(g("machine")) });
+    if (g("position_machine")) return tr("plan_hz_wait_other", { p: g("position"), m: M(g("position_machine")) });
+    return tr("plan_hz_wait_unscheduled", { p: g("position") });
+  }
+  if (code === "sin_avance") {
+    return g("machine") ? tr("plan_hz_no_progress", { m: M(g("machine")), w: weeks })
+      : tr("plan_hz_no_machine", { w: weeks });
+  }
+  if (code === "sin_capacidad") return tr("plan_hz_no_capacity", { w: g("weeks") || weeks });
+  return "";
+};
+
+/* Aviso rojo: trabajos que no se pudieron programar y máquinas atascadas
+   (fila con trabajo pero nada impreso en todo el horizonte). */
+const HorizonAlert = ({ run, weeks, canEdit, onAdjust, tr }) => {
+  const a = run.horizon_alerts || {};
+  const rows = a.jobs || [];
+  const stuck = a.stuck_machines || [];
+  const [open, setOpen] = useState(true);
+  if (!rows.length && !stuck.length) return null;
+  return (
+    <div className="rounded-xl border-2 border-red-300 bg-red-50 px-4 py-3 text-sm text-red-900">
+      <button onClick={() => setOpen(!open)} className="w-full text-left flex items-start gap-2">
+        <AlertTriangle className="w-5 h-5 shrink-0 text-red-600 mt-0.5" />
+        <span className="flex-1">
+          <b className="text-base">{tr("plan_hz_title", { n: rows.length, w: weeks })}</b>
+          {stuck.length > 0 && (
+            <span className="block mt-0.5 font-bold">
+              {tr("plan_hz_stuck", { m: stuck.map((m) => m.replace("MAQUINA", "M")).join(", ") })}
+            </span>
+          )}
+          <span className="block text-xs text-red-800/80 mt-0.5">{tr("plan_hz_hint")}</span>
+        </span>
+        <span className="text-xs font-bold">{open ? "▾" : "▸"}</span>
+      </button>
+      {open && rows.length > 0 && (
+        <ul className="mt-2 space-y-1 pl-7">
+          {rows.map((r) => (
+            <li key={r.job_id} className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+              <b className="tabular-nums">{r.order_number}</b>
+              <span className="text-xs">{r.position}</span>
+              {r.r_machine && <span className="text-xs font-bold">{r.r_machine.replace("MAQUINA", "M")}</span>}
+              <span className="text-xs">— {horizonText(r, tr, weeks)}</span>
+              {canEdit && (
+                <button onClick={() => onAdjust({ job_id: r.job_id, order_id: r.job_id.split(":")[0], order_number: r.order_number,
+                  position: r.position, client: r.client, machines: r.r_machine ? [r.r_machine] : [] })}
+                  className="ml-1 px-2 h-6 rounded border border-red-300 bg-white text-[11px] font-bold hover:bg-red-100">
+                  {tr("plan_adjust")}
+                </button>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+};
+
 const ScheduleTab = ({ config, efficiency, run, running, onRun, canEdit, onToggle, onAdjust, onReorder, overrides, history, onUndo,
   onApplyMoves, applied, onRevertMove, lastApply, onReleaseHolds, tr }) => {
   const [status, setStatus] = useState("");
@@ -1839,6 +1904,7 @@ const ScheduleTab = ({ config, efficiency, run, running, onRun, canEdit, onToggl
         <Eye className="w-4 h-4 mt-0.5 shrink-0" />
         <span>{tr("plan_shadow_banner")}</span>
       </div>
+      <HorizonAlert run={run} weeks={config?.horizon_weeks || 8} canEdit={canEdit} onAdjust={onAdjust} tr={tr} />
       <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
         <Stat label={tr("plan_st_scheduled")} value={fmt(run.stats?.scheduled)} />
         <Stat label={tr("plan_st_on_time")} value={fmt(by.A_TIEMPO || 0)} color="text-emerald-600" />
@@ -1969,7 +2035,14 @@ const ScheduleTab = ({ config, efficiency, run, running, onRun, canEdit, onToggl
                   <td className="pr-3 text-xs tabular-nums">{j.end ? `${dday(j.end)} ${hhmm(j.end)}` : "—"}</td>
                   <td className="pr-3 text-xs tabular-nums">{j.target_date || "—"}</td>
                   <td className="pr-3 text-xs tabular-nums">{j.cancel_date || "—"}</td>
-                  <td className="pr-3"><span className={`px-1.5 py-0.5 rounded border text-[10px] font-bold ${STATUS_STYLE[j.status]}`}>{tr(`plan_status_${j.status}`)}</span></td>
+                  <td className="pr-3">
+                    <span className={`px-1.5 py-0.5 rounded border text-[10px] font-bold ${STATUS_STYLE[j.status]}`}>{tr(`plan_status_${j.status}`)}</span>
+                    {j.horizon_reason && (
+                      <span className="block mt-0.5 text-[10px] leading-tight text-red-700 max-w-[260px] whitespace-normal">
+                        {horizonText(j.horizon_reason, tr, config?.horizon_weeks || 8)}
+                      </span>
+                    )}
+                  </td>
                   <td className="pr-3 text-xs tabular-nums font-bold text-amber-700">{j.suggested_cancel_date || ""}</td>
                   <td>{canEdit && (
                     <button onClick={() => onAdjust(j)} className="px-2 h-7 rounded-lg border border-slate-200 text-xs font-bold inline-flex items-center gap-1 hover:border-blue-300 hover:text-blue-700">

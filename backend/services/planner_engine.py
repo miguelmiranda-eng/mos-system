@@ -1243,9 +1243,34 @@ def schedule(jobs: List[dict], machines: List[dict], cfg: dict, cal: Calendar,
     # Lo que quedó en máquina o en el pool sin terminar dentro del horizonte.
     leftovers = ([s["current"] for s in state.values() if s["current"]] + pool
                  + [j for s in state.values() for j in s["queue"]])
+    where = {}
+    for n, s in state.items():
+        for x in ([s["current"]] if s["current"] else []) + s["queue"]:
+            where[id(x)] = n
+
+    def horizon_reason(j):
+        """POR QUÉ no terminó dentro del horizonte, en datos para la pantalla:
+        espera_posicion (su posición anterior no avanza: dónde está),
+        sin_avance (en la fila de una máquina y no se imprimió nada: atasco),
+        sin_capacidad (sí se imprimió, pero no alcanzan las semanas)."""
+        mach = where.get(id(j))
+        if seq_on and avail_pieces(j) <= 1e-6:
+            for x in family.get(j["order_id"], []):
+                if x is j:
+                    break
+                if x["remaining"] > 1e-6:
+                    xm = where.get(id(x))
+                    return {"code": "espera_posicion", "machine": mach, "position": x["position"],
+                            "position_machine": xm, "same_row": bool(xm and xm == mach),
+                            "position_scheduled": bool((scheduled.get(x["job_id"]) or {}).get("segments"))}
+        if not (scheduled.get(j["job_id"]) or {}).get("segments"):
+            return {"code": "sin_avance", "machine": mach}
+        return {"code": "sin_capacidad", "machine": mach, "weeks": cfg["horizon_weeks"]}
+
     for j in leftovers:
         rec = scheduled.setdefault(j["job_id"], {"segments": [], "machines": []})
         rec["remaining_after_horizon"] = round(j["remaining"])
+        rec["horizon_reason"] = horizon_reason(j)
 
     orig = {j["job_id"]: j for j in jobs}
     out = []

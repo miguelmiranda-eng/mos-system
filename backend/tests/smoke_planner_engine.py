@@ -717,5 +717,23 @@ check("no se atasca: nada queda fuera de horizonte", all(j["status"] != "FUERA_D
 check("el FRENTE (misma fila) va antes que su ESPALDA", pm8["2000F"]["start"] < pm8["2000E"]["start"],
       (pm8["2000F"]["start"], pm8["2000E"]["start"]))
 
+print("== Fuera de horizonte: siempre dice por qué ==")
+cfgH = {**cfgW, "horizon_weeks": 1}
+jH1, _ = pe.build_jobs([order(2100, 200000, ["FRENTE"])], {}, cfgH, calW, MS2, LUNES.date())
+h1 = pe.schedule(jH1, machines(1), cfgH, calW, LUNES, 1.0, {})[0]
+check("no cabe en el horizonte: razón = falta capacidad",
+      h1["status"] == "FUERA_DE_HORIZONTE" and (h1.get("horizon_reason") or {}).get("code") == "sin_capacidad", h1.get("horizon_reason"))
+jH2, _ = pe.build_jobs([order(2101, 500, ["FRENTE", "ESPALDA"])], {}, cfgH, calW, MS2, LUNES.date())
+for j in jH2:
+    if j["position"] == "FRENTE":
+        j["colors"] = 30                    # ninguna máquina tiene cabezas para el frente
+h2 = {j["position"]: j for j in pe.schedule(jH2, machines(2), cfgH, calW, LUNES, 1.0, {})}
+check("frente que ninguna máquina toma: razón = sin avance, sin máquina",
+      (h2["FRENTE"].get("horizon_reason") or {}).get("code") == "sin_avance", h2["FRENTE"].get("horizon_reason"))
+check("su espalda: razón = espera su FRENTE (no programado)",
+      (h2["ESPALDA"].get("horizon_reason") or {}).get("code") == "espera_posicion"
+      and h2["ESPALDA"]["horizon_reason"]["position"] == "FRENTE"
+      and not h2["ESPALDA"]["horizon_reason"]["position_scheduled"], h2["ESPALDA"].get("horizon_reason"))
+
 print(f"\n{ok} PASS, {fail} FAIL")
 sys.exit(1 if fail else 0)
