@@ -4,7 +4,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   ArrowLeft, CalendarClock, Power, RefreshCw, Loader2, Cpu, TrendingUp,
   Settings2, CalendarDays, AlertTriangle, Trash2, Plus, Save, FlaskConical, Eye, Search,
-  Pin, ArrowUpDown, LogIn, PauseCircle, Undo2, X, Tv, SlidersHorizontal, BellRing, CheckCircle2, Download, PackageCheck, Gauge, ClipboardCheck, Lock,
+  Pin, ArrowUpDown, LogIn, PauseCircle, Undo2, X, Tv, SlidersHorizontal, BellRing, CheckCircle2, Download, PackageCheck, Gauge, ClipboardCheck, Lock, Maximize2, Minimize2,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { saveAs } from "file-saver";
@@ -211,7 +211,7 @@ const AdjustPanel = ({ job, machines, overrides, engineOn, onClose, onChanged, t
   );
 
   return (
-    <div className="fixed inset-0 z-50 flex justify-end bg-slate-900/30" onClick={onClose}>
+    <div data-planner-modal className="fixed inset-0 z-50 flex justify-end bg-slate-900/30" onClick={onClose}>
       <div className="w-full max-w-md h-full bg-white shadow-xl overflow-y-auto" onClick={(e) => e.stopPropagation()}>
         <div className="sticky top-0 bg-white border-b border-slate-200 px-5 py-4 flex items-start gap-3">
           <div className="mr-auto">
@@ -651,7 +651,7 @@ const MockViewer = ({ urls, title, subtitle, onClose, tr }) => {
   }, [n, onClose]);
   const nav = "absolute top-1/2 -translate-y-1/2 h-10 w-10 rounded-full bg-white/90 text-slate-800 text-2xl font-bold shadow hover:bg-white";
   return createPortal(
-    <div className="fixed inset-0 z-[100] bg-black/75 flex items-center justify-center p-4"
+    <div data-planner-modal className="fixed inset-0 z-[100] bg-black/75 flex items-center justify-center p-4"
       onClick={(e) => { e.stopPropagation(); onClose(); }}>
       <div className="relative bg-white rounded-xl shadow-2xl max-w-[92vw] max-h-[92vh] flex flex-col"
         onClick={(e) => e.stopPropagation()}>
@@ -858,7 +858,7 @@ const machineColumns = (run) => {
   });
 };
 
-const MachineBoard = ({ run, onAdjust, onReorder, tr }) => {
+const MachineBoard = ({ run, onAdjust, onReorder, full, tr }) => {
   const { lang } = useLang();
   const [machineF, setMachineF] = useState("");
   const [q, setQ] = useState("");
@@ -1032,7 +1032,7 @@ const MachineBoard = ({ run, onAdjust, onReorder, tr }) => {
             <div onDragOver={(e) => overColumn(e, c)} onDrop={(e) => drop(e, c)}
               className={`relative ${single
                 ? "grid gap-3 sm:grid-cols-2 xl:grid-cols-3"
-                : "space-y-2.5 max-h-[70vh] overflow-y-auto pr-1 pt-2 pl-2"} ${
+                : `space-y-2.5 ${full ? "max-h-[calc(100vh-180px)]" : "max-h-[70vh]"} overflow-y-auto pr-1 pt-2 pl-2`} ${
                 drag?.machine === c.machine ? "rounded-xl bg-blue-50/40" : ""}`}>
               {c.visible.length === 0 ? (
                 <div className="py-8 text-center text-xs text-slate-400 border border-dashed border-slate-200 rounded-xl">
@@ -1770,6 +1770,17 @@ const ScheduleTab = ({ config, efficiency, run, running, onRun, canEdit, onToggl
   const [onlyThat, setOnlyThat] = useState(false);
   const [blockedSearch, setBlockedSearch] = useState("");
   // Vista del programa por máquina (tarjetas o rejilla por turno), recordada por usuario.
+  // Programa por máquina en pantalla completa (para programar con espacio):
+  // se sale con el mismo botón o con Esc; la página de atrás no se desplaza.
+  const [boardFull, setBoardFull] = useState(false);
+  useEffect(() => {
+    if (!boardFull) return undefined;
+    const onKey = (e) => { if (e.key === "Escape" && !document.querySelector("[data-planner-modal]")) setBoardFull(false); };
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    window.addEventListener("keydown", onKey);
+    return () => { window.removeEventListener("keydown", onKey); document.body.style.overflow = prev; };
+  }, [boardFull]);
   const [boardView, setBoardViewState] = useState(() => {
     try { return localStorage.getItem(BOARD_VIEW_KEY) || "board"; } catch { return "board"; }
   });
@@ -1967,10 +1978,16 @@ const ScheduleTab = ({ config, efficiency, run, running, onRun, canEdit, onToggl
       <MovesCard run={run} canEdit={canEdit} onApply={onApplyMoves} onAdjust={onAdjust} tr={tr} />
       <AppliedMovesCard rows={applied} canEdit={canEdit} onRevert={onRevertMove} lastResults={lastApply} tr={tr} />
 
-      <Card className="p-4">
+      <Card className={boardFull ? "fixed inset-0 z-[45] p-4 overflow-auto rounded-none border-0 bg-slate-50" : "p-4"}>
         <div className="flex flex-wrap items-start gap-2">
           <SectionTitle hint={boardView === "board" ? tr("plan_board_hint") : tr("plan_grid_hint")}>{tr("plan_grid_title")}</SectionTitle>
-          <div className="ml-auto inline-flex rounded-lg border border-slate-200 p-0.5">
+          <button onClick={() => setBoardFull(!boardFull)} title={boardFull ? tr("plan_full_exit_hint") : tr("plan_full_hint")}
+            className={`ml-auto h-8 px-3 rounded-lg text-xs font-bold inline-flex items-center gap-1.5 ${boardFull
+              ? "bg-slate-800 text-white hover:bg-slate-700" : "border border-slate-200 text-slate-700 hover:border-blue-300 hover:text-blue-700"}`}>
+            {boardFull ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
+            {boardFull ? tr("plan_full_exit") : tr("plan_full")}
+          </button>
+          <div className="inline-flex rounded-lg border border-slate-200 p-0.5">
             {[["board", tr("plan_view_board")], ["grid", tr("plan_view_grid")]].map(([k, label]) => (
               <button key={k} onClick={() => setBoardView(k)}
                 className={`h-7 px-3 rounded-md text-xs font-bold ${boardView === k ? "bg-slate-800 text-white" : "text-slate-600"}`}>
@@ -1980,7 +1997,7 @@ const ScheduleTab = ({ config, efficiency, run, running, onRun, canEdit, onToggl
           </div>
         </div>
         {boardView === "board"
-          ? <MachineBoard run={run} onAdjust={canEdit ? onAdjust : null} onReorder={canEdit ? onReorder : null} tr={tr} />
+          ? <MachineBoard run={run} onAdjust={canEdit ? onAdjust : null} onReorder={canEdit ? onReorder : null} full={boardFull} tr={tr} />
           : <MachineGrid run={run} onAdjust={canEdit ? onAdjust : null} tr={tr} />}
       </Card>
 
