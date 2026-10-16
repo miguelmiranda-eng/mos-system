@@ -160,7 +160,13 @@ export const ReceivingModule = () => {
   // limpia typos con "Detectar typos" en la config. (Manufacturer no es catálogo.)
   const wmsCat = useWmsCatalogs();
   const customerOptions = useMemo(() => mergeUnique(wmsCat.customers, options.customers), [wmsCat.customers, options.customers]);
-  const styleOptions    = useMemo(() => mergeUnique(customerStyles, options.styles), [customerStyles, options.styles]);
+  // El estilo es lista BLOQUEADA y curada por cliente: cuando el cliente tiene
+  // estilos en el catálogo, se muestran SOLO esos (no se fusionan los derivados
+  // del inventario/ASN, que metían valores sin curar como 'AER0154J1358'). Solo
+  // si el cliente no tiene catálogo aún, se cae a los del inventario (respaldo).
+  // Los demás campos (color/desc/país/tela) sí se fusionan: ahí no se oculta
+  // ningún valor real. Un estilo nuevo se da de alta en Config WMS → Estilos.
+  const styleOptions    = useMemo(() => (customerStyles.length ? customerStyles : options.styles), [customerStyles, options.styles]);
   const manufacturerOptions = useMemo(() => mergeUnique(customerManufacturers, options.manufacturers), [customerManufacturers, options.manufacturers]);
   const descOptions     = useMemo(() => mergeUnique(wmsCat.descriptions, fieldOptions.descriptions), [wmsCat.descriptions, fieldOptions.descriptions]);
   const countryOptions  = useMemo(() => mergeUnique(wmsCat.countries, fieldOptions.countries), [wmsCat.countries, fieldOptions.countries]);
