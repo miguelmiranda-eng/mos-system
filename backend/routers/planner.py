@@ -607,7 +607,7 @@ async def shadow_run(request: Request, trigger: str = "manual", max_age: int = 0
         if pe.is_manual_test(j, ov.get(j["job_id"], {}), ctx["cfg"]):
             continue          # va en su propia lista (test_suggestions)
         row = {k: j[k] for k in ("job_id", "order_id", "order_number", "client", "branding", "board",
-                                 "position", "remaining", "cancel_date", "target_date", "ready", "volume",
+                                 "position", "quantity", "hits", "remaining", "cancel_date", "target_date", "ready", "volume",
                                  "kind", "sample_state", "has_extra_work", "extra_work")}
         row["held"] = "hold" in ov.get(j["job_id"], {})
         row["manual"] = sorted(ov.get(j["job_id"], {}))

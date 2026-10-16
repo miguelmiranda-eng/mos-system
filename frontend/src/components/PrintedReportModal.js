@@ -71,9 +71,10 @@ const PrintedReportModal = ({ isOpen, onClose }) => {
           "Cancel Date": r.cancel_date,
           "Final Bill": r.final_bill,
           "Qty ordenada": r.qty_ordenada,
-          "Impresiones en el rango": r.impresiones,
+          "Piezas en el rango": r.piezas ?? 0,
+          "Hits en el rango": r.impresiones,
         };
-        posiciones.forEach((p) => { fila[`Impresiones ${p}`] = r.por_posicion?.[p] ?? 0; });
+        posiciones.forEach((p) => { fila[`Hits ${p}`] = r.por_posicion?.[p] ?? 0; });
         fila["Capturas"] = r.capturas;
         fila["Primera captura"] = r.primera_captura;
         fila["Última captura"] = r.ultima_captura;

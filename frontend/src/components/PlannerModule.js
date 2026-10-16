@@ -1769,18 +1769,22 @@ const ScheduleTab = ({ config, efficiency, run, running, onRun, canEdit, onToggl
   // a las que les falta ese requisito; además una hoja "Retenidas" y "Todos".
   const exportBlocked = () => {
     const head = [tr("plan_order"), tr("plan_position"), tr("plan_client"), tr("plan_kind_col"),
-                  tr("plan_board"), tr("plan_hits_left"), tr("plan_target"), tr("plan_missing")];
+                  tr("plan_board"), tr("plan_pieces_left"), tr("plan_hits_left"), tr("plan_target"), tr("plan_missing")];
+    // Piezas que faltan en esa posición: hits restantes ÷ hits por pieza de la
+    // posición (hits/quantity del trabajo). Corridas viejas no traen el dato.
+    const piecesLeft = (b) => (b.hits && b.quantity
+      ? Math.round((b.remaining || 0) * b.quantity / b.hits) : "");
     const missOf = (b) => (b.held ? tr("plan_ov_kind_hold")
       : MISS_KEYS.filter((k) => lacks(b, k)).map((k) => tr(`plan_miss_${k}`)).join(", "));
     const kindOf = (b) => tr(`plan_kind_${b.kind || "SIN_DATO"}`)
       + (b.kind === "NUEVA" && b.sample_state && tr(`plan_sample_short_${b.sample_state}`)
          ? ` · ${tr(`plan_sample_short_${b.sample_state}`)}` : "");
     const row = (b) => [b.order_number, b.position, b.client, kindOf(b), b.board,
-                        b.remaining || 0, b.target_date || b.cancel_date || "", missOf(b)];
+                        piecesLeft(b), b.remaining || 0, b.target_date || b.cancel_date || "", missOf(b)];
     const sheet = (list) => {
       const ws = XLSX.utils.aoa_to_sheet([head, ...list.map(row)]);
       ws["!cols"] = [{ wch: 9 }, { wch: 10 }, { wch: 24 }, { wch: 18 }, { wch: 14 },
-                     { wch: 11 }, { wch: 12 }, { wch: 30 }];
+                     { wch: 11 }, { wch: 11 }, { wch: 12 }, { wch: 30 }];
       return ws;
     };
     const wb = XLSX.utils.book_new();

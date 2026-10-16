@@ -5666,6 +5666,7 @@ const en = {
   plan_position: "Position",
   plan_volume: "Volume",
   plan_hits_left: "Hits left",
+  plan_pieces_left: "Pieces left",
   plan_machines: "Machines",
   plan_machine: "Machine",
   plan_start: "Start",

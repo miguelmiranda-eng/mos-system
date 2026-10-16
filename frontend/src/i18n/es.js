@@ -5480,6 +5480,7 @@ const es = {
   plan_position: "Posición",
   plan_volume: "Volumen",
   plan_hits_left: "Hits pend.",
+  plan_pieces_left: "Piezas pend.",
   plan_machines: "Máquinas",
   plan_machine: "Máquina",
   plan_start: "Inicio",

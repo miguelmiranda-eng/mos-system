@@ -3,6 +3,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "./ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { Download, BarChart3, PieChart as PieIcon, Filter, FileText, Loader2 } from "lucide-react";
 import { machinesFrom } from "../lib/constants";
+import { orderHits } from "../lib/hits";
 import { BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, CartesianGrid } from "recharts";
 import { useLang } from "../contexts/LanguageContext";
 import * as XLSX from 'xlsx';
@@ -112,6 +113,7 @@ const AnalyticsView = ({ isOpen, onClose, allOrders, options }) => {
       [t('excel_branding')]: o.branding || '',
       [t('excel_priority')]: o.priority || '',
       [t('excel_quantity')]: o.quantity || 0,
+      'Hits': orderHits(o),
       [t('excel_due_date')]: o.due_date || '',
       'Blank Source': o.blank_source || '',
       'Blank Status': o.blank_status || '',
@@ -125,12 +127,28 @@ const AnalyticsView = ({ isOpen, onClose, allOrders, options }) => {
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Dashboard");
 
+    // Hits junto a cada cifra de piezas (piezas × hits por pieza de la orden).
+    const hitsBy = (keyOf) => filteredOrders.reduce((acc, o) => {
+      const k = keyOf(o);
+      acc[k] = (acc[k] || 0) + orderHits(o);
+      return acc;
+    }, {});
+    const hitsByBoard = hitsBy(o => o.board);
+    const hitsByStatus = hitsBy(o => o.production_status || t('no_status'));
+    const metric = (label, value) => ({ [t('excel_metric')]: label, [t('excel_value')]: value });
     const summary = [
-      { [t('excel_metric')]: t('total_orders'), [t('excel_value')]: filteredOrders.length },
-      { [t('excel_metric')]: t('total_pieces_label'), [t('excel_value')]: totalPieces },
-      { [t('excel_metric')]: t('filter'), [t('excel_value')]: chartFilter === 'all' ? t('all_boards_filter') : chartFilter },
-      ...piecesByBoardData.map(d => ({ [t('excel_metric')]: `${t('excel_pieces_in')}: ${d.name}`, [t('excel_value')]: d.value })),
-      ...piecesByProductionData.map(d => ({ [t('excel_metric')]: `${t('excel_pieces_dash')} ${d.name}`, [t('excel_value')]: d.value })),
+      metric(t('total_orders'), filteredOrders.length),
+      metric(t('total_pieces_label'), totalPieces),
+      metric('Total hits', filteredOrders.reduce((acc, o) => acc + orderHits(o), 0)),
+      metric(t('filter'), chartFilter === 'all' ? t('all_boards_filter') : chartFilter),
+      ...piecesByBoardData.flatMap(d => [
+        metric(`${t('excel_pieces_in')}: ${d.name}`, d.value),
+        metric(`Hits: ${d.name}`, hitsByBoard[d.name] || 0),
+      ]),
+      ...piecesByProductionData.flatMap(d => [
+        metric(`${t('excel_pieces_dash')} ${d.name}`, d.value),
+        metric(`Hits - ${d.name}`, hitsByStatus[d.name] || 0),
+      ]),
       ...productionData.map(d => ({ [t('excel_metric')]: `${t('excel_production')}: ${d.name}`, [t('excel_value')]: d.value })),
       ...priorityData.map(d => ({ [t('excel_metric')]: `${t('excel_priority_label')}: ${d.name}`, [t('excel_value')]: d.value })),
     ];

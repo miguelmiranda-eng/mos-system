@@ -444,6 +444,9 @@ async def printed_report(request: Request, date_from: str = "", date_to: str = "
             "revisada": bool(rev.get("reviewed")),
             # ── producción ──
             "impresiones": g.get("impresiones") or 0,
+            # Piezas = la posición más grande (misma regla que production_kpis):
+            # frente 500 + espalda 500 son 1,000 hits y 500 piezas.
+            "piezas": max(por_pos.values()) if por_pos else 0,
             "por_posicion": por_pos,
             "capturas": g.get("capturas") or 0,
             "primera_captura": _a_tijuana(g.get("primera") or ""),

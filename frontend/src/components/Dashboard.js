@@ -28,6 +28,7 @@ import { Popover, PopoverTrigger, PopoverContent } from "./ui/popover";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "./ui/dialog";
 import { Toaster, toast } from "sonner";
 import * as XLSX from 'xlsx';
+import { orderHits, producedPieces } from '../lib/hits';
 import { saveAs } from 'file-saver';
 
 // Sub-components
@@ -1012,12 +1013,16 @@ const Dashboard = () => {
 
         // Avance / Restante — mismas cifras que la columna "RESTANTE" del board.
         // productionSummary va por order_number; quantity es lo planeado.
+        // total_produced suma capturas = HITS; las piezas son la posición más
+        // grande. Se exportan las dos para no confundir 1,000 hits con 1,000 piezas.
         const prodData = productionSummary?.[o.order_number] || { total_produced: 0 };
         const total = Number(o.quantity) || 0;
         const produced = Number(prodData.total_produced) || 0;
         const remaining = Math.max(0, total - produced);
         const progressPct = total > 0 ? Math.min(100, Math.round((produced / total) * 100)) : 0;
-        row['Produced'] = produced;
+        row['Hits'] = orderHits(o);
+        row['Pieces Produced'] = producedPieces(prodData);
+        row['Hits Produced'] = produced;
         row['Remaining'] = remaining;
         row['Progress %'] = progressPct;
         return row;

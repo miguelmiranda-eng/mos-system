@@ -129,10 +129,12 @@ const LogsCenter = () => {
             Orden: l.order_number || '',
             Cliente: l.client || '',
             Operador: l.operator || l.user_name || '',
-            Cantidad: l.quantity_produced || 0,
+            // Cada captura es una pasada en UNA posición: la cantidad son hits.
+            // Las piezas de la orden son la posición más grande, no la suma.
+            Hits: l.quantity_produced || 0,
             Maquina: l.machine || '',
             Turno: l.shift || '',
-            Diseno: l.design_type || '',
+            Posicion: l.design_type || '',
             Setup: l.setup || 0,
             'Causa Paro': l.stop_cause || '',
             Supervisor: l.supervisor || '',

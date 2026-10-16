@@ -1187,8 +1187,20 @@ async def build_production_report(fmt="excel", preset=None, filters=None):
     logs = await db.production_logs.find(query, {"_id": 0}).sort("created_at", 1).to_list(50000)
     logger.info(f"Found {len(logs)} logs for report")
 
-    # Summary calculation for the report
-    total_produced = sum(l.get("quantity_produced", 0) for l in logs)
+    # Hits vs piezas, con las MISMAS reglas que production_kpis (dashboard y
+    # correo ejecutivo): cada captura es una pasada en una ubicación, así que la
+    # suma de quantity_produced son HITS; las PIEZAS de cada orden son la
+    # ubicación más grande (frente 500 + espalda 500 = 1,000 hits, 500 piezas).
+    # `produced` se queda como hits porque la meta y la eficiencia van en hits.
+    from services.production_kpis import measure
+
+    def _kpi(l):
+        return {"order": l.get("order_id") or "#" + str(l.get("order_number")),
+                "pos": str(l.get("design_type") or "").strip().upper(),
+                "n": int(l.get("quantity_produced") or 0)}
+
+    total = measure(_kpi(l) for l in logs)
+    total_produced = total["hits"]
     setup_logs = [l.get("setup", 0) for l in logs if l.get("setup", 0) > 0]
     avg_setup = sum(setup_logs) / max(len(setup_logs), 1)
 
@@ -1197,25 +1209,29 @@ async def build_production_report(fmt="excel", preset=None, filters=None):
     orders_info = await db.orders.find({"order_id": {"$in": order_ids}}, {"_id": 0, "order_id": 1, "quantity": 1, "order_number": 1, "client": 1}).to_list(10000)
     order_map = {o["order_id"]: o for o in orders_info}
 
-    by_po = {}
-    by_machine = {}
-    by_client = {}
-    by_shift = {}
+    by_po, po_rows = {}, {}
+    by_machine, by_client, by_shift = {}, {}, {}
     for l in logs:
+        k = _kpi(l)
         oid = l.get("order_id")
         if oid:
-            if oid not in by_po: by_po[oid] = {"order_number": l.get("order_number", "?"), "client": l.get("client", ""), "target": order_map.get(oid, {}).get("quantity", 0), "produced": 0}
-            by_po[oid]["produced"] += l.get("quantity_produced", 0)
-
-        m = l.get("machine", "Desconocida")
-        by_machine[m] = by_machine.get(m, 0) + l.get("quantity_produced", 0)
-
-        c = l.get("client", "Sin Cliente")
-        by_client[c] = by_client.get(c, 0) + l.get("quantity_produced", 0)
-
+            if oid not in by_po: by_po[oid] = {"order_number": l.get("order_number", "?"), "client": l.get("client", ""), "target": order_map.get(oid, {}).get("quantity", 0)}
+            po_rows.setdefault(oid, []).append(k)
+        by_machine.setdefault(l.get("machine", "Desconocida"), []).append(k)
+        by_client.setdefault(l.get("client", "Sin Cliente"), []).append(k)
         # Desglose por TURNO: el campo `shift` lo captura el operador en cada log.
-        s = (l.get("shift") or "").strip() or "SIN TURNO"
-        by_shift[s] = by_shift.get(s, 0) + l.get("quantity_produced", 0)
+        by_shift.setdefault((l.get("shift") or "").strip() or "SIN TURNO", []).append(k)
+
+    for oid, po in by_po.items():
+        m = measure(po_rows[oid])
+        po.update(produced=m["hits"], units=m["units"])
+
+    def _grouped(groups, label):
+        out = []
+        for name, rows in groups.items():
+            m = measure(rows)
+            out.append({label: name, "produced": m["hits"], "units": m["units"]})
+        return sorted(out, key=lambda x: x["produced"], reverse=True)
 
     # Misma meta que el tablero: la capturada por el gerente para los días del
     # periodo. Sin meta, el reporte imprime "—" en vez de un porcentaje inventado.
@@ -1223,13 +1239,14 @@ async def build_production_report(fmt="excel", preset=None, filters=None):
         _period_local_days(preset, filters.get("date_from"), filters.get("date_to"))))
     summary = {
         "total_produced": total_produced,
+        "total_units": total["units"],
         "avg_setup": int(round(avg_setup)),
         "goal": goal_total or None,
         "efficiency": round(total_produced / goal_total * 100, 1) if goal_total > 0 else None,
         "by_po": sorted(list(by_po.values()), key=lambda x: x["produced"], reverse=True),
-        "by_machine": sorted([{"machine": k, "produced": v} for k, v in by_machine.items()], key=lambda x: x["produced"], reverse=True),
-        "by_client": sorted([{"client": k, "produced": v} for k, v in by_client.items()], key=lambda x: x["produced"], reverse=True),
-        "by_shift": sorted([{"shift": k, "produced": v} for k, v in by_shift.items()], key=lambda x: x["produced"], reverse=True),
+        "by_machine": _grouped(by_machine, "machine"),
+        "by_client": _grouped(by_client, "client"),
+        "by_shift": _grouped(by_shift, "shift"),
     }
 
     # Generate a unique timestamped filename
@@ -1298,47 +1315,56 @@ async def _generate_excel_report(logs, summary, filters):
     ws_res.set_row(4, 30) # Label row
     ws_res.set_row(5, 50) # Value row
     
-    # Piezas Producidas Card
+    # Piezas Producidas Card (la ubicación más grande de cada orden)
     ws_res.write(4, 1, "PIEZAS PRODUCIDAS", kpi_label_emerald)
-    ws_res.write(5, 1, f"{summary.get('total_produced', 0):,}", kpi_value_emerald)
-    
-    # Eficiencia Card
-    ws_res.write(4, 2, "EFICIENCIA GLOBAL", kpi_label_blue)
-    ws_res.write(5, 2, _fmt_pct(summary.get('efficiency')), kpi_value_blue)
-    
+    ws_res.write(5, 1, f"{summary.get('total_units', 0):,}", kpi_value_emerald)
+
+    # Hits Card (cada pasada en cada ubicación)
+    ws_res.write(4, 2, "HITS (IMPRESIONES)", kpi_label_emerald)
+    ws_res.write(5, 2, f"{summary.get('total_produced', 0):,}", kpi_value_emerald)
+
+    # Eficiencia Card (hits contra la meta, que se captura en hits)
+    ws_res.write(4, 3, "EFICIENCIA GLOBAL", kpi_label_blue)
+    ws_res.write(5, 3, _fmt_pct(summary.get('efficiency')), kpi_value_blue)
+
     # Setup Card
-    ws_res.write(4, 3, "PROMEDIO SETUP", kpi_label_rose)
-    ws_res.write(5, 3, f"{summary.get('avg_setup', 0)} min", kpi_value_rose)
+    ws_res.write(4, 4, "PROMEDIO SETUP", kpi_label_rose)
+    ws_res.write(5, 4, f"{summary.get('avg_setup', 0)} min", kpi_value_rose)
 
     # Detailed Table
+    ws_res.set_column('F:G', 16)
     ws_res.write(8, 1, "RENDIMIENTO POR ORDEN DE TRABAJO", wb.add_format({'bold': True, 'size': 14, 'bottom': 2}))
-    po_headers = ['Orden', 'Cliente', 'Meta', 'Producido', 'Avance %']
+    po_headers = ['Orden', 'Cliente', 'Meta (piezas)', 'Piezas producidas', 'Hits', 'Avance %']
     for i, h in enumerate(po_headers):
         ws_res.write(9, i+1, h, header_fmt)
 
+    pct_fmt = wb.add_format({'border': 1, 'num_format': '0.0%', 'align': 'center'})
     for row, po in enumerate(summary.get("by_po", [])[:20], 10):
-        target = po.get("target", 0)
-        produced = po.get("produced", 0)
-        progress = (produced / target) if target > 0 else 0
+        target = po.get("target", 0) or 0
+        units = po.get("units", 0)
+        # Avance en piezas contra la meta en piezas: con hits, una orden de 500
+        # con frente y espalda marcaba 200%.
+        progress = (units / target) if target > 0 else 0
         ws_res.write(row, 1, po.get("order_number", ""), cell_fmt)
         ws_res.write(row, 2, po.get("client", ""), cell_fmt)
         ws_res.write(row, 3, target, num_fmt)
-        ws_res.write(row, 4, produced, num_fmt)
-        ws_res.write(row, 5, progress, wb.add_format({'border': 1, 'num_format': '0.0%', 'align': 'center'}))
+        ws_res.write(row, 4, units, num_fmt)
+        ws_res.write(row, 5, po.get("produced", 0), num_fmt)
+        ws_res.write(row, 6, progress, pct_fmt)
 
     # Tabla PRODUCCIÓN POR TURNO (a la derecha del detalle por orden).
-    ws_res.set_column('G:G', 18)
-    ws_res.set_column('H:I', 14)
-    ws_res.write(8, 6, "PRODUCCIÓN POR TURNO", wb.add_format({'bold': True, 'size': 14, 'bottom': 2}))
-    for i, h in enumerate(['Turno', 'Producido', '% del total']):
-        ws_res.write(9, 6 + i, h, header_fmt)
+    ws_res.set_column('I:I', 18)
+    ws_res.set_column('J:L', 14)
+    ws_res.write(8, 8, "PRODUCCIÓN POR TURNO", wb.add_format({'bold': True, 'size': 14, 'bottom': 2}))
+    for i, h in enumerate(['Turno', 'Piezas', 'Hits', '% de hits']):
+        ws_res.write(9, 8 + i, h, header_fmt)
     _tot = summary.get('total_produced', 0) or 0
     for row, s in enumerate(summary.get("by_shift", []), 10):
         prod = s.get("produced", 0)
-        ws_res.write(row, 6, s.get("shift", ""), cell_fmt)
-        ws_res.write(row, 7, prod, num_fmt)
-        ws_res.write(row, 8, (prod / _tot) if _tot else 0,
-                     wb.add_format({'border': 1, 'num_format': '0.0%', 'align': 'center'}))
+        ws_res.write(row, 8, s.get("shift", ""), cell_fmt)
+        ws_res.write(row, 9, s.get("units", 0), num_fmt)
+        ws_res.write(row, 10, prod, num_fmt)
+        ws_res.write(row, 11, (prod / _tot) if _tot else 0, pct_fmt)
 
     # Add Charts
     if summary.get("by_machine"):
@@ -1348,20 +1374,27 @@ async def _generate_excel_report(logs, summary, filters):
         for i, m in enumerate(summary["by_machine"][:8]):
             ws_data.write(i, 0, m["machine"])
             ws_data.write(i, 1, m["produced"])
-        
+            ws_data.write(i, 2, m["units"])
+
         chart.add_series({
-            'name': 'Producción',
+            'name': 'Hits',
             'categories': '=_internal_data!$A$1:$A$8',
             'values': '=_internal_data!$B$1:$B$8',
             'fill': {'color': '#10b981'}
         })
-        chart.set_title({'name': 'Producción por Máquina'})
-        chart.set_legend({'position': 'none'})
+        chart.add_series({
+            'name': 'Piezas',
+            'categories': '=_internal_data!$A$1:$A$8',
+            'values': '=_internal_data!$C$1:$C$8',
+            'fill': {'color': '#2563eb'}
+        })
+        chart.set_title({'name': 'Producción por Máquina (hits y piezas)'})
+        chart.set_legend({'position': 'bottom'})
         ws_res.insert_chart('B32', chart, {'x_scale': 1.5, 'y_scale': 1.5})
 
     # --- SHEET 3: DETALLES ---
     ws = wb.add_worksheet("TRANSACCIONES")
-    for i, h in enumerate(['Fecha/Hora', 'Orden', 'Cliente', 'Maquina', 'Operador', 'Turno', 'Diseno', 'Cantidad', 'Setup', 'Supervisor', 'Parada']):
+    for i, h in enumerate(['Fecha/Hora', 'Orden', 'Cliente', 'Maquina', 'Operador', 'Turno', 'Posicion', 'Hits', 'Setup', 'Supervisor', 'Parada']):
         ws.write(0, i, h, header_fmt)
         ws.set_column(i, i, 16)
     for row, l in enumerate(logs, 1):
