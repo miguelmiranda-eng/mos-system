@@ -3,6 +3,7 @@ import { toast } from "sonner";
 import { useLang } from "../contexts/LanguageContext";
 import { API, DEFAULT_COLUMNS, STATUS_COLORS, getActionLabels } from "../lib/constants";
 import { apiFetch } from "../lib/http";
+import { playNotifySound } from "../lib/notifySound";
 import { localDateLabel } from "../lib/utils";
 
 // Tamaño de página de la búsqueda global (modal de resultados).
@@ -205,12 +206,24 @@ export const useOrders = (currentBoard, boardFilters) => {
     } catch { /* silent */ }
   }, [_applyIfChanged]);
 
+  // Notificaciones ya vistas en esta sesión: sólo las NUEVAS y sin leer suenan.
+  // La primera carga sólo llena el registro (no suena por lo que ya había).
+  const seenNotifsRef = useRef(null);
   const fetchNotifications = useCallback(async () => {
     try {
       const res = await apiFetch(`${API}/notifications`);
       if (res.ok) {
         _applyIfChanged('notifs', await res.text(), (data) => {
-          setNotifications(data.notifications || []); setUnreadCount(data.unread_count || 0);
+          const list = data.notifications || [];
+          setNotifications(list); setUnreadCount(data.unread_count || 0);
+          const ids = list.map((n) => n.notification_id || n.id).filter(Boolean);
+          if (seenNotifsRef.current === null) { seenNotifsRef.current = new Set(ids); return; }
+          const fresh = list.filter((n) => !n.read && !seenNotifsRef.current.has(n.notification_id || n.id));
+          ids.forEach((id) => seenNotifsRef.current.add(id));
+          if (fresh.length) {
+            playNotifySound();
+            fresh.slice(0, 3).forEach((n) => toast.info(n.message || 'Nueva notificación', { duration: 8000 }));
+          }
         });
       }
     } catch { /* silent */ }

@@ -8,8 +8,10 @@ import {
   Download, Sun, Moon, GripVertical, PlusCircle,
   BarChart3, UserPlus, Bell, Eye, EyeOff, CalendarDays, CalendarCheck, Pin, Save, Table2, Undo2,
   Factory, GanttChart, TrendingUp, Languages, Monitor, MessageSquare, Loader2, History, Zap, AtSign, AlertTriangle, Users, ClipboardList, DatabaseBackup, Warehouse, ImageDown, ImageUp, FileJson, ArrowRightLeft, Wrench, Scissors,
-  ChevronDown, ChevronUp, Check, FileDown, Home, ExternalLink, Menu, ArrowLeft, Link2, Truck, Clock, Shirt, GraduationCap
+  ChevronDown, ChevronUp, Check, FileDown, Home, ExternalLink, Menu, ArrowLeft, Link2, Truck, Clock, Shirt, GraduationCap,
+  Volume2, VolumeX
 } from "lucide-react";
+import { isNotifySoundOn, setNotifySoundOn, playNotifySound } from "../lib/notifySound";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue, SelectGroup, SelectLabel, SelectSeparator } from "./ui/select";
 import {
   DropdownMenu,
@@ -172,6 +174,7 @@ const Dashboard = () => {
   const [showTrash, setShowTrash] = useState(false);
   const [showAnalytics, setShowAnalytics] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
+  const [notifSoundOn, setNotifSoundOn] = useState(isNotifySoundOn);
   const [showSaveView, setShowSaveView] = useState(false);
   const [newViewName, setNewViewName] = useState('');
   const [calendarMode, setCalendarMode] = useState(false);
@@ -2017,7 +2020,18 @@ const Dashboard = () => {
                 <div data-testid="notifications-dropdown" className={cn("absolute top-12 right-0 w-80 md:w-96 border rounded-sm shadow-2xl z-[500] animate-in slide-in-from-top-2 overflow-hidden", isDark ? "bg-card border-white/10" : "bg-white border-border")}>
                   <div className="px-4 py-3 border-b flex items-center justify-between bg-muted/20">
                     <span className="text-[10px] font-bold uppercase tracking-widest text-foreground">{t('dash_mentions')}</span>
-                    {unreadCount > 0 && <span className="text-[9px] bg-royal text-white px-2 py-0.5 rounded font-bold">{t('dash_new_count', { n: unreadCount })}</span>}
+                    <div className="flex items-center gap-2">
+                      {unreadCount > 0 && <span className="text-[9px] bg-royal text-white px-2 py-0.5 rounded font-bold">{t('dash_new_count', { n: unreadCount })}</span>}
+                      <button
+                        type="button"
+                        data-testid="notif-sound-toggle"
+                        onClick={() => { const on = !notifSoundOn; setNotifySoundOn(on); setNotifSoundOn(on); if (on) playNotifySound({ force: true }); }}
+                        title={notifSoundOn ? t('dash_notif_sound_off') : t('dash_notif_sound_on')}
+                        className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground"
+                      >
+                        {notifSoundOn ? <Volume2 size={14} /> : <VolumeX size={14} />}
+                      </button>
+                    </div>
                   </div>
                   <ScrollArea className="max-h-[350px]">
                     {(!notifications || notifications.length === 0) ? (

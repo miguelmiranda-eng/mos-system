@@ -42,9 +42,13 @@ const todayTj = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Americ
 
 const StateEditor = ({ row, states, onCancel, onSave, saving, t }) => {
   const [state, setState] = useState(row.state || '');
-  const [order, setOrder] = useState(row.order_number || row.board_orders?.[0]?.order_number || '');
+  const boardOrders = row.board_orders || [];
+  const [order, setOrder] = useState(row.order_number || boardOrders[0]?.order_number || '');
+  // Una orden que no está en el tablero se teclea a mano ("Otra orden…").
+  const [typing, setTyping] = useState(!!row.order_number && !boardOrders.some((o) => o.order_number === row.order_number));
   const [note, setNote] = useState(row.note || '');
   const active = states.filter((s) => s.active !== false);
+  const OTHER = '__other__';
   return (
     <div className="mt-3 pt-3 border-t border-border space-y-3">
       <div className="flex flex-wrap gap-2">
@@ -58,14 +62,28 @@ const StateEditor = ({ row, states, onCancel, onSave, saving, t }) => {
       </div>
       <div className="flex flex-wrap gap-2 items-center">
         <label className="text-xs text-muted-foreground">{t('ms_order')}</label>
-        <input list={`ms-orders-${row.machine}`} value={order} onChange={(e) => setOrder(e.target.value.trim())}
-          placeholder={t('ms_order_ph')}
-          className="w-36 rounded-lg border border-border bg-background px-2 py-1.5 text-xs font-mono" />
-        <datalist id={`ms-orders-${row.machine}`}>
-          {(row.board_orders || []).map((o) => (
-            <option key={o.order_number} value={o.order_number}>{o.client} · {o.production_status}</option>
-          ))}
-        </datalist>
+        {!typing ? (
+          <select value={order} onChange={(e) => {
+            if (e.target.value === OTHER) { setTyping(true); setOrder(''); } else setOrder(e.target.value);
+          }} className="max-w-[340px] rounded-lg border border-border bg-background px-2 py-1.5 text-xs">
+            <option value="">{t('ms_no_order')}</option>
+            {boardOrders.map((o) => (
+              <option key={o.order_number} value={o.order_number}>
+                {o.order_number} · {o.client}{o.production_status ? ` · ${o.production_status}` : ''}
+              </option>
+            ))}
+            <option value={OTHER}>{t('ms_other_order')}</option>
+          </select>
+        ) : (
+          <span className="inline-flex items-center gap-1">
+            <input value={order} onChange={(e) => setOrder(e.target.value.trim())} placeholder={t('ms_order_ph')} autoFocus
+              className="w-28 rounded-lg border border-border bg-background px-2 py-1.5 text-xs font-mono" />
+            {boardOrders.length > 0 && (
+              <button type="button" onClick={() => { setTyping(false); setOrder(boardOrders[0].order_number); }}
+                className="text-[11px] text-primary hover:underline">{t('ms_pick_from_board')}</button>
+            )}
+          </span>
+        )}
         <input value={note} onChange={(e) => setNote(e.target.value)} maxLength={200} placeholder={t('ms_note_ph')}
           className="flex-1 min-w-[180px] rounded-lg border border-border bg-background px-2 py-1.5 text-xs" />
         <button type="button" onClick={onCancel} className="px-3 py-1.5 rounded-lg text-xs hover:bg-secondary">{t('cancel')}</button>
