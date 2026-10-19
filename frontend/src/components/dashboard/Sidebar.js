@@ -29,6 +29,7 @@ import {
   Zap,
   Package,
   Factory,
+  Activity,
   Settings,
   SlidersHorizontal,
   Table2,
@@ -350,6 +351,10 @@ const Sidebar = ({
                     <button onClick={() => { navigate('/produccion'); if (isMobile) onClose(); }} className={navItem(false)} title={t('dash_production_board')}>
                       <Factory size={15} className={iconCls(false)} />
                       <span>{t('production')}</span>
+                    </button>
+                    <button onClick={() => { navigate('/maquinas'); if (isMobile) onClose(); }} className={navItem(false)} title={t('ms_title')}>
+                      <Activity size={15} className={iconCls(false)} />
+                      <span>{t('ms_title')}</span>
                     </button>
                     <button onClick={() => { navigate('/qc'); if (isMobile) onClose(); }} className={navItem(false)} title={t('dash_quality_control')}>
                       <ShieldCheck size={15} className={iconCls(false)} />
