@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  ArrowLeft, Tag, RefreshCw, Loader2, CalendarClock, ListTodo, Sparkles, Search, CheckCircle2,
+  ArrowLeft, Tag, RefreshCw, Loader2, CalendarClock, CalendarCheck, ListTodo, Sparkles, Search, CheckCircle2,
   AlertTriangle, Loader, Scissors, CircleAlert,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -9,7 +9,7 @@ import { useLang } from '../contexts/LanguageContext';
 import { Toaster } from './ui/sonner';
 import NeckCaptureModal from './NeckCaptureModal';
 import {
-  REFRESH_MS, call, fmtDay, fmtTime, isOverdue, useOrderChangeReload, Components, PrintavoLink,
+  REFRESH_MS, call, fmtDay, fmtTime, isOverdue, readWindow, saveWindow, WindowSelect, useOrderChangeReload, Components, PrintavoLink,
 } from './modules/shared';
 
 // Módulo de Neck. Reemplazará a los tableros NECK y READY TO SCHEDULED. Une el
@@ -121,7 +121,9 @@ export default function NeckModule() {
   const [data, setData] = useState(null);
   const [err, setErr] = useState('');
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState('prog');
+  const [tab, setTab] = useState('sched');
+  const [days, setDays] = useState(() => readWindow('mos_neck_days'));
+  const changeDays = (d) => { setDays(d); saveWindow('mos_neck_days', d); };
   const [q, setQ] = useState('');
   const [busyId, setBusyId] = useState('');
   const [cutOrder, setCutOrder] = useState(null);
@@ -129,14 +131,14 @@ export default function NeckModule() {
 
   const load = useCallback(async () => {
     try {
-      setData(await call('/neck/queue'));
+      setData(await call(`/neck/queue?days=${days}`));
       setErr('');
     } catch (e) {
       setErr(e.message);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [days]);
   loadRef.current = load;
 
   useEffect(() => {
@@ -162,6 +164,7 @@ export default function NeckModule() {
   const statuses = data?.statuses || [];
 
   const lists = {
+    sched: data?.programados || [],
     prog: data?.pendientes || [],
     adv: data?.adelantar || [],
     needs: data?.necesita || [],
@@ -186,7 +189,7 @@ export default function NeckModule() {
     </button>
   );
   const hint = {
-    prog: t('nck_pending_hint'), adv: t('nck_advance_hint'), needs: t('nck_status_tab_hint'),
+    sched: t('mod_scheduled_hint', { n: days }), prog: t('nck_pending_hint'), adv: t('nck_advance_hint'), needs: t('nck_status_tab_hint'),
     proc: t('nck_status_tab_hint'), sug: t('nck_suggested_hint'), alert: t('nck_alerts_hint'),
   }[tab];
 
@@ -211,12 +214,14 @@ export default function NeckModule() {
           </button>
         </div>
         <div className="flex gap-2 mt-4 flex-wrap">
+          {tabBtn('sched', t('mod_tab_scheduled'), CalendarCheck)}
           {tabBtn('prog', t('mod_tab_pending'), CalendarClock)}
           {tabBtn('adv', t('scr_tab_advance'), ListTodo)}
           {tabBtn('needs', t('nck_tab_needs'), CircleAlert)}
           {tabBtn('proc', t('blk_tab_process'), Loader)}
           {tabBtn('sug', t('nck_tab_suggested'), Sparkles)}
           {tabBtn('alert', t('mod_tab_alerts'), AlertTriangle)}
+          <WindowSelect days={days} onChange={changeDays} t={t} />
         </div>
       </header>
 

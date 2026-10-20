@@ -98,6 +98,27 @@ def group_by_order(sim: dict, component: str, only: set = None) -> dict:
     return out
 
 
+DEFAULT_WINDOW_DAYS = 3
+
+
+def window_days(days) -> float:
+    try:
+        return max(0.5, min(float(days or DEFAULT_WINDOW_DAYS), 30.0))
+    except (TypeError, ValueError):
+        return DEFAULT_WINDOW_DAYS
+
+
+def split_window(sim: dict, plan: list, days) -> tuple:
+    """(programados, resto) de una lista del plan: PROGRAMADOS = el plan las
+    arranca dentro de los próximos `days` días (pestaña Programados de cada
+    módulo); el resto sigue en Pendientes."""
+    from datetime import timedelta
+    cutoff = sim["now"] + timedelta(days=window_days(days))
+    prog = [c for c in plan if c.get("start") and datetime.fromisoformat(c["start"]) <= cutoff]
+    ids = {c["order_id"] for c in prog}
+    return prog, [c for c in plan if c["order_id"] not in ids]
+
+
 PRINTING_STATUSES = {"EN PRODUCCION"}
 
 

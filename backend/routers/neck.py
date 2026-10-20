@@ -111,7 +111,7 @@ def _card_factory(prog: dict):
 
 
 @router.get("/queue")
-async def queue(request: Request):
+async def queue(request: Request, days: float = om.DEFAULT_WINDOW_DAYS):
     user = await require_auth(request)
     sim = await om.simulate()
     sim_ids = list({j["order_id"] for j in sim["jobs"]})
@@ -122,13 +122,19 @@ async def queue(request: Request):
     card = _card_factory(await _neck_progress(orders))
     plan, rest, alertas = om.split_plan(sim, by_order, orders, card, LIST_MAX)
     tabs = {"pendientes": [], "adelantar": [], "necesita": [], "proceso": []}
+    # Programados = el plan los arranca en los próximos N días (cualquier
+    # estatus); salen de Pendientes. Las pestañas por estatus los conservan.
+    programados, _ = om.split_window(sim, plan, days)
+    prog_ids = {c["order_id"] for c in programados}
     for lst, is_plan in ((plan, True), (rest, False)):
         for c in lst:
             g = _group(orders[c["order_id"]])
+            if g == "none" and c["order_id"] in prog_ids:
+                continue
             tabs[("pendientes" if is_plan else "adelantar") if g == "none" else g].append(c)
     sugeridas = [c for c in alertas + plan + rest if c["suggest_ready"]]
     return {"sim_at": sim["at"], "statuses": LABEL_STATUSES, "confirm_status": READY_STATUS,
-            **tabs, "sugeridas": sugeridas, "alertas": alertas,
+            "days": om.window_days(days), "programados": programados, **tabs, "sugeridas": sugeridas, "alertas": alertas,
             "can_edit": bool(user_roles(user) & WRITE_ROLES)}
 
 

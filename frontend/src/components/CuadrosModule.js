@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Layers, RefreshCw, Loader2, CheckCircle2, Circle, FastForward, FileClock, Search, AlertTriangle } from 'lucide-react';
+import { ArrowLeft, Layers, RefreshCw, Loader2, CheckCircle2, Circle, FastForward, FileClock, Search, AlertTriangle, CalendarCheck } from 'lucide-react';
 import { toast } from 'sonner';
 import { useLang } from '../contexts/LanguageContext';
 import { Toaster } from './ui/sonner';
 import {
-  REFRESH_MS, call, fmtDay, fmtTime, isOverdue,
+  REFRESH_MS, call, fmtDay, fmtTime, isOverdue, readWindow, saveWindow, WindowSelect,
   useOrderChangeReload, Components, PrintavoLink,
 } from './modules/shared';
 
@@ -104,7 +104,9 @@ export default function CuadrosModule() {
   const [data, setData] = useState(null);
   const [err, setErr] = useState('');
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState('prog');
+  const [tab, setTab] = useState('sched');
+  const [days, setDays] = useState(() => readWindow('mos_cuadros_days'));
+  const changeDays = (d) => { setDays(d); saveWindow('mos_cuadros_days', d); };
   const [busyKey, setBusyKey] = useState('');
   const [advQ, setAdvQ] = useState('');
   const loadRef = useRef(null);
@@ -112,14 +114,14 @@ export default function CuadrosModule() {
   // El backend simula el plan (con caché corta); aquí sólo se pide la cola.
   const load = useCallback(async () => {
     try {
-      setData(await call('/screens/queue'));
+      setData(await call(`/screens/queue?days=${days}`));
       setErr('');
     } catch (e) {
       setErr(e.message);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [days]);
   loadRef.current = load;
 
   useEffect(() => {
@@ -150,6 +152,7 @@ export default function CuadrosModule() {
     method: 'POST', body: JSON.stringify({ ready: true }),
   }), t('scr_done_toast', { n: c.order_number }));
 
+  const sched = data?.programados || [];
   const prog = data?.pendientes || [];
   const adv = data?.adelantar || [];
   const alerts = data?.alertas || [];
@@ -163,7 +166,7 @@ export default function CuadrosModule() {
       .join(' ').toLowerCase();
     return advWords.every((w) => hay.includes(w));
   });
-  const list = tab === 'prog' ? prog : tab === 'adv' ? advShown : tab === 'alert' ? alerts : pre;
+  const list = tab === 'sched' ? sched : tab === 'prog' ? prog : tab === 'adv' ? advShown : tab === 'alert' ? alerts : pre;
   const canEdit = !!data?.can_edit;
   const runAge = data?.sim_at ? Math.round((Date.now() - new Date(data.sim_at).getTime()) / 60000) : null;
 
@@ -200,10 +203,12 @@ export default function CuadrosModule() {
           </button>
         </div>
         <div className="flex gap-2 mt-4 flex-wrap">
+          {tabBtn('sched', t('mod_tab_scheduled'), sched.length, CalendarCheck)}
           {tabBtn('prog', t('mod_tab_pending'), progPending.length, Layers)}
           {tabBtn('adv', t('scr_tab_advance'), adv.length, FastForward)}
           {tabBtn('pre', t('scr_tab_preorders'), pre.length, FileClock)}
           {tabBtn('alert', t('mod_tab_alerts'), alerts.length, AlertTriangle)}
+          <WindowSelect days={days} onChange={changeDays} t={t} />
         </div>
       </header>
 
@@ -212,6 +217,9 @@ export default function CuadrosModule() {
           <div className="rounded-lg border border-border bg-card text-xs p-3 text-muted-foreground">{t('scr_readonly')}</div>
         )}
         {err && <div className="rounded-lg border border-red-500/40 bg-red-500/10 text-red-500 text-sm p-3">{err}</div>}
+        {tab === 'sched' && (
+          <div className="rounded-lg border border-border bg-card text-xs p-3 text-muted-foreground">{t('mod_scheduled_hint', { n: days })}</div>
+        )}
         {tab === 'prog' && data && progPending.length === 0 && adv.length > 0 && (
           <div className="rounded-xl border border-emerald-500/40 bg-emerald-500/10 p-4 flex items-center gap-3">
             <CheckCircle2 className="text-emerald-500" />

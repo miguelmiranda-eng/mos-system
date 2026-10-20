@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Shirt, RefreshCw, Loader2, CalendarClock, ListTodo, Sparkles, Search, CheckCircle2, AlertTriangle, PackageCheck, PieChart, Loader } from 'lucide-react';
+import { ArrowLeft, Shirt, RefreshCw, Loader2, CalendarClock, CalendarCheck, ListTodo, Sparkles, Search, CheckCircle2, AlertTriangle, PackageCheck, PieChart, Loader } from 'lucide-react';
 import { toast } from 'sonner';
 import { useLang } from '../contexts/LanguageContext';
 import { Toaster } from './ui/sonner';
 import {
-  REFRESH_MS, call, fmtDay, fmtTime, isOverdue,
+  REFRESH_MS, call, fmtDay, fmtTime, isOverdue, readWindow, saveWindow, WindowSelect,
   useOrderChangeReload, Components, PrintavoLink,
 } from './modules/shared';
 
@@ -170,21 +170,23 @@ export default function BlanksModule() {
   const [data, setData] = useState(null);
   const [err, setErr] = useState('');
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState('prog');
+  const [tab, setTab] = useState('sched');
+  const [days, setDays] = useState(() => readWindow('mos_blanks_days'));
+  const changeDays = (d) => { setDays(d); saveWindow('mos_blanks_days', d); };
   const [q, setQ] = useState('');
   const [busyId, setBusyId] = useState('');
   const loadRef = useRef(null);
 
   const load = useCallback(async () => {
     try {
-      setData(await call('/blanks/queue'));
+      setData(await call(`/blanks/queue?days=${days}`));
       setErr('');
     } catch (e) {
       setErr(e.message);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [days]);
   loadRef.current = load;
 
   useEffect(() => {
@@ -210,6 +212,7 @@ export default function BlanksModule() {
   const statuses = data?.statuses || [];
 
   const lists = {
+    sched: data?.programados || [],
     prog: data?.pendientes || [],
     adv: data?.adelantar || [],
     surtido: data?.surtido || [],
@@ -261,6 +264,7 @@ export default function BlanksModule() {
           </button>
         </div>
         <div className="flex gap-2 mt-4 flex-wrap">
+          {tabBtn('sched', t('mod_tab_scheduled'), CalendarCheck)}
           {tabBtn('prog', t('mod_tab_pending'), CalendarClock)}
           {tabBtn('adv', t('scr_tab_advance'), ListTodo)}
           {tabBtn('surtido', t('blk_tab_surtido'), PackageCheck)}
@@ -268,6 +272,7 @@ export default function BlanksModule() {
           {tabBtn('proceso', t('blk_tab_process'), Loader)}
           {tabBtn('sug', t('blk_tab_suggested'), Sparkles)}
           {tabBtn('alert', t('mod_tab_alerts'), AlertTriangle)}
+          <WindowSelect days={days} onChange={changeDays} t={t} />
         </div>
       </header>
 
@@ -277,6 +282,7 @@ export default function BlanksModule() {
         )}
         {err && <div className="rounded-lg border border-red-500/40 bg-red-500/10 text-red-500 text-sm p-3">{err}</div>}
         {tab === 'sug' && <div className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 text-xs p-3">{t('blk_suggested_hint')}</div>}
+        {tab === 'sched' && <div className="rounded-lg border border-border bg-card text-xs p-3 text-muted-foreground">{t('mod_scheduled_hint', { n: days })}</div>}
         {tab === 'prog' && <div className="rounded-lg border border-border bg-card text-xs p-3 text-muted-foreground">{t('blk_pending_hint')}</div>}
         {tab === 'alert' && <div className="rounded-lg border border-red-500/40 bg-red-500/10 text-xs p-3">{t('blk_alerts_hint')}</div>}
         {['surtido', 'parciales', 'proceso'].includes(tab) && <div className="rounded-lg border border-border bg-card text-xs p-3 text-muted-foreground">{t('blk_status_tab_hint')}</div>}

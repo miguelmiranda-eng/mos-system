@@ -87,14 +87,16 @@ def _card(order: dict, extra: dict) -> dict:
 
 
 @router.get("/queue")
-async def queue(request: Request):
+async def queue(request: Request, days: float = om.DEFAULT_WINDOW_DAYS):
     user = await require_auth(request)
     sim = await om.simulate()
     by_order = om.group_by_order(sim, "cuadros")
     orders = {o["order_id"]: o async for o in db.orders.find({"order_id": {"$in": list(by_order)}}, ORDER_PROJ)}
     # Lo palomeado después de la simulación (dato vivo) ya no es pendiente.
     orders = {k: o for k, o in orders.items() if not all(_ready_map(o).values())}
-    pendientes, adelantar, alertas = om.split_plan(sim, by_order, orders, _card, ADVANCE_MAX)
+    plan, adelantar, alertas = om.split_plan(sim, by_order, orders, _card, ADVANCE_MAX)
+    # Programados = arrancan en los próximos N días; Pendientes = el resto del plan.
+    programados, pendientes = om.split_window(sim, plan, days)
 
     preorders = [o async for o in db.orders.find(
         {"is_preorder": True, "art_ready_for_screens": True, "artwork_status": {"$ne": "CONVERTED"}},
@@ -104,6 +106,7 @@ async def queue(request: Request):
     done_today = await db.orders.count_documents(
         {"screens_done_at": {"$gte": midnight.astimezone(timezone.utc).isoformat()}})
     return {"sim_at": sim["at"],
+            "days": om.window_days(days), "programados": programados,
             "pendientes": pendientes, "adelantar": adelantar, "alertas": alertas,
             "preordenes": [_card(o, {}) for o in preorders if not all(_ready_map(o).values())],
             "done_today": done_today, "can_edit": await _can_edit(user)}

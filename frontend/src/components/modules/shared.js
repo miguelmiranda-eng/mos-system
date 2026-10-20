@@ -9,6 +9,27 @@ import { API } from '../../lib/constants';
 export const WS_URL = `${process.env.REACT_APP_BACKEND_URL || 'http://localhost:8000'}`.replace(/^http/, 'ws') + '/api/ws';
 export const REFRESH_MS = 2 * 60 * 1000;
 
+// Pestaña Programados: lo que el plan arranca en los próximos N días.
+export const WINDOW_OPTIONS = [1, 2, 3, 5, 7];
+export const readWindow = (key) => {
+  try { const v = Number(localStorage.getItem(key)); return WINDOW_OPTIONS.includes(v) ? v : 3; } catch { return 3; }
+};
+export const saveWindow = (key, d) => {
+  try { localStorage.setItem(key, String(d)); } catch { /* sin storage */ }
+};
+
+export function WindowSelect({ days, onChange, t }) {
+  return (
+    <label className="ml-auto inline-flex items-center gap-2 text-xs text-muted-foreground">
+      {t('mod_window')}
+      <select value={days} onChange={(e) => onChange(Number(e.target.value))}
+        className="rounded-lg border border-border bg-card px-2 py-1.5 text-xs font-bold text-foreground">
+        {WINDOW_OPTIONS.map((d) => <option key={d} value={d}>{t('mod_window_days', { n: d })}</option>)}
+      </select>
+    </label>
+  );
+}
+
 export const call = async (path, opts = {}) => {
   const res = await fetch(`${API}${path}`, {
     credentials: 'include',

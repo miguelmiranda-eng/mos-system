@@ -177,7 +177,7 @@ def _card_factory(wms: dict, stock: dict, ok_set: set):
 
 
 @router.get("/queue")
-async def queue(request: Request):
+async def queue(request: Request, days: float = om.DEFAULT_WINDOW_DAYS):
     user = await require_auth(request)
     sim = await om.simulate()
     ok_set = om.blank_ok_from(sim["cfg"])
@@ -201,9 +201,15 @@ async def queue(request: Request):
     # Sin estatus: plan → Pendientes, resto → Adelantar. Con estatus (ya en
     # proceso): una pestaña por grupo, en el orden del plan y luego el resto.
     tabs = {"pendientes": [], "adelantar": [], "surtido": [], "parciales": [], "proceso": []}
+    # Programados = el plan los arranca en los próximos N días (cualquier
+    # estatus); salen de Pendientes. Las pestañas por estatus los conservan.
+    programados, _ = om.split_window(sim, plan, days)
+    prog_ids = {c["order_id"] for c in programados}
     for lst, is_plan in ((plan, True), (rest, False)):
         for c in lst:
             g = _group(c["blank_status"])
+            if g == "none" and c["order_id"] in prog_ids:
+                continue
             tabs[("pendientes" if is_plan else "adelantar") if g == "none" else g].append(c)
     sugeridas = [c for c in alertas + plan + rest if c["suggest_contado"]]
     midnight = datetime.now(TZ).replace(hour=0, minute=0, second=0, microsecond=0)
@@ -212,7 +218,7 @@ async def queue(request: Request):
         "blank_status": {"$in": [x for x in (await _statuses()) if x.upper() in DONE_STATUSES] or list(DONE_STATUSES)}})
     return {"sim_at": sim["at"], "ok_statuses": sorted(ok_set),
             "statuses": await _statuses(), "confirm_status": CONFIRM_STATUS,
-            **tabs, "alertas": alertas,
+            "days": om.window_days(days), "programados": programados, **tabs, "alertas": alertas,
             "sugeridas": sugeridas, "done_today": done_today,
             "can_edit": bool(user_roles(user) & WRITE_ROLES)}
 
