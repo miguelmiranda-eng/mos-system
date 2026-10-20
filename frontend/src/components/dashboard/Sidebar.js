@@ -40,7 +40,7 @@ import { useLang } from '../../contexts/LanguageContext';
 import { BOARD_COLORS } from '../../lib/constants';
 import { BUILD_TAG } from '../../buildInfo';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../ui/collapsible";
-import { resolveSectors } from '../../lib/boardSectors';
+import { resolveSectors, MASTER_TAB_BOARDS, usesMasterTabs } from '../../lib/boardSectors';
 import { useBoardSectors } from '../../hooks/useBoardSectors';
 import { BoardSectorsModal } from './BoardSectorsModal';
 
@@ -95,7 +95,10 @@ const Sidebar = ({
   const isPicker = userRole === 'picker';
   const isSupersu = userRole === 'supersu';
   const machineBoards = boards.filter(b => b.startsWith('MAQUINA'));
-  const regularBoards = boards.filter(b => !b.startsWith('MAQUINA'));
+  // EDI / FINAL BILL / INVENTARIO son pestañas del maestro: fuera del menú
+  // (así desaparece el desplegable "Completados").
+  const masterTabs = usesMasterTabs(boards);
+  const regularBoards = boards.filter(b => !b.startsWith('MAQUINA') && !(masterTabs && MASTER_TAB_BOARDS.includes(b)));
   const isAnyMachineActive = machineBoards.includes(currentBoard);
 
   // El reparto por sectores lo guarda supersu en la base; mientras carga (o si
@@ -152,7 +155,8 @@ const Sidebar = ({
   // máquinas. Estaba duplicado tres veces; ahora sale de un solo sitio.
   const renderBoardButton = (board) => {
     const IconComponent = getBoardIcon(board);
-    const isActive = currentBoard === board;
+    const isActive = currentBoard === board
+      || (masterTabs && board === 'SCHEDULING' && MASTER_TAB_BOARDS.includes(currentBoard));
     return (
       <button
         key={board}

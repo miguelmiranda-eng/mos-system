@@ -67,6 +67,7 @@ import CommandPalette from "./dashboard/CommandPalette";
 import { cn, localDateLabel } from "../lib/utils";
 import { BOARDS, BOARD_COLORS, FILTER_COLUMNS, STATUS_COLORS, getBoardStyle, evaluateFormulaValue, API, normalizePublicUrl } from "../lib/constants";
 import { useOrders, apiFetch, SEARCH_FETCH_PAGE } from "../hooks/useOrders";
+import { MASTER_TAB_BOARDS, usesMasterTabs } from '../lib/boardSectors';
 
 // ── Global order search ────────────────────────────────────────────────────
 // Flatten every value of an order (including dynamic/custom columns and nested
@@ -96,7 +97,7 @@ const Dashboard = () => {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const [showPrintedReport, setShowPrintedReport] = useState(false);
-  const { t, lang, toggleLang } = useLang();
+  const { t, tName, lang, toggleLang } = useLang();
 
   // Helper functions for rendering detail values safely
   const renderDetailValue = (val) => {
@@ -428,6 +429,17 @@ const Dashboard = () => {
   const masterBoard = activeBoards.includes('MASTER') ? 'MASTER' : 'SCHEDULING';
   const isMasterView = currentBoard === masterBoard;
   const [masterTab, setMasterTab] = useState('open');
+  // Pestañas del maestro: Abiertas / Completas (filtro) + los tableros de
+  // cierre (EDI, FINAL BILL, INVENTARIO), que salieron del menú.
+  const masterTabsOn = usesMasterTabs(activeBoards);
+  const tabBoards = masterTabsOn ? MASTER_TAB_BOARDS.filter((b) => activeBoards.includes(b)) : [];
+  const inMasterTabs = masterTabsOn && (isMasterView || tabBoards.includes(currentBoard));
+  const [tabCounts, setTabCounts] = useState({});
+  useEffect(() => {
+    if (!inMasterTabs) return;
+    apiFetch(`${API}/orders/board-counts`, { credentials: 'include' })
+      .then((r) => (r.ok ? r.json() : {})).then(setTabCounts).catch(() => { });
+  }, [inMasterTabs, currentBoard]);
   useEffect(() => {
     if (dynamicBoards.length > 0 && currentBoard === 'DATA ENTRY' && !activeBoards.includes('DATA ENTRY')) {
       setCurrentBoard('SCHEDULING');
@@ -2206,20 +2218,28 @@ const Dashboard = () => {
           </div>
 
           {/* Identificador del tablero, junto al selector de agrupación */}
-          <span className="h-9 inline-flex items-center px-3 rounded-lg text-xs font-black uppercase tracking-tight text-white whitespace-nowrap mr-3" style={{ backgroundColor: BOARD_COLORS[currentBoard]?.bg || '#1f2937' }}>{currentBoard}</span>
+          <span className="h-9 inline-flex items-center px-3 rounded-lg text-xs font-black uppercase tracking-tight text-white whitespace-nowrap mr-3" style={{ backgroundColor: BOARD_COLORS[inMasterTabs ? masterBoard : currentBoard]?.bg || '#1f2937' }}>{inMasterTabs ? masterBoard : currentBoard}</span>
 
-          {/* Maestro: abiertas / completas (reemplaza al tablero COMPLETOS) */}
-          {isMasterView && !activeBoards.includes('COMPLETOS') && (
+          {/* Maestro: Abiertas / Completas (filtro del maestro) y los tableros de
+              cierre como pestañas (EDI, FINAL BILL, INVENTARIO). */}
+          {inMasterTabs && (
             <div className="inline-flex rounded-lg border border-border overflow-hidden mr-3 h-9" data-testid="master-tabs">
               {[['open', t('master_tab_open')], ['done', t('master_tab_done')]].map(([k, label]) => {
-                const n = (orders || []).filter((o) => isCompleteOrder(o) === (k === 'done')).length;
+                const n = isMasterView ? (orders || []).filter((o) => isCompleteOrder(o) === (k === 'done')).length : null;
+                const on = isMasterView && masterTab === k;
                 return (
-                  <button key={k} type="button" onClick={() => setMasterTab(k)}
-                    className={cn("px-3 text-xs font-black uppercase tracking-tight transition-colors", masterTab === k ? "bg-royal text-white" : "bg-transparent text-muted-foreground hover:bg-muted")}>
-                    {label} <span className="opacity-70">{n}</span>
+                  <button key={k} type="button" onClick={() => { setMasterTab(k); if (!isMasterView) setCurrentBoard(masterBoard); }}
+                    className={cn("px-3 text-xs font-black uppercase tracking-tight transition-colors", on ? "bg-royal text-white" : "bg-transparent text-muted-foreground hover:bg-muted")}>
+                    {label}{n != null && <span className="opacity-70"> {n}</span>}
                   </button>
                 );
               })}
+              {tabBoards.map((b) => (
+                <button key={b} type="button" onClick={() => setCurrentBoard(b)}
+                  className={cn("px-3 text-xs font-black uppercase tracking-tight transition-colors border-l border-border", currentBoard === b ? "bg-royal text-white" : "bg-transparent text-muted-foreground hover:bg-muted")}>
+                  {tName(b) || b}{Object.keys(tabCounts).length > 0 && <span className="opacity-70"> {tabCounts[b] || 0}</span>}
+                </button>
+              ))}
             </div>
           )}
 

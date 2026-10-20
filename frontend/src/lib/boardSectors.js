@@ -19,6 +19,12 @@ export const SECTOR_META = [
   { id: 'old',          label: 'Old',          labelKey: 'sector_old',          icon: Archive },
 ];
 
+// Tableros de CIERRE que viven como pestañas del maestro (SCHEDULING), no en
+// el menú: Completas / EDI / Final Bill / Inventario. Sólo con el modelo nuevo
+// (sin MASTER ni COMPLETOS); antes de la migración se ven como siempre.
+export const MASTER_TAB_BOARDS = ['EDI', 'FINAL BILL', 'INVENTARIO'];
+export const usesMasterTabs = (boards) => !(boards || []).includes('MASTER') && !(boards || []).includes('COMPLETOS');
+
 // Reparto inicial. Se usa mientras no haya nada guardado, y es lo que restaura
 // el botón "Restaurar" del editor.
 export const DEFAULT_SECTORS = {
