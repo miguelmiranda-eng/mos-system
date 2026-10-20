@@ -44,11 +44,14 @@ import { resolveSectors } from '../../lib/boardSectors';
 import { useBoardSectors } from '../../hooks/useBoardSectors';
 import { BoardSectorsModal } from './BoardSectorsModal';
 
-// Módulos que viven dentro de un sector del menú, en el lugar del tablero que
-// reemplazaron (Cuadros sustituyó al tablero SCREENS, entre Blanks y Neck).
-// `after`: tablero tras el cual va; si no está en el sector, va al final.
+// Módulos que viven dentro de un sector del menú, en el lugar de los tableros
+// que reemplazaron (Blanks y Cuadros sustituyeron a BLANKS y SCREENS, antes de
+// Neck). `before`: tablero antes del cual va; si no está en el sector, al final.
 const SECTOR_MODULES = {
-  produccion: [{ path: '/cuadros', labelKey: 'scr_title', icon: Layers, color: '#52b788', after: 'BLANKS' }],
+  produccion: [
+    { path: '/blanks', labelKey: 'blk_menu', icon: Shirt, color: '#0ea5e9', before: 'NECK' },
+    { path: '/cuadros', labelKey: 'scr_title', icon: Layers, color: '#52b788', before: 'NECK' },
+  ],
 };
 
 const toTitle = (str) => str.toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
@@ -56,6 +59,7 @@ const toTitle = (str) => str.toLowerCase().replace(/\b\w/g, c => c.toUpperCase()
 const getBoardIcon = (board) => {
   const b = board.toUpperCase();
   if (b.includes('MASTER')) return LayoutTemplate;
+  if (b.includes('DATA ENTRY')) return ClipboardList;
   if (b.includes('SCHEDULING') || b.includes('READY')) return CalendarDays;
   if (b.includes('BLANKS') || b.includes('NECK')) return Shirt;
   if (b.includes('SCREENS')) return Layers;
@@ -189,8 +193,8 @@ const Sidebar = ({
     const placed = new Set();
     const out = [];
     group.items.forEach((b) => {
+      mods.filter((m) => m.before === b).forEach((m) => { placed.add(m.path); out.push(renderModuleButton(m)); });
       out.push(renderBoardButton(b));
-      mods.filter((m) => m.after === b).forEach((m) => { placed.add(m.path); out.push(renderModuleButton(m)); });
     });
     mods.filter((m) => !placed.has(m.path)).forEach((m) => out.push(renderModuleButton(m)));
     return out;

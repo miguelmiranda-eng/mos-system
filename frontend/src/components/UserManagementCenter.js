@@ -20,7 +20,7 @@ const PERM_OPTIONS = [
 // Boards an operator can be permanently assigned to. Matches the dropdown in
 // MachineOperatorView so the two stay in sync: máquinas = tableros MAQUINA<n>
 // reales (/config/boards), con respaldo estático mientras cargan.
-const operatorBoardsFrom = (boards) => [...machinesFrom(boards), 'NECK', 'BLANKS'];   // SCREENS retirado: Cuadros es módulo
+const operatorBoardsFrom = (boards) => [...machinesFrom(boards), 'NECK'];   // SCREENS y BLANKS retirados: son módulos
 
 // ── Multi-rol (2026-10-09) ────────────────────────────────────────────────────
 // Roles del usuario como lista (soporta el doc nuevo `roles` y el viejo `role`).
@@ -31,7 +31,7 @@ const EXCLUSIVE_SET = new Set(['operator', 'customer', 'shipping_guest', 'extern
 const ADDITIVE_UI = [
   ['general', 'general'], ['admin', 'users_role_admin'], ['supersu', 'users_role_supersu'],
   ['inventory', 'users_role_inventory'], ['picker', null], ['inspector_qc', null], ['ceo', null],
-  ['screens', 'users_role_screens'],
+  ['screens', 'users_role_screens'], ['blanks', 'users_role_blanks'],
 ];
 const EXCLUSIVE_UI = [['operator', 'admin_operator'], ['customer', 'users_role_customer'], ['shipping_guest', 'users_role_shipping_guest']];
 

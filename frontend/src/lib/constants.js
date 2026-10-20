@@ -206,6 +206,7 @@ export const BOARD_COLORS = {
   'MASTER': { bg: '#1a1a2e', accent: '#e94560' },
   'SCHEDULING': { bg: '#0f3460', accent: '#16c79a' },
   'BLANKS': { bg: '#4a1942', accent: '#e066cc' },
+  'DATA ENTRY': { bg: '#3b2f0b', accent: '#f5b942' },
   'SCREENS': { bg: '#1b4332', accent: '#52b788' },
   'NECK': { bg: '#420b0b', accent: '#ff4d4d' },
   'EDI': { bg: '#20124d', accent: '#3d85c6' },

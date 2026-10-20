@@ -648,10 +648,11 @@ async def internal_create_order(order: OrderCreate, user: dict) -> dict:
         order_data["print_positions"] = validar_posiciones(order_data["print_positions"])
         order_data["print_positions_inferred"] = False
 
-    # Safety: ensure board is NEVER null — default to SCHEDULING
+    # Sin tablero = orden NUEVA: entra al tablero de captura (DATA ENTRY) y data
+    # entry la manda a SCHEDULING. Nunca queda sin tablero.
     if not order_data.get("board"):
-        logger.warning(f"Order created without a board, defaulting to SCHEDULING (order: {order_data.get('order_number')})")
-        order_data["board"] = "SCHEDULING"
+        from deps import intake_board
+        order_data["board"] = await intake_board()
         
     # Pre-Order Linkage Logic
     linked_preorder_id = order_data.pop("linked_preorder_id", None)
@@ -849,6 +850,11 @@ async def update_order(order_id: str, order: OrderUpdate, request: Request):
     if "production_status" in update_data:
         if (update_data.get("production_status") or "") != (existing.get("production_status") or ""):
             update_data["production_status_at"] = update_data["updated_at"]
+    # Igual para el blank: el módulo Blanks cuenta "contadas hoy" y la vista
+    # ejecutiva podrá medir antigüedad real (hoy sólo tiene created_at).
+    if "blank_status" in update_data:
+        if (update_data.get("blank_status") or "") != (existing.get("blank_status") or ""):
+            update_data["blank_status_at"] = update_data["updated_at"]
 
     # Board QC Lock: block moving OUT of CONTROL DE CALIDAD
     old_board = existing.get("board")
@@ -1055,7 +1061,7 @@ DAY_SUPPORTED_BOARDS = {"READY TO SCHEDULED", "BLANKS", "SCREENS", "NECK"}
 # Machines were the first, but BLANKS and NECK ship + queue work that mirrors
 # the machine workflow closely enough that the same Activa / En Cola split is
 # useful there too.
-QUEUE_SUPPORTED_BOARDS = {"BLANKS", "NECK"}
+QUEUE_SUPPORTED_BOARDS = {"NECK"}
 VALID_DAYS = {"monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"}
 WEEKDAY_NAMES = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
 
@@ -2488,7 +2494,8 @@ async def import_orders_excel(
                     # Create new order
                     order_id = f"ord_{uuid.uuid4().hex[:12]}"
                     if not order_data.get("board"):
-                        order_data["board"] = "SCHEDULING"
+                        from deps import intake_board
+                        order_data["board"] = await intake_board()
                     
                     full_doc = {
                         **order_data,

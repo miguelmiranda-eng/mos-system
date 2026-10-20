@@ -15584,30 +15584,54 @@ async def get_cycle_count_report(count_id: str, request: Request):
 
 # ==================== QUICK INLINE UPDATES ====================
 
+# Tableros donde una orden ya no está viva: al elegir entre gemelas con el
+# mismo order_number se prefiere la que sigue en proceso.
+_STATUS_DEAD_BOARDS = {"PAPELERA DE RECICLAJE", "CANCELLED", "FINAL BILL", "COMPLETOS", "INVENTARIO", "EDI"}
+
+
+async def _order_for_ticket_status(ticket_id: str, ticket: Optional[dict]) -> Optional[dict]:
+    """La orden del ticket. Antes era `update_one({"order_number": …})`, que con
+    órdenes gemelas (mismo número) le pegaba a cualquiera. Orden de búsqueda:
+    virt_<order_id> → ticket.order_id → por número, la viva más reciente."""
+    if ticket_id.startswith("virt_"):
+        return await db.orders.find_one({"order_id": ticket_id.replace("virt_", "")}, {"_id": 0, "order_id": 1})
+    if not ticket:
+        return None
+    if ticket.get("order_id"):
+        o = await db.orders.find_one({"order_id": ticket["order_id"]}, {"_id": 0, "order_id": 1})
+        if o:
+            return o
+    num = ticket.get("order_number")
+    if num in (None, ""):
+        return None
+    cands = [o async for o in db.orders.find(
+        {"order_number": {"$in": list({num, str(num)})}, "is_preorder": {"$ne": True}},
+        {"_id": 0, "order_id": 1, "board": 1, "created_at": 1})]
+    alive = [o for o in cands if o.get("board") not in _STATUS_DEAD_BOARDS]
+    pool = alive or cands
+    return max(pool, key=lambda o: str(o.get("created_at") or "")) if pool else None
+
+
 @router.put("/pick-tickets/{ticket_id}/status")
 async def quick_status_update(ticket_id: str, request: Request):
-    user = await require_auth(request)
+    """Dropdown de estatus del blank en Picking. El ticket guarda su copia y la
+    ORDEN se actualiza por el mismo camino que el CRM (orders.update_order):
+    bitácora, sello blank_status_at, automatizaciones ("mover a cuadros" con
+    CONTADO) y broadcast — antes era un $set mudo por order_number."""
+    from routers.orders import update_order   # lazy (evita ciclo)
+    from deps import OrderUpdate
+    await require_auth(request)
     body = await request.json()
     if "blank_status" in body:
         new_status = body["blank_status"]
-        # Determine if it's a virtual ticket or a real one
-        order_number = None
-        if ticket_id.startswith("virt_"):
-            # If virtual, the ID is virt_ORDER_ID. BUT wait, let's look at list_pick_tickets logic.
-            # It uses virt_vo.get('order_id')
-            order_id = ticket_id.replace("virt_", "")
-            order = await db.orders.find_one({"order_id": order_id})
-            if order:
-                order_number = order.get("order_number")
-        else:
-            ticket = await db.wms_pick_tickets.find_one({"ticket_id": ticket_id})
+        ticket = None
+        if not ticket_id.startswith("virt_"):
+            ticket = await db.wms_pick_tickets.find_one({"ticket_id": ticket_id}, {"_id": 0})
             if ticket:
                 await db.wms_pick_tickets.update_one({"ticket_id": ticket_id}, {"$set": {"blank_status": new_status}})
-                order_number = ticket.get("order_number")
-        
-        if order_number:
-            await db.orders.update_one({"order_number": order_number}, {"$set": {"blank_status": new_status}})
-            
+        order = await _order_for_ticket_status(ticket_id, ticket)
+        if order:
+            await update_order(order["order_id"], OrderUpdate(blank_status=new_status), request)
     return {"status": "ok"}
 
 # ==================== WMS 2.0 DIRECTED TASKS ====================

@@ -22,8 +22,8 @@ export const SECTOR_META = [
 // Reparto inicial. Se usa mientras no haya nada guardado, y es lo que restaura
 // el botón "Restaurar" del editor.
 export const DEFAULT_SECTORS = {
-  programacion: ['SCHEDULING', 'READY TO SCHEDULED'],
-  produccion:   ['BLANKS', 'NECK', 'EMPAQUE'],   // SCREENS → módulo Cuadros (Sidebar SECTOR_MODULES)
+  programacion: ['DATA ENTRY', 'SCHEDULING', 'READY TO SCHEDULED'],   // DATA ENTRY = entrada; SCHEDULING = maestro
+  produccion:   ['NECK', 'EMPAQUE'],   // BLANKS y SCREENS → módulos Blanks y Cuadros (Sidebar SECTOR_MODULES)
   completados:  ['EDI', 'INVENTARIO', 'FINAL BILL', 'COMPLETOS'],
   old:          ['RESPALDO MONDAY', 'CANCELLED'],
 };

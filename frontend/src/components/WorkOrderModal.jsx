@@ -28,12 +28,14 @@ const STAGES = [
 const RANK = Object.fromEntries(STAGES.map((s, i) => [s[0], i]));
 const SLABEL = Object.fromEntries(STAGES);
 const BOARD_STAGE = {
-  BLANKS: 'BLANKS', NECK: 'LABEL',
+  NECK: 'LABEL',
   'CONTROL DE CALIDAD': 'PACKING', COMPLETOS: 'PACKING', 'FINAL BILL': 'PACKING',
 };
 const FALLBACK_BOARD_STAGE = {
-  SCHEDULING: 'SCHEDULING', 'READY TO SCHEDULED': 'SCHEDULING', MASTER: 'SCHEDULING', EDI: 'SCHEDULING',
+  'DATA ENTRY': 'SCHEDULING', SCHEDULING: 'SCHEDULING', 'READY TO SCHEDULED': 'SCHEDULING', MASTER: 'SCHEDULING', EDI: 'SCHEDULING',
 };
+// Blank listo = regla de Planeación (ready_blank_statuses).
+const BLANK_READY = new Set(['CONTADO', 'CONTADO/PICKED', 'SURTIDO']);
 const STATUS_STAGE = {
   'NECESITA LABEL': 'LABEL', 'PROCESO DE NECK LABEL': 'LABEL', 'PROCESO DE LABEL': 'LABEL', 'LABEL LISTO': 'LABEL',
   'EN PRODUCCION': 'PRODUCTION',
@@ -50,7 +52,10 @@ function stageOf(order) {
   let porTablero = BOARD_STAGE[board] || null;
   if (board.indexOf('MAQUINA') === 0) porTablero = 'PRODUCTION';
   const porStatus = STATUS_STAGE[status] || null;
-  const respaldo = FALLBACK_BOARD_STAGE[board] || null;
+  // Sin tablero BLANKS (Blanks es módulo): en SCHEDULING la orden está en la
+  // etapa Blanks mientras su blank no esté listo (misma regla de Planeación).
+  const blankListo = BLANK_READY.has(String(order.blank_status || '').trim().toUpperCase());
+  const respaldo = board === 'SCHEDULING' && !blankListo ? 'BLANKS' : (FALLBACK_BOARD_STAGE[board] || null);
   const key = porTablero || porStatus || respaldo;
   const adelantado = !!(porTablero && porStatus && RANK[porStatus] > RANK[porTablero]);
   return {

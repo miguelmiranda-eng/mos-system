@@ -291,7 +291,8 @@ async def _create_provisional_order(user, hint, explicit_order_number=None):
     if explicit_order_number:
         order_number = str(explicit_order_number).strip()
         is_prov = False
-        board = "SCHEDULING"
+        from deps import intake_board
+        board = await intake_board()      # orden real nueva: entra por DATA ENTRY
     else:
         seq = await _next_prov_seq()
         order_number = f"PROV-{seq:04d}"

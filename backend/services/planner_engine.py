@@ -63,7 +63,7 @@ DEFAULT_CONFIG = {
     # arranca cuando termina el frente (pueden ir en otra máquina).
     "positions_in_sequence": True,
     # Tableros cuya demanda cuenta (además de las MAQUINA<n>).
-    "demand_boards": ["SCHEDULING", "READY TO SCHEDULED", "BLANKS", "SCREENS", "NECK"],
+    "demand_boards": ["DATA ENTRY", "SCHEDULING", "READY TO SCHEDULED", "BLANKS", "SCREENS", "NECK"],
     # Orden en que se programan las posiciones de una orden (frente antes que
     # espalda). Es el último desempate del acomodo; vaciar la lista lo apaga.
     "position_order": ["FRENTE", "ESPALDA", "MANGA"],

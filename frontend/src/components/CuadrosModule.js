@@ -1,10 +1,13 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Layers, RefreshCw, Loader2, CheckCircle2, Circle, FastForward, FileClock, Search, ExternalLink } from 'lucide-react';
+import { ArrowLeft, Layers, RefreshCw, Loader2, CheckCircle2, Circle, FastForward, FileClock, Search } from 'lucide-react';
 import { toast } from 'sonner';
-import { API } from '../lib/constants';
 import { useLang } from '../contexts/LanguageContext';
 import { Toaster } from './ui/sonner';
+import {
+  REFRESH_MS, WINDOW_OPTIONS, readWindow, saveWindow, call, fmtDay, fmtTime, isOverdue,
+  useOrderChangeReload, Components, PrintavoLink,
+} from './modules/shared';
 
 // Módulo de Cuadros: reemplaza al tablero SCREENS. La cola sale de una
 // simulación del motor de Planeación con los cuadros contados como listos
@@ -14,30 +17,7 @@ import { Toaster } from './ui/sonner';
 // Los cuadros se palomean por posición; al quedar todas, la orden queda con
 // `screens` = true como siempre (automatización "move to neck").
 
-const WS_URL = `${process.env.REACT_APP_BACKEND_URL || 'http://localhost:8000'}`.replace(/^http/, 'ws') + '/api/ws';
-const REFRESH_MS = 2 * 60 * 1000;
-const WINDOW_OPTIONS = [1, 2, 3, 5, 7];
 const WINDOW_KEY = 'mos_cuadros_days';
-const readWindow = () => {
-  try { const v = Number(localStorage.getItem(WINDOW_KEY)); return WINDOW_OPTIONS.includes(v) ? v : 3; } catch { return 3; }
-};
-
-const call = async (path, opts = {}) => {
-  const res = await fetch(`${API}${path}`, {
-    credentials: 'include',
-    headers: { 'Content-Type': 'application/json' },
-    ...opts,
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
-  return data;
-};
-
-const fmtDay = (iso) => (iso ? new Date(iso.length > 10 ? iso : `${iso}T00:00:00`)
-  .toLocaleDateString('es-MX', { weekday: 'short', day: '2-digit', month: 'short' }) : '—');
-const fmtTime = (iso) => (iso && iso.length > 10 ? iso.slice(11, 16) : '');
-const isOverdue = (iso) => iso && iso < new Date().toISOString().slice(0, 10);
-
 function PositionChip({ p, disabled, busy, onToggle }) {
   return (
     <button
@@ -56,33 +36,6 @@ function PositionChip({ p, disabled, busy, onToggle }) {
   );
 }
 
-// Mini tabla de componentes: blanks, trim, arte y neck label (sólo lectura,
-// los mismos campos del CRM). ok = ya no detiene la impresión.
-const COMP_STYLE = {
-  ok: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400',
-  pending: 'border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400',
-  empty: 'border-border bg-secondary/50 text-muted-foreground',
-};
-const COMP_DOT = { ok: 'bg-emerald-500', pending: 'bg-amber-500', empty: 'bg-muted-foreground/40' };
-
-function Components({ items, t }) {
-  if (!items?.length) return null;
-  return (
-    <div className="mt-2 grid grid-cols-2 sm:grid-cols-4 gap-1.5 max-w-2xl">
-      {items.map((c) => (
-        <div key={c.key} className={`rounded-md border px-2 py-1 ${COMP_STYLE[c.state] || COMP_STYLE.empty}`}
-          title={c.value || t('scr_comp_none')}>
-          <div className="flex items-center gap-1.5 text-[10px] font-black uppercase tracking-wider">
-            <span className={`w-1.5 h-1.5 rounded-full ${COMP_DOT[c.state] || COMP_DOT.empty}`} />
-            {t(`scr_comp_${c.key}`)}
-          </div>
-          <div className="text-[11px] font-bold leading-tight line-clamp-2 break-words">{c.value || t('scr_comp_none')}</div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
 function OrderCard({ c, t, canEdit, busyKey, onToggle, onAll, mode }) {
   const pending = c.positions.filter((p) => !p.ready).length;
   const screensEst = c.colors ? c.colors * pending : null;
@@ -91,13 +44,7 @@ function OrderCard({ c, t, canEdit, busyKey, onToggle, onAll, mode }) {
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-base font-black">#{c.order_number}</span>
-          {c.printavo_url && (
-            <a href={c.printavo_url} target="_blank" rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 text-[11px] font-bold text-primary hover:underline"
-              title={t('scr_printavo')}>
-              <ExternalLink size={12} /> Printavo
-            </a>
-          )}
+          <PrintavoLink url={c.printavo_url} t={t} />
           {c.priority && <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-red-500/15 text-red-500">{c.priority}</span>}
           <span className="text-sm text-muted-foreground truncate">{c.client}{c.branding ? ` · ${c.branding}` : ''}</span>
         </div>
@@ -156,7 +103,7 @@ export default function CuadrosModule() {
   const [tab, setTab] = useState('prog');
   const [busyKey, setBusyKey] = useState('');
   const [advQ, setAdvQ] = useState('');
-  const [days, setDays] = useState(readWindow);
+  const [days, setDays] = useState(() => readWindow(WINDOW_KEY));
   const loadRef = useRef(null);
 
   // El backend simula el plan (con caché corta); aquí sólo se pide la cola.
@@ -180,31 +127,10 @@ export default function CuadrosModule() {
 
   const changeDays = (d) => {
     setDays(d);
-    try { localStorage.setItem(WINDOW_KEY, String(d)); } catch { /* sin storage */ }
+    saveWindow(WINDOW_KEY, d);
   };
 
-  // Un cambio de orden en cualquier pantalla → recarga (juntando ráfagas).
-  useEffect(() => {
-    let ws; let timer; let retry; let disposed = false;
-    const connect = () => {
-      try {
-        ws = new WebSocket(WS_URL);
-        ws.onmessage = (e) => {
-          try {
-            const msg = JSON.parse(e.data);
-            if (msg.type !== 'order_change') return;
-            clearTimeout(timer);
-            timer = setTimeout(() => loadRef.current?.(), 3000 + Math.random() * 4000);
-          } catch { /* mensaje ajeno */ }
-        };
-        ws.onclose = () => { if (!disposed) retry = setTimeout(connect, 10000); };
-      } catch {
-        if (!disposed) retry = setTimeout(connect, 10000);
-      }
-    };
-    connect();
-    return () => { disposed = true; clearTimeout(timer); clearTimeout(retry); try { ws?.close(); } catch { /* */ } };
-  }, []);
+  useOrderChangeReload(loadRef);
 
   const run = async (key, fn, okMsg) => {
     setBusyKey(key);

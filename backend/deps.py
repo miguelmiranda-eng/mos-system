@@ -225,6 +225,19 @@ async def get_dynamic_boards():
     _hide = {"PAPELERA DE RECICLAJE", "EJEMPLOS"}
     return [b for b in boards if b not in _hide]
 
+# Tablero de ENTRADA (captura) de órdenes nuevas: Printavo, alta manual e
+# import de Excel crean ahí; data entry selecciona y manda a SCHEDULING (el
+# maestro de órdenes en preparación). Si el tablero aún no existe (antes de
+# correr scripts/setup_data_entry_retire_blanks.py) se cae a SCHEDULING, así
+# el código se puede desplegar antes que la migración sin perder órdenes.
+INTAKE_BOARD = "DATA ENTRY"
+PREP_BOARD = "SCHEDULING"
+
+
+async def intake_board() -> str:
+    return INTAKE_BOARD if INTAKE_BOARD in await get_dynamic_boards() else PREP_BOARD
+
+
 async def get_machines():
     """Máquinas reales según los tableros; respaldo estático si no hay ninguna."""
     return machines_from_boards(await get_dynamic_boards()) or list(MACHINES)
@@ -291,7 +304,7 @@ class OrderCreate(BaseModel):
     design_num: Optional[str] = Field(None, alias="design_#")
     final_bill: Optional[str] = None
     screens: Optional[bool] = None
-    board: Optional[str] = "SCHEDULING"
+    board: Optional[str] = None          # vacío = tablero de entrada (intake_board)
     style: Optional[str] = None
     sizes: Optional[Dict[str, int]] = None
     print_positions: Optional[List[str]] = None
@@ -320,7 +333,7 @@ class OrderCreate(BaseModel):
     @classmethod
     def validate_board(cls, v):
         if v is None or (isinstance(v, str) and not v.strip()):
-            return "SCHEDULING"
+            return None                      # lo resuelve internal_create_order (intake_board)
         return v
 
     links: Optional[List[Dict[str, str]]] = []
@@ -715,11 +728,12 @@ SUPER_ROLES = {"admin", "supersu"}
 # get_current_user, el scope de customer, el lock de operator), nunca se bypassan.
 ADDITIVE_ROLES = {"supersu", "admin", "ceo", "inventory", "picker", "general",
                   "qc", "inspector_qc", "paint", "paint_lead", "sample_lead",
-                  "screens"}           # Cuadros: palomea en el módulo /cuadros
+                  "screens",           # Cuadros: palomea en el módulo /cuadros
+                  "blanks"}            # Blanks: cambia/confirma el estatus en /blanks
 EXCLUSIVE_ROLES = {"customer", "shipping_guest", "operator", "external_api"}
 # Orden de "representatividad" para derivar el role PRIMARIO cuando hay varios.
 ROLE_PRECEDENCE = ["supersu", "admin", "ceo", "inventory", "qc", "inspector_qc",
-                   "paint_lead", "paint", "sample_lead", "screens", "picker", "general"]
+                   "paint_lead", "paint", "sample_lead", "screens", "blanks", "picker", "general"]
 
 
 def user_roles(user: Dict) -> set:

@@ -19,7 +19,7 @@ Design decisions (see NewOrderForm / import_router for the manual analogue):
   * sizes         <- LineItemSizeCount, normalized via import_router.SIZES_MAP.
                      Youth/toddler sizes are kept in the order data even though the
                      manual 9-size grid doesn't render them (no data loss).
-  * board         <- SCHEDULING (same default as the manual engine).
+  * board         <- tablero de entrada DATA ENTRY (deps.intake_board), igual que el alta manual.
   * source        <- "printavo_auto" so these are distinguishable from manual/ceo.
 """
 import re
@@ -541,7 +541,7 @@ def invoice_to_orders(invoice: dict) -> list:
             "cancel_date": due,
             "quantity": total_qty,
             "sizes": merged_sizes or None,
-            "board": "SCHEDULING",
+            "board": None,          # = tablero de entrada (DATA ENTRY; deps.intake_board)
             "source": "printavo_auto",
             "printavo_invoice_id": invoice.get("id"),
             # Muestra física leída del work order de Printavo. "SI"/"NO";

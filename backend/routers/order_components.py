@@ -126,7 +126,6 @@ STAGE_LABEL = dict(STAGES)
 # Tableros OPERATIVOS: la orden está físicamente ahí, así que el tablero manda
 # aunque el status diga otra cosa.
 BOARD_STAGE = {
-    "BLANKS": "BLANKS",
     "NECK": "LABEL",
     # QC va fundido en Empaque: es la revisión previa al envío y la secuencia
     # pedida no lo lleva como paso propio. Si hace falta separarlo, es agregarlo
@@ -141,6 +140,7 @@ BOARD_STAGE = {
 # respaldo para que una orden recién capturada, sin status, no salga "sin
 # etapa": estar en el tablero de programación ya es estar en programación.
 FALLBACK_BOARD_STAGE = {
+    "DATA ENTRY": "SCHEDULING",
     "SCHEDULING": "SCHEDULING",
     "READY TO SCHEDULED": "SCHEDULING",
     "MASTER": "SCHEDULING",
@@ -157,6 +157,8 @@ STATUS_STAGE = {
     "EJEMPLO APROBADO": "SCHEDULING", "ESPERA DE APROBAC": "SCHEDULING",
     "EN ESPERA": "SCHEDULING",
 }
+
+BLANK_READY = {s.upper() for s in __import__('services.planner_engine', fromlist=['DEFAULT_CONFIG']).DEFAULT_CONFIG['ready_blank_statuses']}
 
 # Una orden con estos status está detenida por decisión, no por falta de algo.
 STALLED = {"EN ESPERA", "ESPERA DE APROBAC"}
@@ -180,6 +182,10 @@ def stage_of(order: dict) -> dict:
     por_status = STATUS_STAGE.get(status)
 
     respaldo = FALLBACK_BOARD_STAGE.get(board)
+    # Sin tablero BLANKS (Blanks es módulo): en SCHEDULING la orden está en la
+    # etapa Blancos mientras su blank no esté listo (regla de Planeación).
+    if board == "SCHEDULING" and (order.get("blank_status") or "").strip().upper() not in BLANK_READY:
+        respaldo = "BLANKS"
     key = por_tablero or por_status or respaldo
     origen = "board" if por_tablero else ("status" if por_status else ("board" if respaldo else None))
 
@@ -278,7 +284,7 @@ async def tracking(request: Request, stage: str = "", client: str = "",
     ordenes = await db.orders.find(q, {
         "_id": 0, "order_id": 1, "order_number": 1, "client": 1, "branding": 1,
         "quantity": 1, "cancel_date": 1, "due_date": 1, "board": 1,
-        "production_status": 1, "priority": 1,
+        "production_status": 1, "priority": 1, "blank_status": 1,
     }).to_list(limit)
     if not ordenes:
         return {"rows": [], "total": 0, "stages": [], "counts": {}}

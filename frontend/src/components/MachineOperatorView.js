@@ -19,7 +19,7 @@ const STORAGE_BOARD = "operator_board";
 
 const FALLBACK_BOARDS = [
   ...MACHINES,
-  "NECK", "BLANKS",
+  "NECK",
 ];
 
 // Boards operators must not see. Exact matches for the known names plus

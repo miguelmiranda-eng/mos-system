@@ -120,7 +120,9 @@ const Dashboard = () => {
 
 
   // Board & filter state
-  const [currentBoard, setCurrentBoard] = useState("SCHEDULING");
+  // Se abre en el tablero de ENTRADA (DATA ENTRY); si aún no existe, un efecto
+  // de abajo cae a SCHEDULING (ver intakeBoard).
+  const [currentBoard, setCurrentBoard] = useState("DATA ENTRY");
   const [boardFilters, setBoardFilters] = useState({});
   const [selectedOrders, setSelectedOrders] = useState([]);
 
@@ -412,6 +414,16 @@ const Dashboard = () => {
 
   const activeBoards = (dynamicBoards.length > 0 ? dynamicBoards : BOARDS).filter(b => !hiddenBoards.includes(b));
   const allBoardsIncludingHidden = dynamicBoards.length > 0 ? dynamicBoards : BOARDS;
+  // Tablero de ENTRADA: DATA ENTRY heredó TODO lo propio de SCHEDULING
+  // (calendario, calendario de Ready, nueva orden, restaurar de la papelera).
+  // SCHEDULING queda como maestro de órdenes en preparación. Sin DATA ENTRY
+  // (antes de la migración) todo sigue en SCHEDULING como antes.
+  const intakeBoard = activeBoards.includes('DATA ENTRY') ? 'DATA ENTRY' : 'SCHEDULING';
+  useEffect(() => {
+    if (dynamicBoards.length > 0 && currentBoard === 'DATA ENTRY' && !activeBoards.includes('DATA ENTRY')) {
+      setCurrentBoard('SCHEDULING');
+    }
+  }, [dynamicBoards, currentBoard, activeBoards]);
 
   // Day-of-week scheduling: applies to machine boards + this fixed list.
   // Order matters for display (Mon..Sun).
@@ -425,7 +437,7 @@ const Dashboard = () => {
   const DAY_SUPPORTED_NON_MACHINE = new Set(['READY TO SCHEDULED', 'BLANKS', 'SCREENS', 'NECK']);
   // Queue support (Activa / En Cola) is broader than just machines now —
   // BLANKS and NECK share the same workflow split.
-  const QUEUE_SUPPORTED_NON_MACHINE = new Set(['BLANKS', 'NECK']);
+  const QUEUE_SUPPORTED_NON_MACHINE = new Set(['NECK']);
   const isDaySupportedBoard = (b) => !!b && (b.startsWith('MAQUINA') || DAY_SUPPORTED_NON_MACHINE.has(b));
   const isQueueSupportedBoard = (b) => !!b && (b.startsWith('MAQUINA') || QUEUE_SUPPORTED_NON_MACHINE.has(b));
   const dayLabel = (key) => (lang === 'en' ? DAY_LABEL_EN : DAY_LABEL_ES)[key] || key;
@@ -948,7 +960,7 @@ const Dashboard = () => {
       String(o.client || '').toLowerCase().includes(q)
     );
   }, [trashOrders, trashSearch]);
-  const handleRestoreFromTrash = async (orderIds, targetBoard = 'SCHEDULING') => {
+  const handleRestoreFromTrash = async (orderIds, targetBoard = intakeBoard) => {
     setOperationLoading(true);
     // apiFetch y NO fetch crudo: apiFetch es quien invalida el caché de GETs de
     // /orders al mutar (http.js) y quien maneja el 401. Con fetch crudo, el
@@ -1151,7 +1163,7 @@ const Dashboard = () => {
   // Initial data loading
   useEffect(() => { fetchBoards(); }, [fetchBoards]);
   useEffect(() => { fetchOrders(); }, [fetchOrders]);
-  useEffect(() => { if (currentBoard === 'SCHEDULING') fetchExtra(); }, [currentBoard, fetchExtra]);
+  useEffect(() => { if (currentBoard === intakeBoard) fetchExtra(); }, [currentBoard, intakeBoard, fetchExtra]);
   // Active-search match test — used to render ONLY matching rows while searching
   // (instead of rendering the whole board and just highlighting matches), which
   // keeps search snappy on iPad Safari.
@@ -1911,7 +1923,7 @@ const Dashboard = () => {
               a la búsqueda; "Nueva" vive en la barra inferior. Captura/Auto→Blanks
               quedan solo en ≥lg por ahora. */}
           <div className="hidden lg:flex items-center gap-2 self-center">
-            {currentBoard === 'SCHEDULING' && canSweepBlanks && (
+            {currentBoard === intakeBoard && canSweepBlanks && activeBoards.includes('BLANKS') && (
               <button
                 onClick={toggleBlanksSweep}
                 title={blanksSweep?.enabled
@@ -1925,7 +1937,8 @@ const Dashboard = () => {
                 {blanksSweep?.enabled && <span className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />}
               </button>
             )}
-            {currentBoard === 'SCHEDULING' && (
+            {/* Nueva orden: en el tablero de ENTRADA (DATA ENTRY; SCHEDULING si aún no existe). */}
+            {currentBoard === intakeBoard && (
               <button onClick={() => setShowNewOrder(true)} className="flex items-center gap-1.5 px-3 py-1.5 bg-royal text-white rounded-lg font-bold text-[10px] uppercase tracking-[0.15em] shadow-md shadow-royal/20 hover:bg-royal/90 hover:scale-[1.02] active:scale-[0.98] transition-all whitespace-nowrap">
                 <Plus className="w-3.5 h-3.5" />
                 {t('new_order')}
@@ -2148,7 +2161,7 @@ const Dashboard = () => {
             >
               <Table2 size={16} />
             </button>
-            {(currentBoard === 'SCHEDULING' || currentBoard === 'EJEMPLOS') && (
+            {(currentBoard === intakeBoard || currentBoard === 'EJEMPLOS') && (
               <button
                 onClick={() => { setCalendarMode(true); setReadyCalendarMode(false); setBlanksTrackingMode(false); }}
                 className={cn("px-3 py-2 transition-all border-r border-border", calendarMode ? "bg-royal text-white" : "bg-transparent text-muted-foreground hover:bg-muted")}
@@ -2157,7 +2170,7 @@ const Dashboard = () => {
                 <CalendarDays size={16} />
               </button>
             )}
-            {currentBoard === 'SCHEDULING' && (
+            {currentBoard === intakeBoard && (
               <>
                 <button
                   onClick={() => { setCalendarMode(false); setReadyCalendarMode(true); setBlanksTrackingMode(false); }}
@@ -2166,13 +2179,13 @@ const Dashboard = () => {
                 >
                   <CalendarCheck size={16} />
                 </button>
-                <button
+                {activeBoards.includes('BLANKS') && <button
                   onClick={() => { setCalendarMode(false); setReadyCalendarMode(false); setBlanksTrackingMode(true); }}
                   className={cn("px-3 py-2 transition-all", blanksTrackingMode ? "bg-royal text-white" : "bg-transparent text-muted-foreground hover:bg-muted")}
                   title={t('dash_blanks_tracking')}
                 >
                   <ClipboardList size={16} />
-                </button>
+                </button>}
               </>
             )}
           </div>
@@ -2509,9 +2522,9 @@ const Dashboard = () => {
           </div>
         )}
 
-        {(calendarMode && (currentBoard === 'SCHEDULING' || currentBoard === 'EJEMPLOS')) ? <CalendarView orders={orders} allOrders={allOrders} isDark={isDark} fetchOrders={fetchOrders} handleBulkMove={handleBulkMove} columns={columns} /> :
-          readyCalendarMode && currentBoard === 'SCHEDULING' ? <CalendarView orders={readyOrders} allOrders={allOrders} isDark={isDark} fetchOrders={fetchOrders} handleBulkMove={handleBulkMove} columns={columns} label="Ready To Scheduled" /> :
-            blanksTrackingMode && currentBoard === 'SCHEDULING' ? <BlanksTrackingView orders={blanksOrders} isDark={isDark} options={options} readOnly /> : (
+        {(calendarMode && (currentBoard === intakeBoard || currentBoard === 'EJEMPLOS')) ? <CalendarView orders={orders} allOrders={allOrders} isDark={isDark} fetchOrders={fetchOrders} handleBulkMove={handleBulkMove} columns={columns} /> :
+          readyCalendarMode && currentBoard === intakeBoard ? <CalendarView orders={readyOrders} allOrders={allOrders} isDark={isDark} fetchOrders={fetchOrders} handleBulkMove={handleBulkMove} columns={columns} label="Ready To Scheduled" /> :
+            blanksTrackingMode && currentBoard === intakeBoard ? <BlanksTrackingView orders={blanksOrders} isDark={isDark} options={options} readOnly /> : (
               <>
                 {isMobile ? (
                   // Solo teléfonos usan las tarjetas. Las tablets (iPad) usan el
@@ -2885,7 +2898,7 @@ const Dashboard = () => {
                   sobre SCHEDULING (hoy son cientos de órdenes) y no hay deshacer.
                   El borrado permanente ya pedía confirmación. Ambos operan sobre
                   lo FILTRADO, y el conteo del texto lo deja explícito. */}
-              <button onClick={() => { if (window.confirm(t('dash_restore_all_confirm', { n: visibleTrashOrders.length }))) handleRestoreFromTrash(visibleTrashOrders.map(o => o.order_id), 'SCHEDULING'); }} className="px-4 py-2 bg-primary text-primary-foreground rounded text-sm hover:bg-primary/90 flex items-center gap-2" data-testid="restore-all-btn"><RefreshCw className="w-4 h-4" /> {t('restore')} ({visibleTrashOrders.length}) → SCHEDULING</button>
+              <button onClick={() => { if (window.confirm(t('dash_restore_all_confirm', { n: visibleTrashOrders.length }))) handleRestoreFromTrash(visibleTrashOrders.map(o => o.order_id), intakeBoard); }} className="px-4 py-2 bg-primary text-primary-foreground rounded text-sm hover:bg-primary/90 flex items-center gap-2" data-testid="restore-all-btn"><RefreshCw className="w-4 h-4" /> {t('restore')} ({visibleTrashOrders.length}) → {intakeBoard}</button>
               <button onClick={() => handlePermanentDelete(visibleTrashOrders.map(o => o.order_id))} className="px-4 py-2 bg-destructive/20 text-destructive rounded text-sm hover:bg-destructive/30 flex items-center gap-2" data-testid="empty-trash-btn"><Trash2 className="w-4 h-4" /> {t('empty_trash')} ({visibleTrashOrders.length})</button>
             </div>
           )}
