@@ -434,6 +434,16 @@ const Dashboard = () => {
   const masterTabsOn = usesMasterTabs(activeBoards);
   const tabBoards = masterTabsOn ? MASTER_TAB_BOARDS.filter((b) => activeBoards.includes(b)) : [];
   const inMasterTabs = masterTabsOn && (isMasterView || tabBoards.includes(currentBoard));
+  // Modelo de módulos: la orden ya NO se mueve por tableros (los módulos
+  // actualizan sus datos y las automatizaciones ponen los estados de cierre).
+  // Lo único manual: DATA ENTRY → SCHEDULING (data entry la manda) y cambiar
+  // de una MÁQUINA a otra. Asignar máquina es de Planeación.
+  const movesLocked = masterTabsOn;
+  const nonMachineMoveTargets = movesLocked
+    ? (currentBoard === intakeBoard ? [masterBoard] : [])
+    : allBoardsIncludingHidden.filter(b => b !== currentBoard && b !== 'PAPELERA DE RECICLAJE' && !b.startsWith('MAQUINA'));
+  const canMoveToMachines = !movesLocked || currentBoard.startsWith('MAQUINA');
+  const hasMoveTargets = nonMachineMoveTargets.length > 0 || canMoveToMachines;
   const [tabCounts, setTabCounts] = useState({});
   useEffect(() => {
     if (!inMasterTabs) return;
@@ -2402,7 +2412,7 @@ const Dashboard = () => {
                 </div>
               )}
 
-              <div className="flex items-center gap-1.5">
+              {hasMoveTargets && <div className="flex items-center gap-1.5">
                 <span className="text-[10px] uppercase font-bold opacity-50 hidden sm:inline">{t('move_to')}:</span>
                 <DropdownMenu>
                   <DropdownMenuTrigger className={`min-w-[120px] md:w-48 h-9 md:h-10 flex items-center justify-between px-3 md:px-4 text-xs md:text-sm font-bold rounded-lg md:rounded-xl border bg-secondary/50 border-border text-foreground hover:bg-secondary`} data-testid="bulk-move-select">
@@ -2410,7 +2420,7 @@ const Dashboard = () => {
                     <ChevronDown className="w-4 h-4 md:w-5 md:h-5 opacity-70" />
                   </DropdownMenuTrigger>
                   <DropdownMenuContent className={`z-[200] min-w-[220px] shadow-2xl bg-popover border-border`}>
-                    {allBoardsIncludingHidden.filter(b => b !== currentBoard && b !== 'PAPELERA DE RECICLAJE' && !b.startsWith('MAQUINA')).map(board => {
+                    {nonMachineMoveTargets.map(board => {
                       // Queue-supported non-machine boards (BLANKS, NECK) follow
                       // the machine UX: pick Activa (then a day) or A Cola here.
                       // A Cola is intentionally flat — no day breakdown there.
@@ -2476,8 +2486,8 @@ const Dashboard = () => {
                         </DropdownMenuItem>
                       );
                     })}
-                    <DropdownMenuSeparator className="opacity-50" />
-                    <DropdownMenuSub>
+                    {canMoveToMachines && nonMachineMoveTargets.length > 0 && <DropdownMenuSeparator className="opacity-50" />}
+                    {canMoveToMachines && <DropdownMenuSub>
                       <DropdownMenuSubTrigger className="flex items-center justify-between py-3.5 px-5 font-bold text-primary cursor-pointer text-sm md:text-base">
                         <div className="flex items-center gap-2.5">
                           <Monitor className="w-5 h-5" />
@@ -2521,10 +2531,10 @@ const Dashboard = () => {
                           </DropdownMenuSub>
                         ))}
                       </DropdownMenuSubContent>
-                    </DropdownMenuSub>
+                    </DropdownMenuSub>}
                   </DropdownMenuContent>
                 </DropdownMenu>
-              </div>
+              </div>}
 
               <div className="h-6 w-px bg-border mx-1"></div>
 
