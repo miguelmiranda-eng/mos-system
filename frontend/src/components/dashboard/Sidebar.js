@@ -34,6 +34,7 @@ import {
   SlidersHorizontal,
   Table2,
   Crosshair,
+  Tag,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useLang } from '../../contexts/LanguageContext';
@@ -51,6 +52,8 @@ const SECTOR_MODULES = {
   produccion: [
     { path: '/blanks', labelKey: 'blk_menu', icon: Shirt, color: '#0ea5e9', before: 'NECK' },
     { path: '/cuadros', labelKey: 'scr_title', icon: Layers, color: '#52b788', before: 'NECK' },
+    // Fase de prueba: el módulo Neck convive con el tablero NECK hasta retirarlo.
+    { path: '/neck', labelKey: 'nck_menu', icon: Tag, color: '#ec4899', before: 'NECK' },
   ],
 };
 

@@ -22,7 +22,8 @@ const getSuggestedShift = () => {
 // Captura Neck — versión minimalista de ProductionModal: solo cantidad +
 // operador + turno. Estación fija "CORTE NECK" (no se muestra en el form,
 // el backend la rellena). Logs van a la colección neck_logs.
-const NeckCaptureModal = ({ isOpen, onClose, orders, onNeckUpdate, isAdmin }) => {
+// initialOrderNumber: el módulo Neck abre la captura ya con su orden puesta.
+const NeckCaptureModal = ({ isOpen, onClose, orders, onNeckUpdate, isAdmin, initialOrderNumber }) => {
   const { t } = useLang();
   const [orderSearch, setOrderSearch] = useState('');
   const [matchedOrder, setMatchedOrder] = useState(null);
@@ -49,8 +50,9 @@ const NeckCaptureModal = ({ isOpen, onClose, orders, onNeckUpdate, isAdmin }) =>
 
       const suggested = getSuggestedShift();
       if (suggested) setShift(suggested);
+      if (initialOrderNumber) setOrderSearch(String(initialOrderNumber));
     }
-  }, [isOpen]);
+  }, [isOpen, initialOrderNumber]);
 
   const remaining = matchedOrder ? Math.max(0, (matchedOrder.quantity || 0) - totalNeckCut) : 0;
   const progress = matchedOrder && matchedOrder.quantity > 0

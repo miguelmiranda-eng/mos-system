@@ -284,6 +284,7 @@ from routers.order_components import router as order_components_router
 from routers.planner import router as planner_router
 from routers.screens import router as screens_router
 from routers.blanks import router as blanks_router
+from routers.neck import router as neck_router
 from routers.executive import router as executive_router
 from routers.machine_status import router as machine_status_router
 
@@ -330,6 +331,7 @@ app.include_router(order_components_router)
 app.include_router(planner_router)
 app.include_router(screens_router)
 app.include_router(blanks_router)
+app.include_router(neck_router)
 app.include_router(executive_router)
 app.include_router(machine_status_router)
 

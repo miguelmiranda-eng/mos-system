@@ -182,7 +182,7 @@ async def get_order_history_consolidated(order_id: str, request: Request):
         except Exception as e:
             logger.error(f"[order-history] neck_logs query failed for {oid}: {e}")
     for n in neck:
-        qty = n.get("qty_neck_cut") or 0
+        qty = n.get("quantity_neck_cut") or n.get("qty_neck_cut") or 0
         events.append({
             "timestamp": n.get("created_at"),
             "type": "neck",

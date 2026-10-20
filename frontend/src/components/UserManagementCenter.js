@@ -31,7 +31,7 @@ const EXCLUSIVE_SET = new Set(['operator', 'customer', 'shipping_guest', 'extern
 const ADDITIVE_UI = [
   ['general', 'general'], ['admin', 'users_role_admin'], ['supersu', 'users_role_supersu'],
   ['inventory', 'users_role_inventory'], ['picker', null], ['inspector_qc', null], ['ceo', null],
-  ['screens', 'users_role_screens'], ['blanks', 'users_role_blanks'],
+  ['screens', 'users_role_screens'], ['blanks', 'users_role_blanks'], ['neck', 'users_role_neck'],
 ];
 const EXCLUSIVE_UI = [['operator', 'admin_operator'], ['customer', 'users_role_customer'], ['shipping_guest', 'users_role_shipping_guest']];
 
