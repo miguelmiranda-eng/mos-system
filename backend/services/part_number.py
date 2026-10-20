@@ -90,6 +90,7 @@ DEFAULT_CONFIG: dict = {
         "NICARAGUA": "NI", "NIC": "NI",
         "HONDURAS": "HN", "HND": "HN",
         "BANGLADESH": "BD", "BGD": "BD",
+        "CAMBODIA": "KH", "CAMBOYA": "KH", "KHM": "KH",
         "MEXICO": "MX", "MEX": "MX",
         "PAKISTAN": "PK", "PAK": "PK",
         "INDIA": "IN", "IND": "IN",
