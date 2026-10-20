@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useLayoutEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { 
   UserPlus, Loader2, Shield, User, Trash2, ChevronDown, ChevronUp, 
@@ -35,7 +36,10 @@ const ADDITIVE_UI = [
 const EXCLUSIVE_UI = [['operator', 'admin_operator'], ['customer', 'users_role_customer'], ['shipping_guest', 'users_role_shipping_guest']];
 
 // Selector de VARIOS roles. Los aditivos son checkboxes (unión); elegir un
-// exclusivo reemplaza todo (va solo). Usa <details> para el popover sin JS extra.
+// exclusivo reemplaza todo (va solo). El menú se pinta en un PORTAL (fixed,
+// sobre document.body): la tarjeta del usuario tiene overflow-hidden y
+// backdrop-blur, así que un popover absoluto dentro de ella quedaba recortado
+// y tapado por la tarjeta siguiente (no se veían los roles).
 const RolesMultiSelect = ({ roles, onChange, isSupersu, t }) => {
   const rlabel = (v, k) => k ? t(k) : (v === 'picker' ? 'Picker' : v === 'inspector_qc' ? 'Inspector QC' : v === 'ceo' ? 'CEO' : v);
   const has = (r) => roles.includes(r);
@@ -45,30 +49,67 @@ const RolesMultiSelect = ({ roles, onChange, isSupersu, t }) => {
     onChange(next.length ? next : ['general']);
   };
   const pickExc = (r) => onChange(has(r) ? ['general'] : [r]);        // exclusivo: va solo
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState(null);
+  const btnRef = useRef(null);
+  const menuRef = useRef(null);
+  const place = () => {
+    const r = btnRef.current?.getBoundingClientRect();
+    if (!r) return;
+    const W = 208, H = 320, gap = 4;
+    const below = window.innerHeight - r.bottom;
+    const top = below >= H || below >= r.top ? r.bottom + gap : Math.max(8, r.top - gap - H);
+    setPos({ top, left: Math.max(8, Math.min(r.right - W, window.innerWidth - W - 8)) });
+  };
+  useLayoutEffect(() => { if (open) place(); }, [open]);
+  useEffect(() => {
+    if (!open) return undefined;
+    const close = (e) => {
+      if (btnRef.current?.contains(e.target) || menuRef.current?.contains(e.target)) return;
+      setOpen(false);
+    };
+    const onKey = (e) => { if (e.key === 'Escape') setOpen(false); };
+    const onMove = (e) => { if (!menuRef.current?.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', close);
+    document.addEventListener('keydown', onKey);
+    window.addEventListener('scroll', onMove, true);
+    window.addEventListener('resize', place);
+    return () => {
+      document.removeEventListener('mousedown', close);
+      document.removeEventListener('keydown', onKey);
+      window.removeEventListener('scroll', onMove, true);
+      window.removeEventListener('resize', place);
+    };
+  }, [open]);
   return (
-    <details className="relative">
-      <summary className="list-none cursor-pointer w-40 min-h-9 px-2 py-1 bg-secondary/50 border border-border rounded-lg flex flex-wrap gap-1 items-center hover:bg-secondary">
+    <>
+      <button ref={btnRef} type="button" onClick={() => setOpen((o) => !o)}
+        className="cursor-pointer w-40 min-h-9 px-2 py-1 bg-secondary/50 border border-border rounded-lg flex flex-wrap gap-1 items-center hover:bg-secondary">
         {roles.length ? roles.map((r) => (
           <span key={r} className="text-[9px] px-1.5 py-0.5 rounded bg-primary/15 text-primary font-black uppercase tracking-widest">{rlabel(r)}</span>
         )) : <span className="text-[10px] text-muted-foreground">—</span>}
-        <ChevronDown className="w-3 h-3 ml-auto text-muted-foreground shrink-0" />
-      </summary>
-      <div className="absolute right-0 mt-1 w-52 bg-popover border border-border rounded-lg shadow-xl z-[300] p-1 max-h-80 overflow-auto">
-        <div className="text-[9px] font-black uppercase text-muted-foreground px-2 py-1">{t('users_roles_additive')}</div>
-        {ADDITIVE_UI.filter(([v]) => v !== 'supersu' || isSupersu).map(([v, k]) => (
-          <label key={v} className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-secondary cursor-pointer text-xs">
-            <input type="checkbox" checked={has(v)} onChange={() => toggleAdd(v)} /> {rlabel(v, k)}
-          </label>
-        ))}
-        <div className="text-[9px] font-black uppercase text-muted-foreground px-2 py-1 border-t border-border mt-1">{t('users_roles_exclusive')}</div>
-        {EXCLUSIVE_UI.map(([v, k]) => (
-          <button key={v} type="button" onClick={() => pickExc(v)}
-            className={`w-full text-left px-2 py-1.5 rounded hover:bg-secondary text-xs ${has(v) ? 'text-primary font-bold' : ''}`}>
-            {rlabel(v, k)} {has(v) && '✓'}
-          </button>
-        ))}
-      </div>
-    </details>
+        <ChevronDown className={`w-3 h-3 ml-auto text-muted-foreground shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+      {open && pos && createPortal(
+        <div ref={menuRef} style={{ position: 'fixed', top: pos.top, left: pos.left }}
+          className="w-52 bg-popover text-popover-foreground border border-border rounded-lg shadow-xl z-[1000] p-1 max-h-80 overflow-auto">
+          <div className="text-[9px] font-black uppercase text-muted-foreground px-2 py-1">{t('users_roles_additive')}</div>
+          {ADDITIVE_UI.filter(([v]) => v !== 'supersu' || isSupersu).map(([v, k]) => (
+            <label key={v} className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-secondary cursor-pointer text-xs">
+              <input type="checkbox" checked={has(v)} onChange={() => toggleAdd(v)} /> {rlabel(v, k)}
+            </label>
+          ))}
+          <div className="text-[9px] font-black uppercase text-muted-foreground px-2 py-1 border-t border-border mt-1">{t('users_roles_exclusive')}</div>
+          {EXCLUSIVE_UI.map(([v, k]) => (
+            <button key={v} type="button" onClick={() => pickExc(v)}
+              className={`w-full text-left px-2 py-1.5 rounded hover:bg-secondary text-xs ${has(v) ? 'text-primary font-bold' : ''}`}>
+              {rlabel(v, k)} {has(v) && '✓'}
+            </button>
+          ))}
+        </div>,
+        document.body,
+      )}
+    </>
   );
 };
 
