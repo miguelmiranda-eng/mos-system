@@ -1626,7 +1626,7 @@ const Dashboard = () => {
           >
             <span className="flex items-center gap-2 min-w-0">
               <span className="w-1.5 h-5 rounded-full bg-royal flex-shrink-0" />
-              <span className="text-base font-black uppercase tracking-tight truncate">{currentBoard}</span>
+              <span className="text-base font-black uppercase tracking-tight truncate">{inMasterTabs && masterBoard === 'SCHEDULING' ? 'SCHEDULING / MASTER' : currentBoard}</span>
             </span>
             <span className="flex items-center gap-1 text-[10px] font-bold text-muted-foreground uppercase tracking-widest flex-shrink-0">
               {t('dash_mobile_board_hint', { n: visibleOrders.length })} <ChevronDown className="w-4 h-4" />
@@ -2218,7 +2218,7 @@ const Dashboard = () => {
           </div>
 
           {/* Identificador del tablero, junto al selector de agrupación */}
-          <span className="h-9 inline-flex items-center px-3 rounded-lg text-xs font-black uppercase tracking-tight text-white whitespace-nowrap mr-3" style={{ backgroundColor: BOARD_COLORS[inMasterTabs ? masterBoard : currentBoard]?.bg || '#1f2937' }}>{inMasterTabs ? masterBoard : currentBoard}</span>
+          <span className="h-9 inline-flex items-center px-3 rounded-lg text-xs font-black uppercase tracking-tight text-white whitespace-nowrap mr-3" style={{ backgroundColor: BOARD_COLORS[inMasterTabs ? masterBoard : currentBoard]?.bg || '#1f2937' }}>{inMasterTabs ? `${masterBoard}${masterBoard === 'SCHEDULING' ? ' / MASTER' : ''}` : currentBoard}</span>
 
           {/* Maestro: Abiertas / Completas (filtro del maestro) y los tableros de
               cierre como pestañas (EDI, FINAL BILL, INVENTARIO). */}

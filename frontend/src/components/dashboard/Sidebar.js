@@ -177,7 +177,8 @@ const Sidebar = ({
         />
         {/* El nombre del tablero es dato (llave en la base): no se traduce, se
             muestra con un alias por idioma si existe (tName) y si no, como siempre. */}
-        {(isOpen || !isCollapsed) && <span className="truncate">{tName(board) || toTitle(board)}</span>}
+        {/* SCHEDULING es el maestro: se identifica como "Scheduling / Master". */}
+        {(isOpen || !isCollapsed) && <span className="truncate">{(tName(board) || toTitle(board)) + (masterTabs && board === 'SCHEDULING' ? ' / Master' : '')}</span>}
       </button>
     );
   };
