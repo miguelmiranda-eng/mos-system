@@ -1488,7 +1488,12 @@ def projection(jobs: List[dict], cfg: dict, cal: Calendar, today: date, efficien
                                   for d in days if cal.holiday_name(d)],
                      "shifts_detail": detail,
                      "demand": 0, "demand_ready": 0, "demand_not_ready": 0,
+                     "demand_units": 0, "demand_orders": 0,
                      "by_client": {}, "by_volume": {"ALTO": 0, "MEDIO": 0, "BAJO": 0}, "jobs": []})
+    # Piezas y órdenes por semana: cada orden cuenta UNA vez, en la primera
+    # semana donde cae alguno de sus jobs; sus piezas = las de la ubicación
+    # más atrasada (restantes ÷ hits por pieza), igual que pending_units.
+    order_week, order_units = {}, {}
     overdue = {"demand": 0, "jobs": 0}
     no_date = {"demand": 0, "jobs": 0}
     horizon_end = w0 + timedelta(weeks=weeks)
@@ -1505,7 +1510,13 @@ def projection(jobs: List[dict], cfg: dict, cal: Calendar, today: date, efficien
         if t >= horizon_end:
             beyond["demand"] += j["remaining"]; beyond["jobs"] += 1
             continue
-        r = rows[(week_start(t) - w0).days // 7]
+        k = (week_start(t) - w0).days // 7
+        r = rows[k]
+        oid = j.get("order_id")
+        if oid:
+            order_week[oid] = min(order_week.get(oid, k), k)
+            per_piece = (j["hits"] / j["quantity"]) if j.get("quantity") else 1
+            order_units[oid] = max(order_units.get(oid, 0.0), j["remaining"] / (per_piece or 1))
         r["demand"] += j["remaining"]
         r["demand_ready" if (j["is_ready"] or j["started"]) else "demand_not_ready"] += j["remaining"]
         r["by_client"][j["client"] or "—"] = r["by_client"].get(j["client"] or "—", 0) + j["remaining"]
@@ -1515,6 +1526,10 @@ def projection(jobs: List[dict], cfg: dict, cal: Calendar, today: date, efficien
             "job_id", "order_id", "order_number", "position", "client", "branding", "board", "kind",
             "sample_state", "volume", "quantity", "remaining", "cancel_date", "target_date", "ready",
             "is_ready", "started")} | {"overdue": late})
+
+    for oid, k in order_week.items():
+        rows[k]["demand_units"] += round(order_units.get(oid, 0.0))
+        rows[k]["demand_orders"] += 1
 
     cumulative = 0.0
     cumulative_real = 0.0
