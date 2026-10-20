@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   ArrowLeft, Tag, RefreshCw, Loader2, CalendarClock, CalendarCheck, ListTodo, Sparkles, Search, CheckCircle2,
-  AlertTriangle, Loader, Scissors, CircleAlert,
+  AlertTriangle, Loader, Scissors,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useLang } from '../contexts/LanguageContext';
@@ -167,7 +167,6 @@ export default function NeckModule() {
     sched: data?.programados || [],
     prog: data?.pendientes || [],
     adv: data?.adelantar || [],
-    needs: data?.necesita || [],
     proc: data?.proceso || [],
     sug: data?.sugeridas || [],
     alert: data?.alertas || [],
@@ -189,7 +188,7 @@ export default function NeckModule() {
     </button>
   );
   const hint = {
-    sched: t('mod_scheduled_hint', { n: days }), prog: t('nck_pending_hint'), adv: t('nck_advance_hint'), needs: t('nck_status_tab_hint'),
+    sched: t('mod_scheduled_hint', { n: days }), prog: t('nck_pending_hint'), adv: t('nck_advance_hint'), 
     proc: t('nck_status_tab_hint'), sug: t('nck_suggested_hint'), alert: t('nck_alerts_hint'),
   }[tab];
 
@@ -217,7 +216,6 @@ export default function NeckModule() {
           {tabBtn('sched', t('mod_tab_scheduled'), CalendarCheck)}
           {tabBtn('prog', t('mod_tab_pending'), CalendarClock)}
           {tabBtn('adv', t('scr_tab_advance'), ListTodo)}
-          {tabBtn('needs', t('nck_tab_needs'), CircleAlert)}
           {tabBtn('proc', t('blk_tab_process'), Loader)}
           {tabBtn('sug', t('nck_tab_suggested'), Sparkles)}
           {tabBtn('alert', t('mod_tab_alerts'), AlertTriangle)}

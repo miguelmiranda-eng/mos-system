@@ -1,8 +1,9 @@
 """Módulo de Neck — reemplazará al tablero NECK (y a READY TO SCHEDULED).
 
 Como Cuadros y Blanks, no trabaja sobre un tablero sino sobre el PLAN de
-Planeación (services/order_modules.py): todas las órdenes (SCHEDULING en
-adelante; DATA ENTRY no) cuyo label de cuello no está terminado.
+Planeación (services/order_modules.py). Manda la columna Production Status,
+como siempre: una orden NECESITA neck sólo si su estatus es NECESITA LABEL
+(o ya está en proceso de label). Sin estatus de label NO entra.
 
 Une las TRES cosas de neck que hoy no se hablan:
   · el estatus del label (production_status: NECESITA LABEL → PROCESO DE
@@ -12,9 +13,9 @@ Une las TRES cosas de neck que hoy no se hablan:
   · el conteo de neck del WMS (wms_neck_counts: talla × país contra surtido),
   · y muestra el arte de neck (art_neck_status), que NO es el label.
 
-  Pendientes    sin estatus de label y el plan las programa, en orden de arranque.
-  Adelantar     sin estatus de label y sin lugar en el plan.
-  Necesita      NECESITA LABEL.
+  Programados   el plan las arranca en los próximos N días.
+  Pendientes    NECESITA LABEL y el plan las programa, en orden de arranque.
+  Adelantar     NECESITA LABEL sin lugar en el plan.
   En proceso    PROCESO DE NECK LABEL / PROCESO DE LABEL.
   Sugeridas     corte capturado ≥ cantidad pero el estatus no dice LABEL LISTO:
                 el sistema SUGIERE, una persona confirma.
@@ -27,7 +28,7 @@ MAQUINA" mientras exista el tablero NECK) y broadcast. La captura de corte usa
 el endpoint de siempre (POST /api/neck-logs). Editan el rol `neck` + admin/supersu.
 
 Endpoints (prefijo /api/neck):
-  GET  /queue                 pendientes, adelantar, necesita, proceso, sugeridas, alertas
+  GET  /queue?days=3          programados, pendientes, adelantar, proceso, sugeridas, alertas
   POST /{order_id}/status     {status}  cambia el estatus del label
   POST /{order_id}/confirm    LABEL LISTO
 """
@@ -57,11 +58,9 @@ def _status(o: dict) -> str:
 
 def _group(o: dict) -> str:
     s = _status(o)
-    if s == NEEDS:
-        return "necesita"
     if s in IN_PROCESS:
         return "proceso"
-    return "none"            # sin estatus de label (vacío, EN ESPERA, EJEMPLO APROBADO…)
+    return "needs"
 
 
 async def _neck_progress(orders: dict) -> dict:
@@ -116,12 +115,13 @@ async def queue(request: Request, days: float = om.DEFAULT_WINDOW_DAYS):
     sim = await om.simulate()
     sim_ids = list({j["order_id"] for j in sim["jobs"]})
     orders = {o["order_id"]: o async for o in db.orders.find({"order_id": {"$in": sim_ids}}, ORDER_PROJ)}
-    # Dato vivo: LABEL LISTO o cualquier estatus posterior sale del módulo.
-    orders = {k: o for k, o in orders.items() if _status(o) not in om.LABEL_OK}
+    # Sólo lo que NECESITA neck (NECESITA LABEL) o ya está en proceso de label.
+    # Sin estatus de label no entra; LABEL LISTO o posterior ya salió.
+    orders = {k: o for k, o in orders.items() if _status(o) == NEEDS or _status(o) in IN_PROCESS}
     by_order = om.group_by_order(sim, "label", only=set(orders))
     card = _card_factory(await _neck_progress(orders))
     plan, rest, alertas = om.split_plan(sim, by_order, orders, card, LIST_MAX)
-    tabs = {"pendientes": [], "adelantar": [], "necesita": [], "proceso": []}
+    tabs = {"pendientes": [], "adelantar": [], "proceso": []}
     # Programados = el plan los arranca en los próximos N días (cualquier
     # estatus); salen de Pendientes. Las pestañas por estatus los conservan.
     programados, _ = om.split_window(sim, plan, days)
@@ -129,9 +129,9 @@ async def queue(request: Request, days: float = om.DEFAULT_WINDOW_DAYS):
     for lst, is_plan in ((plan, True), (rest, False)):
         for c in lst:
             g = _group(orders[c["order_id"]])
-            if g == "none" and c["order_id"] in prog_ids:
+            if g == "needs" and c["order_id"] in prog_ids:
                 continue
-            tabs[("pendientes" if is_plan else "adelantar") if g == "none" else g].append(c)
+            tabs[("pendientes" if is_plan else "adelantar") if g == "needs" else g].append(c)
     sugeridas = [c for c in alertas + plan + rest if c["suggest_ready"]]
     return {"sim_at": sim["at"], "statuses": LABEL_STATUSES, "confirm_status": READY_STATUS,
             "days": om.window_days(days), "programados": programados, **tabs, "sugeridas": sugeridas, "alertas": alertas,
