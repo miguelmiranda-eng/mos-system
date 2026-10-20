@@ -44,6 +44,13 @@ import { resolveSectors } from '../../lib/boardSectors';
 import { useBoardSectors } from '../../hooks/useBoardSectors';
 import { BoardSectorsModal } from './BoardSectorsModal';
 
+// Módulos que viven dentro de un sector del menú, en el lugar del tablero que
+// reemplazaron (Cuadros sustituyó al tablero SCREENS, entre Blanks y Neck).
+// `after`: tablero tras el cual va; si no está en el sector, va al final.
+const SECTOR_MODULES = {
+  produccion: [{ path: '/cuadros', labelKey: 'scr_title', icon: Layers, color: '#52b788', after: 'BLANKS' }],
+};
+
 const toTitle = (str) => str.toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
 
 const getBoardIcon = (board) => {
@@ -164,6 +171,31 @@ const Sidebar = ({
     );
   };
 
+  const renderModuleButton = (m) => (
+    <button
+      key={m.path}
+      onClick={() => { navigate(m.path); if (isMobile) onClose(); }}
+      className={navItem(false)}
+      title={isCollapsed && !isMobile ? t(m.labelKey) : ""}
+    >
+      <m.icon size={15} className="flex-shrink-0 opacity-60" style={{ color: m.color }} />
+      {(isOpen || !isCollapsed) && <span className="truncate">{t(m.labelKey)}</span>}
+    </button>
+  );
+
+  // Tableros del sector con sus módulos intercalados (SECTOR_MODULES).
+  const renderGroupItems = (group) => {
+    const mods = SECTOR_MODULES[group.id] || [];
+    const placed = new Set();
+    const out = [];
+    group.items.forEach((b) => {
+      out.push(renderBoardButton(b));
+      mods.filter((m) => m.after === b).forEach((m) => { placed.add(m.path); out.push(renderModuleButton(m)); });
+    });
+    mods.filter((m) => !placed.has(m.path)).forEach((m) => out.push(renderModuleButton(m)));
+    return out;
+  };
+
   const isTablet = typeof window !== 'undefined' && window.innerWidth < 1024;
 
   return (
@@ -275,7 +307,7 @@ const Sidebar = ({
                       </button>
                     </CollapsibleTrigger>
                     <CollapsibleContent className="ml-4 pl-2 border-l border-neutral-200/60 dark:border-white/8">
-                      {group.items.map(renderBoardButton)}
+                      {renderGroupItems(group)}
                     </CollapsibleContent>
                   </Collapsible>
                 );

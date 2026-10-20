@@ -235,7 +235,9 @@ const ArtModule = () => {
         fetch(`${API}/orders/${id}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ board: 'SCREENS' }),
+          // El tablero SCREENS se retiró: Arte sólo MARCA la orden como lista
+          // para Cuadros (el módulo /cuadros la recoge); no mueve tablero.
+          body: JSON.stringify({ art_ready_for_screens: true, art_ready_for_screens_at: new Date().toISOString() }),
           credentials: 'include'
         })
       ));

@@ -663,6 +663,11 @@ async def internal_create_order(order: OrderCreate, user: dict) -> dict:
             order_data["art_sep_status"] = preorder.get("art_sep_status", False)
             order_data["art_neck_status"] = preorder.get("art_neck_status", False)
             order_data["screens"] = preorder.get("screens", False)
+            # Cuadros por posición palomeados en la preorden (módulo Cuadros).
+            if preorder.get("screens_positions"):
+                order_data["screens_positions"] = preorder["screens_positions"]
+                if preorder.get("screens_done_at"):
+                    order_data["screens_done_at"] = preorder["screens_done_at"]
             
             # Mark preorder as converted
             await db.orders.update_one(

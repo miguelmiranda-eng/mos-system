@@ -21,13 +21,14 @@ import { API } from '../lib/constants';
 const MOCKS_VERSION = 2;
 
 const STAGES = [
-  ['SCHEDULING', 'Programación'], ['BLANKS', 'Blanks'], ['SCREENS', 'Screens'],
+  // Sin etapa Screens: el tablero se retiró y Cuadros va en paralelo ("Mallas listas" abajo).
+  ['SCHEDULING', 'Programación'], ['BLANKS', 'Blanks'],
   ['LABEL', 'Neck'], ['PRODUCTION', 'Producción'], ['PACKING', 'Empaque'], ['SHIPPED', 'Enviada'],
 ];
 const RANK = Object.fromEntries(STAGES.map((s, i) => [s[0], i]));
 const SLABEL = Object.fromEntries(STAGES);
 const BOARD_STAGE = {
-  BLANKS: 'BLANKS', SCREENS: 'SCREENS', NECK: 'LABEL',
+  BLANKS: 'BLANKS', NECK: 'LABEL',
   'CONTROL DE CALIDAD': 'PACKING', COMPLETOS: 'PACKING', 'FINAL BILL': 'PACKING',
 };
 const FALLBACK_BOARD_STAGE = {

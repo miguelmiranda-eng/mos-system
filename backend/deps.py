@@ -714,11 +714,12 @@ SUPER_ROLES = {"admin", "supersu"}
 # siguen leyendo el `role` PRIMARIO (p.ej. el default-deny de shipping_guest en
 # get_current_user, el scope de customer, el lock de operator), nunca se bypassan.
 ADDITIVE_ROLES = {"supersu", "admin", "ceo", "inventory", "picker", "general",
-                  "qc", "inspector_qc", "paint", "paint_lead", "sample_lead"}
+                  "qc", "inspector_qc", "paint", "paint_lead", "sample_lead",
+                  "screens"}           # Cuadros: palomea en el módulo /cuadros
 EXCLUSIVE_ROLES = {"customer", "shipping_guest", "operator", "external_api"}
 # Orden de "representatividad" para derivar el role PRIMARIO cuando hay varios.
 ROLE_PRECEDENCE = ["supersu", "admin", "ceo", "inventory", "qc", "inspector_qc",
-                   "paint_lead", "paint", "sample_lead", "picker", "general"]
+                   "paint_lead", "paint", "sample_lead", "screens", "picker", "general"]
 
 
 def user_roles(user: Dict) -> set:

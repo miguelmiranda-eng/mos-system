@@ -85,9 +85,10 @@ async def get_pending_art(request: Request, status: str = 'pending'):
             ]
         }
     elif status == 'ready_for_screens':
-        # Nuevo apartado: Listo para cuadros. Excluimos las ya convertidas.
+        # Listo para cuadros: preórdenes que Arte ya marcó (el tablero SCREENS
+        # se retiró; Cuadros las ve en su módulo). Excluimos las convertidas.
         query = {
-            "board": "SCREENS",
+            "art_ready_for_screens": True,
             "is_preorder": True,
             "artwork_status": {"$ne": "CONVERTED"}
         }
@@ -98,9 +99,11 @@ async def get_pending_art(request: Request, status: str = 'pending'):
             "artwork_status": "CONVERTED"
         }
     else:
-        # Default: pending. Excluimos SCREENS y las ya CONVERTIDAS.
+        # Default: pending. Excluimos las que Arte ya mandó a Cuadros y las
+        # ya CONVERTIDAS.
         query = {
             "board": {"$nin": excluded_boards + ["SCREENS"]},
+            "art_ready_for_screens": {"$ne": True},
             "artwork_status": {"$ne": "CONVERTED"}
         }
 

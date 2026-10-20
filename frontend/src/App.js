@@ -704,6 +704,7 @@ const MachineStatusModule = lazy(() => import("./components/MachineStatusModule"
 const ProduccionModule = lazy(() => import("./components/ProduccionModule"));
 const PaintModule = lazy(() => import("./components/PaintModule"));
 const SamplesModule = lazy(() => import("./components/SamplesModule"));
+const CuadrosModule = lazy(() => import("./components/CuadrosModule"));
 const SmartAgenda = lazy(() => import("./components/SmartAgenda"));
 const ShippingModule = lazy(() => import("./components/ShippingModule"));
 const GuestShipping = lazy(() => import("./components/GuestShipping"));
@@ -868,6 +869,11 @@ function AppRouter() {
       <Route path="/planeacion" element={
         <ProtectedRoute>
           <PlannerModule />
+        </ProtectedRoute>
+      } />
+      <Route path="/cuadros" element={
+        <ProtectedRoute>
+          <CuadrosModule />
         </ProtectedRoute>
       } />
       <Route path="/paint" element={

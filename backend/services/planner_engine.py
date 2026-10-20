@@ -537,11 +537,17 @@ def build_jobs(orders: List[dict], produced: Dict[str, Dict[str, int]], cfg: dic
         extra_work = extra_work_of(o, cfg)
         started = (o.get("board") in machine_set or prod_status == "EN PRODUCCION" or prog["made"] > 0)
         target = cal.minus_business_days(cancel, cfg["buffer_business_days"]) if cancel else None
+        # Cuadros por posición (módulo de Cuadros): la espalda puede faltar
+        # mientras el frente ya tiene sus cuadros y puede imprimir.
+        screens_pos = o.get("screens_positions") or {}
         for pos, p in prog["positions"].items():
             job_hits, made = p["required"], p["made"]
             remaining = max(0, job_hits - made)
             if remaining <= 0:
                 continue
+            job_ready = ready
+            if not ready["cuadros"] and screens_pos.get(pos):
+                job_ready = {**ready, "cuadros": True}
             jobs.append({
                 **base,
                 "job_id": f"{o.get('order_id')}:{pos}",
@@ -559,10 +565,10 @@ def build_jobs(orders: List[dict], produced: Dict[str, Dict[str, int]], cfg: dic
                 "has_extra_work": bool(extra_work),
                 "priority": str(o.get("priority") or "").strip().upper(),
                 "volume": volume_class(qty, cfg),
-                "ready": ready,
+                "ready": job_ready,
                 "kind": sinfo["kind"],
                 "sample_state": sinfo["state"],
-                "is_ready": all(ready.values()),
+                "is_ready": all(job_ready.values()),
                 "started": started,
                 # De verdad imprimiéndose (no sólo en el tablero de la máquina):
                 # sólo esto va antes del cancel date.

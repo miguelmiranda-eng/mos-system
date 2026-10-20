@@ -146,7 +146,7 @@ async def _orders_and_production(cfg: dict, machines: list):
     boards = list(cfg["demand_boards"]) + [m["machine"] for m in machines]
     proj = {"_id": 0, "order_id": 1, "order_number": 1, "client": 1, "branding": 1, "board": 1,
             "quantity": 1, "print_positions": 1, "hits_impresiones": 1, "colors": 1,
-            "cancel_date": 1, "blank_status": 1, "screens": 1, "production_status": 1,
+            "cancel_date": 1, "blank_status": 1, "screens": 1, "screens_positions": 1, "production_status": 1,
             "priority": 1, "color": 1, "aprobaciones": 1, "sample": 1, "artwork_status": 1,
             "design_#": 1, "customer_po": 1, "packing_type": 1, "work_order.lines": 1}
     orders = [o async for o in db.orders.find({"board": {"$in": boards}}, proj).batch_size(200)]

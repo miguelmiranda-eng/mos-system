@@ -23,7 +23,7 @@ export const SECTOR_META = [
 // el botón "Restaurar" del editor.
 export const DEFAULT_SECTORS = {
   programacion: ['SCHEDULING', 'READY TO SCHEDULED'],
-  produccion:   ['BLANKS', 'SCREENS', 'NECK', 'EMPAQUE'],
+  produccion:   ['BLANKS', 'NECK', 'EMPAQUE'],   // SCREENS → módulo Cuadros (Sidebar SECTOR_MODULES)
   completados:  ['EDI', 'INVENTARIO', 'FINAL BILL', 'COMPLETOS'],
   old:          ['RESPALDO MONDAY', 'CANCELLED'],
 };

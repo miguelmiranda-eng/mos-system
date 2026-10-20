@@ -113,7 +113,8 @@ async def _plantilla() -> list:
 STAGES = [
     ("SCHEDULING",  "Programación"),
     ("BLANKS",      "Blancos"),
-    ("SCREENS",     "Mallas"),
+    # Sin etapa "Mallas": el tablero SCREENS se retiró; Cuadros es un
+    # componente en paralelo (módulo /cuadros), no un paso del flujo.
     ("LABEL",       "Neck"),
     ("PRODUCTION",  "Producción"),
     ("PACKING",     "Empaque"),
@@ -126,7 +127,6 @@ STAGE_LABEL = dict(STAGES)
 # aunque el status diga otra cosa.
 BOARD_STAGE = {
     "BLANKS": "BLANKS",
-    "SCREENS": "SCREENS",
     "NECK": "LABEL",
     # QC va fundido en Empaque: es la revisión previa al envío y la secuencia
     # pedida no lo lleva como paso propio. Si hace falta separarlo, es agregarlo
