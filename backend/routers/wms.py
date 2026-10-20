@@ -5934,10 +5934,8 @@ async def _compute_size_locations(style: str, color: str, sizes: dict, strategy:
     """Build {size: {locations:[...], total_available}} from CURRENT inventory.
 
     Used so pickers always see live availability (not the snapshot captured when
-    the ticket was created). Color is matched exactly first; if a size finds no
-    location that way it retries with a contains match (handles naming variants
-    like 'OLIVE' vs 'OLIVE GREEN') so available stock isn't hidden by a label
-    mismatch.
+    the ticket was created). Color is matched EXACTLY — never by substring, or
+    'BLACK' would pull 'BLACK PIGMENT' stock once plain BLACK runs out.
     """
     style = (style or "").strip()
     color = (color or "").strip()
@@ -5994,14 +5992,14 @@ async def _compute_size_locations(style: str, color: str, sizes: dict, strategy:
             "units_on_hand": {"$gt": 0},
         }
         if color:
+            # Color EXACTO, sin fallback. Aquí había un "contains" para variantes
+            # ('OLIVE' vs 'OLIVE GREEN') que, al agotarse el color exacto, mandaba
+            # al picker a OTRO producto: ticket 3742 (5000 BLACK) ofreció S de
+            # 5000 BLACK PIGMENT porque no hay BLACK S. Si el color no
+            # existe tal cual, es faltante; las variantes de nombre se corrigen
+            # en el catálogo, no adivinando aquí.
             exact = dict(base); exact["color"] = _ci_eq(color)
             locs = await _run(exact)
-            if not locs:
-                # Fallback tolerante a variantes de nombre ('OLIVE' vs 'OLIVE
-                # GREEN'). Regex NO indexado, pero SOLO corre cuando el match exacto
-                # no encontró nada (raro) → no golpea la ruta caliente.
-                loose = dict(base); loose["color"] = {"$regex": re.escape(color), "$options": "i"}
-                locs = await _run(loose)
         else:
             locs = await _run(base)
         # Merge rows that share the SAME physical location (inventory is also
