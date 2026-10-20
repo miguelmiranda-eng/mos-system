@@ -5,7 +5,7 @@ import { toast } from 'sonner';
 import { useLang } from '../contexts/LanguageContext';
 import { Toaster } from './ui/sonner';
 import {
-  REFRESH_MS, WINDOW_OPTIONS, readWindow, saveWindow, call, fmtDay, fmtTime, isOverdue,
+  REFRESH_MS, call, fmtDay, fmtTime, isOverdue,
   useOrderChangeReload, Components, PrintavoLink,
 } from './modules/shared';
 
@@ -17,7 +17,6 @@ import {
 // Los cuadros se palomean por posición; al quedar todas, la orden queda con
 // `screens` = true como siempre (automatización "move to neck").
 
-const WINDOW_KEY = 'mos_cuadros_days';
 function PositionChip({ p, disabled, busy, onToggle }) {
   return (
     <button
@@ -54,6 +53,7 @@ function OrderCard({ c, t, canEdit, busyKey, onToggle, onAll, mode }) {
           <span>{t('scr_colors')}: <b className="text-foreground">{c.colors || t('scr_no_colors')}</b></span>
           {screensEst != null && pending > 0 && <span>{t('scr_screens_est')}: <b className="text-foreground">~{screensEst}</b></span>}
           <span className={isOverdue(c.cancel_date) ? 'text-red-500 font-bold' : ''}>Cancel: {fmtDay(c.cancel_date)}</span>
+          {c.stale && <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-red-500/15 text-red-500">{t('mod_stale')}</span>}
           <span>{t('scr_board')}: {c.board}</span>
         </div>
         <Components items={c.components} t={t} />
@@ -103,20 +103,19 @@ export default function CuadrosModule() {
   const [tab, setTab] = useState('prog');
   const [busyKey, setBusyKey] = useState('');
   const [advQ, setAdvQ] = useState('');
-  const [days, setDays] = useState(() => readWindow(WINDOW_KEY));
   const loadRef = useRef(null);
 
   // El backend simula el plan (con caché corta); aquí sólo se pide la cola.
   const load = useCallback(async () => {
     try {
-      setData(await call(`/screens/queue?days=${days}`));
+      setData(await call('/screens/queue'));
       setErr('');
     } catch (e) {
       setErr(e.message);
     } finally {
       setLoading(false);
     }
-  }, [days]);
+  }, []);
   loadRef.current = load;
 
   useEffect(() => {
@@ -124,11 +123,6 @@ export default function CuadrosModule() {
     const id = setInterval(() => loadRef.current?.(), REFRESH_MS);
     return () => clearInterval(id);
   }, [load]);
-
-  const changeDays = (d) => {
-    setDays(d);
-    saveWindow(WINDOW_KEY, d);
-  };
 
   useOrderChangeReload(loadRef);
 
@@ -152,7 +146,7 @@ export default function CuadrosModule() {
     method: 'POST', body: JSON.stringify({ ready: true }),
   }), t('scr_done_toast', { n: c.order_number }));
 
-  const prog = data?.programadas || [];
+  const prog = data?.pendientes || [];
   const adv = data?.adelantar || [];
   const pre = data?.preordenes || [];
   const progPending = prog.filter((c) => c.positions.some((p) => !p.ready));
@@ -201,16 +195,9 @@ export default function CuadrosModule() {
           </button>
         </div>
         <div className="flex gap-2 mt-4 flex-wrap">
-          {tabBtn('prog', t('scr_tab_scheduled'), progPending.length, Layers)}
+          {tabBtn('prog', t('mod_tab_pending'), progPending.length, Layers)}
           {tabBtn('adv', t('scr_tab_advance'), adv.length, FastForward)}
           {tabBtn('pre', t('scr_tab_preorders'), pre.length, FileClock)}
-          <label className="ml-auto inline-flex items-center gap-2 text-xs text-muted-foreground">
-            {t('scr_window')}
-            <select value={days} onChange={(e) => changeDays(Number(e.target.value))}
-              className="rounded-lg border border-border bg-card px-2 py-1.5 text-xs font-bold text-foreground">
-              {WINDOW_OPTIONS.map((d) => <option key={d} value={d}>{t('scr_window_days', { n: d })}</option>)}
-            </select>
-          </label>
         </div>
       </header>
 

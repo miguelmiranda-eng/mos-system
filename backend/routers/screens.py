@@ -2,16 +2,13 @@
 (scripts/retire_screens_board.py). Cuadros ya no es una etapa del flujo sino un
 componente en paralelo: BLANKS --(contado)--> NECK, y Cuadros trabaja aquí.
 
-Cuadros trabaja sobre lo que PLANEACIÓN va a correr, no sobre un tablero.
-El motor de Planeación no programa una orden sin cuadros, así que el módulo
-corre el motor en simulación (sin guardar nada) contando los cuadros como
-listos: sale cuándo y en qué máquina ARRANCARÍA cada orden que espera cuadros.
+Cuadros trabaja sobre el PLAN de Planeación, no sobre un tablero: todas las
+órdenes con cuadros pendientes, priorizadas por cuándo arrancarían si la
+preparación (blank, cuadros, label) estuviera hecha (order_modules.simulate).
 
-  Programadas  el motor las arrancaría dentro de la ventana (próximos N días,
-               ?days=): son lo que la planta necesita ya, en orden de arranque.
-  Adelantar    lo que sigue después: arranque fuera de la ventana, o que
-               además espera blank/label/ejemplo. Si Cuadros termina lo
-               programado, adelanta de aquí (con buscador en la pantalla).
+  Pendientes   las que el plan programa, en orden de arranque.
+  Adelantar    el resto (sin lugar en el plan: falta el ejemplo, fuera de
+               horizonte…). Si Cuadros termina lo pendiente, adelanta de aquí.
   Preórdenes   las que Arte marcó listas para Cuadros (art_ready_for_screens)
                y no se han convertido. Al convertirse en orden heredan los
                cuadros palomeados (orders.py, linked_preorder_id).
@@ -30,7 +27,7 @@ No tiene colección propia; la cola sale de la simulación compartida de los
 módulos (services/order_modules.py, requisito "cuadros").
 
 Endpoints (prefijo /api/screens):
-  GET  /queue?days=3                programadas + adelantar + preórdenes
+  GET  /queue                       pendientes + adelantar + preórdenes
   POST /{order_id}/position         {position, ready}  palomea una posición
   POST /{order_id}/all              {ready}            todas las posiciones
 """
@@ -47,7 +44,6 @@ router = APIRouter(prefix="/api/screens")
 
 TZ = zoneinfo.ZoneInfo("America/Tijuana")
 ADVANCE_MAX = 500          # tope de seguridad; el buscador del módulo filtra todo
-DEFAULT_WINDOW_DAYS = 3    # Programadas = arrancarían en los próximos N días
 ORDER_PROJ = {"_id": 0, "order_id": 1, "order_number": 1, "client": 1, "branding": 1, "board": 1,
               "quantity": 1, "cancel_date": 1, "print_positions": 1, "hits_impresiones": 1,
               "colors": 1, "design_#": 1, "style": 1, "color": 1, "screens": 1, "screens_positions": 1,
@@ -91,15 +87,14 @@ def _card(order: dict, extra: dict) -> dict:
 
 
 @router.get("/queue")
-async def queue(request: Request, days: float = DEFAULT_WINDOW_DAYS):
+async def queue(request: Request):
     user = await require_auth(request)
-    days = max(0.5, min(float(days or DEFAULT_WINDOW_DAYS), 30.0))
-    sim = await om.simulate("cuadros")
-    by_order = om.group_by_order(sim)
+    sim = await om.simulate()
+    by_order = om.group_by_order(sim, "cuadros")
     orders = {o["order_id"]: o async for o in db.orders.find({"order_id": {"$in": list(by_order)}}, ORDER_PROJ)}
     # Lo palomeado después de la simulación (dato vivo) ya no es pendiente.
     orders = {k: o for k, o in orders.items() if not all(_ready_map(o).values())}
-    programadas, adelantar = om.split_window(sim, by_order, orders, days, _card, ADVANCE_MAX)
+    pendientes, adelantar = om.split_plan(sim, by_order, orders, _card, ADVANCE_MAX)
 
     preorders = [o async for o in db.orders.find(
         {"is_preorder": True, "art_ready_for_screens": True, "artwork_status": {"$ne": "CONVERTED"}},
@@ -108,8 +103,8 @@ async def queue(request: Request, days: float = DEFAULT_WINDOW_DAYS):
     midnight = datetime.now(TZ).replace(hour=0, minute=0, second=0, microsecond=0)
     done_today = await db.orders.count_documents(
         {"screens_done_at": {"$gte": midnight.astimezone(timezone.utc).isoformat()}})
-    return {"sim_at": sim["at"], "days": days,
-            "programadas": programadas, "adelantar": adelantar,
+    return {"sim_at": sim["at"],
+            "pendientes": pendientes, "adelantar": adelantar,
             "preordenes": [_card(o, {}) for o in preorders if not all(_ready_map(o).values())],
             "done_today": done_today, "can_edit": await _can_edit(user)}
 

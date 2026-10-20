@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Shirt, RefreshCw, Loader2, CalendarClock, ListTodo, Sparkles, HelpCircle, Search, CheckCircle2 } from 'lucide-react';
+import { ArrowLeft, Shirt, RefreshCw, Loader2, CalendarClock, ListTodo, Sparkles, Search, CheckCircle2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useLang } from '../contexts/LanguageContext';
 import { Toaster } from './ui/sonner';
 import {
-  REFRESH_MS, WINDOW_OPTIONS, readWindow, saveWindow, call, fmtDay, fmtTime, isOverdue,
+  REFRESH_MS, call, fmtDay, fmtTime, isOverdue,
   useOrderChangeReload, Components, PrintavoLink,
 } from './modules/shared';
 
@@ -19,7 +19,6 @@ import {
 // Cada tarjeta muestra el avance real del almacén por talla (pedido en sus
 // pick tickets, surtido de la bitácora del WMS y stock disponible).
 
-const WINDOW_KEY = 'mos_blanks_days';
 
 function ProgressBar({ pct }) {
   if (pct == null) return null;
@@ -88,6 +87,7 @@ function OrderCard({ c, t, canEdit, statuses, confirmStatus, busy, onStatus }) {
           {c.blank_source && <span>{t('blk_source')}: <b className="text-foreground">{c.blank_source}</b></span>}
           {c.bpo && <span>BPO: <b className="text-foreground">{c.bpo}</b></span>}
           <span className={isOverdue(c.cancel_date) ? 'text-red-500 font-bold' : ''}>Cancel: {fmtDay(c.cancel_date)}</span>
+          {c.stale && <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-red-500/15 text-red-500">{t('mod_stale')}</span>}
           <span>{t('scr_board')}: {c.board}</span>
         </div>
         <Components items={c.components} t={t} />
@@ -168,20 +168,19 @@ export default function BlanksModule() {
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState('prog');
   const [q, setQ] = useState('');
-  const [days, setDays] = useState(() => readWindow(WINDOW_KEY));
   const [busyId, setBusyId] = useState('');
   const loadRef = useRef(null);
 
   const load = useCallback(async () => {
     try {
-      setData(await call(`/blanks/queue?days=${days}`));
+      setData(await call('/blanks/queue'));
       setErr('');
     } catch (e) {
       setErr(e.message);
     } finally {
       setLoading(false);
     }
-  }, [days]);
+  }, []);
   loadRef.current = load;
 
   useEffect(() => {
@@ -207,10 +206,9 @@ export default function BlanksModule() {
   const statuses = data?.statuses || [];
 
   const lists = {
-    prog: data?.programadas || [],
-    pend: data?.pendientes || [],
+    prog: data?.pendientes || [],
+    adv: data?.adelantar || [],
     sug: data?.sugeridas || [],
-    none: data?.sin_estatus || [],
   };
   // Buscador: todas las palabras deben aparecer en la orden.
   const words = q.trim().toLowerCase().split(/\s+/).filter(Boolean);
@@ -255,17 +253,9 @@ export default function BlanksModule() {
           </button>
         </div>
         <div className="flex gap-2 mt-4 flex-wrap">
-          {tabBtn('prog', t('scr_tab_scheduled'), CalendarClock)}
-          {tabBtn('pend', t('blk_tab_pending'), ListTodo)}
+          {tabBtn('prog', t('mod_tab_pending'), CalendarClock)}
+          {tabBtn('adv', t('scr_tab_advance'), ListTodo)}
           {tabBtn('sug', t('blk_tab_suggested'), Sparkles)}
-          {tabBtn('none', t('blk_tab_no_status'), HelpCircle)}
-          <label className="ml-auto inline-flex items-center gap-2 text-xs text-muted-foreground">
-            {t('scr_window')}
-            <select value={days} onChange={(e) => { const d = Number(e.target.value); setDays(d); saveWindow(WINDOW_KEY, d); }}
-              className="rounded-lg border border-border bg-card px-2 py-1.5 text-xs font-bold text-foreground">
-              {WINDOW_OPTIONS.map((d) => <option key={d} value={d}>{t('scr_window_days', { n: d })}</option>)}
-            </select>
-          </label>
         </div>
       </header>
 
@@ -275,7 +265,8 @@ export default function BlanksModule() {
         )}
         {err && <div className="rounded-lg border border-red-500/40 bg-red-500/10 text-red-500 text-sm p-3">{err}</div>}
         {tab === 'sug' && <div className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 text-xs p-3">{t('blk_suggested_hint')}</div>}
-        {tab === 'none' && <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 text-xs p-3">{t('blk_no_status_hint')}</div>}
+        {tab === 'prog' && <div className="rounded-lg border border-border bg-card text-xs p-3 text-muted-foreground">{t('mod_pending_hint')}</div>}
+        {tab === 'adv' && <div className="rounded-lg border border-border bg-card text-xs p-3 text-muted-foreground">{t('mod_advance_hint')}</div>}
         <div className="relative">
           <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
           <input type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder={t('scr_search_ph')}

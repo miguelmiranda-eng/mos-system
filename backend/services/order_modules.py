@@ -1,52 +1,57 @@
 """Piezas compartidas de los MÓDULOS que reemplazan tableros (Cuadros, Blanks…).
 
-En el modelo de módulos la orden no se mueve de tablero: cada módulo trabaja
-su COMPONENTE (cuadros, blank contado, label…) y su cola sale de Planeación.
+En el modelo de módulos la orden NO se mueve de tablero: se queda en
+SCHEDULING (el maestro) y cada módulo actualiza su COMPONENTE (blank contado,
+cuadros, label…). La prioridad sale del PLAN de Planeación.
 
-  simulate(relax)   corre el motor de Planeación SIN guardar nada contando
-                    como cumplido el requisito `relax` ("cuadros", "contado"…):
-                    sale cuándo y en qué máquina ARRANCARÍA cada orden que hoy
-                    espera ese componente (el motor real no las programa).
-  group_by_order()  por orden: arranque más temprano, máquina y qué MÁS falta.
-  split_window()    Programadas (arrancarían dentro de N días) / Pendientes.
+  simulate()        corre el motor de Planeación SIN guardar nada contando como
+                    listos los componentes de PREPARACIÓN (PREP_RELAX: blank,
+                    cuadros y label; el ejemplo NO, depende del cliente). Es
+                    "el plan": cuándo y en qué máquina arrancaría cada orden si
+                    la preparación estuviera hecha. UNA sola simulación para
+                    todos los módulos, así todos priorizan igual.
+  group_by_order()  por orden, sólo las que esperan el componente del módulo:
+                    arranque más temprano, máquina y qué MÁS le falta.
+  split_plan()      Pendientes = las que el plan programa, por arranque;
+                    Adelantar  = el resto (sin lugar en el plan: les falta el
+                    ejemplo, están retenidas por fecha, fuera de horizonte…).
   components()      mini tabla de componentes de la tarjeta (sólo lectura).
   printavo_url()    work order de Printavo (Job Title A/B).
+
+Las órdenes del tablero de ENTRADA (DATA ENTRY) no aparecen en los módulos
+hasta que data entry las manda a SCHEDULING.
 """
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
-from deps import db
+from deps import db, INTAKE_BOARD
 from services import planner_engine as pe
 
 SIM_TTL_S = 45            # varias pantallas o palomeos seguidos reutilizan la misma
-_cache: dict = {}         # relax -> {"at": monotonic, "data": {...}}
+PREP_RELAX = ("contado", "cuadros", "label")
+_cache: dict = {}         # {"at": monotonic, "data": {...}}
 _live: dict = {}          # regla vigente de Planeación vista en la última simulación
 
 
-def invalidate(relax: str = None) -> None:
-    if relax:
-        _cache.pop(relax, None)
-    else:
-        _cache.clear()
+def invalidate(*_args) -> None:
+    _cache.clear()
 
 
-async def simulate(relax: str) -> dict:
+async def simulate() -> dict:
     """Misma simulación del programa (ajustes manuales, candados, filas,
-    calendario); lo único distinto es que el requisito `relax` cuenta como
-    listo. Devuelve los trabajos (orden × posición) que esperaban ese
-    requisito, con su arranque estimado. 2-5 s de lecturas: caché corta."""
+    calendario); lo único distinto es que blank, cuadros y label cuentan como
+    listos. Devuelve TODOS los trabajos (orden × posición) de la demanda con
+    su estado real (`ready`) y su arranque en el plan. 2-5 s: caché corta."""
     from routers.planner import _context, _active_overrides, _resolve_overrides
-    hit = _cache.get(relax)
+    hit = _cache.get("plan")
     if hit and time.monotonic() - hit["at"] < SIM_TTL_S:
         return hit["data"]
     ctx = await _context()
-    need = {}                     # job_id -> qué más le falta (aparte de `relax`)
+    real = {}
     for j in ctx["jobs"]:
-        ready = j.get("ready") or {}
-        if ready.get(relax, True):
-            continue
-        need[j["job_id"]] = sorted(k for k, v in ready.items() if not v and k != relax)
-        j["ready"] = {**ready, relax: True}
+        ready = dict(j.get("ready") or {})
+        real[j["job_id"]] = ready
+        j["ready"] = {**ready, **{k: True for k in PREP_RELAX if k in ready}}
         j["is_ready"] = all(j["ready"].values())
     ov = _resolve_overrides(ctx["jobs"], await _active_overrides())
     prev = await db.planner_runs.find_one({}, {"_id": 0, "locks": 1}, sort=[("created_at", -1)])
@@ -59,58 +64,59 @@ async def simulate(relax: str) -> dict:
     sched_by = {j["job_id"]: j for j in scheduled}
     jobs = []
     for j in ctx["jobs"]:
-        if j["job_id"] not in need:
-            continue
         o = ov.get(j["job_id"], {})
         if "hold" in o or pe.is_manual_test(j, o, ctx["cfg"]):
-            continue                  # retenidas y Test Orders: no son trabajo del módulo
+            continue                  # retenidas y Test Orders: no son trabajo de los módulos
+        if (j.get("board") or "") == INTAKE_BOARD:
+            continue                  # DATA ENTRY: aún no la mandan a SCHEDULING
         s = sched_by.get(j["job_id"]) or {}
-        jobs.append({"order_id": j["order_id"], "position": j["position"],
+        jobs.append({"order_id": j["order_id"], "position": j["position"], "board": j.get("board"),
                      "start": s.get("start"), "machine": (s.get("machines") or [None])[0],
                      "target_date": j.get("target_date"), "cancel_date": j.get("cancel_date"),
-                     "missing": need[j["job_id"]]})
+                     "ready": real[j["job_id"]]})
     data = {"at": datetime.now(timezone.utc).isoformat(), "now": ctx["now"], "cfg": ctx["cfg"], "jobs": jobs}
     _live["blank_ok"] = blank_ok_from(ctx["cfg"])     # la regla vigente, para components()
-    _cache[relax] = {"at": time.monotonic(), "data": data}
+    _cache["plan"] = {"at": time.monotonic(), "data": data}
     return data
 
 
-def group_by_order(sim: dict) -> dict:
-    """{order_id: {start, machine, missing:set, target_date, cancel_date}} con
-    el arranque más temprano de sus posiciones."""
+def group_by_order(sim: dict, component: str) -> dict:
+    """{order_id: {start, machine, missing:set, target_date, cancel_date}} sólo
+    de las órdenes con alguna posición esperando `component`; `missing` = lo
+    que además le falta (real, no lo supuesto por la simulación)."""
     out = {}
+    pending = {j["order_id"] for j in sim["jobs"] if not (j.get("ready") or {}).get(component, True)}
     for j in sim["jobs"]:
+        if j["order_id"] not in pending:
+            continue
         b = out.setdefault(j["order_id"], {"start": None, "machine": None, "missing": set(),
                                            "target_date": j["target_date"], "cancel_date": j["cancel_date"]})
-        b["missing"] |= set(j["missing"])
+        b["missing"] |= {k for k, v in (j.get("ready") or {}).items() if not v and k != component}
         if j["start"] and (not b["start"] or j["start"] < b["start"]):
             b["start"], b["machine"] = j["start"], j["machine"]
     return out
 
 
-def split_window(sim: dict, by_order: dict, orders: dict, days: float, card, limit: int = 500):
-    """(programadas, pendientes). Programada = el motor la arrancaría dentro de
-    los próximos `days` días (si tiene hora es porque va a correr). Pendientes:
-    lo demás, sin zombis (cancel vencido > fill_max_overdue_days), primero lo
-    que sólo espera este componente (por arranque) y luego por fecha objetivo.
-    `card(order, extra)` arma la tarjeta del módulo."""
-    cutoff = sim["now"] + timedelta(days=days)
+def split_plan(sim: dict, by_order: dict, orders: dict, card, limit: int = 500):
+    """(pendientes, adelantar). Pendientes = el plan les da arranque, en ese
+    orden (lo que la planta va a necesitar primero). Adelantar = sin lugar en el
+    plan, por fecha objetivo; las de cancel muy vencido (> fill_max_overdue_days)
+    al final, marcadas `stale`. `card(order, extra)` arma la tarjeta."""
+    from datetime import timedelta
     max_od = int(sim["cfg"].get("fill_max_overdue_days") or 0)
     oldest = (sim["now"].date() - timedelta(days=max_od)).isoformat() if max_od > 0 else ""
-    prog, pend = [], []
+    pend, adv = [], []
     for oid, b in by_order.items():
         o = orders.get(oid)
         if not o:
             continue
+        stale = bool(oldest and (b["cancel_date"] or "9999-12-31") < oldest)
         extra = {"machine": b["machine"], "start": b["start"], "target_date": b["target_date"],
-                 "missing": sorted(b["missing"])}
-        if b["start"] and datetime.fromisoformat(b["start"]) <= cutoff:
-            prog.append(card(o, extra))
-        elif not (oldest and (b["cancel_date"] or "9999-12-31") < oldest):
-            pend.append(card(o, extra))
-    prog.sort(key=lambda c: c["start"])
-    pend.sort(key=lambda c: (c["start"] is None or bool(c["missing"]), c["start"] or "", c["target_date"] or "9999"))
-    return prog, pend[:limit]
+                 "missing": sorted(b["missing"]), "stale": stale}
+        (pend if b["start"] else adv).append(card(o, extra))
+    pend.sort(key=lambda c: c["start"])
+    adv.sort(key=lambda c: (c["stale"], c["target_date"] or "9999"))
+    return pend[:limit], adv[:limit]
 
 
 # ── Componentes (mini tabla de la tarjeta) ──────────────────────────────────

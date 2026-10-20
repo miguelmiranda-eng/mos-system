@@ -3,19 +3,11 @@ import { ExternalLink } from 'lucide-react';
 import { API } from '../../lib/constants';
 
 // Piezas compartidas de los MÓDULOS que reemplazan tableros (Cuadros, Blanks…):
-// llamada al API, fechas, ventana de días, avisos en vivo, mini tabla de
+// llamada al API, fechas, avisos en vivo, mini tabla de
 // componentes y enlace a Printavo. Backend: services/order_modules.py.
 
 export const WS_URL = `${process.env.REACT_APP_BACKEND_URL || 'http://localhost:8000'}`.replace(/^http/, 'ws') + '/api/ws';
 export const REFRESH_MS = 2 * 60 * 1000;
-export const WINDOW_OPTIONS = [1, 2, 3, 5, 7];
-
-export const readWindow = (key) => {
-  try { const v = Number(localStorage.getItem(key)); return WINDOW_OPTIONS.includes(v) ? v : 3; } catch { return 3; }
-};
-export const saveWindow = (key, d) => {
-  try { localStorage.setItem(key, String(d)); } catch { /* sin storage */ }
-};
 
 export const call = async (path, opts = {}) => {
   const res = await fetch(`${API}${path}`, {

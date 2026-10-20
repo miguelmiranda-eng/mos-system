@@ -5,12 +5,14 @@ correr: corre el motor en simulación contando el blank como contado
 (services/order_modules.py, requisito "contado") y sale cuándo y en qué
 máquina ARRANCARÍA cada orden que hoy espera su blank.
 
-  Programadas  el motor las arrancaría dentro de la ventana (próximos N días).
-  Pendientes   lo que sigue (fuera de ventana, o que además espera otra cosa).
+  Pendientes   TODAS las órdenes sin blank listo que el plan programa, en
+               orden de arranque (el plan supone blank, cuadros y label hechos:
+               order_modules.simulate).
+  Adelantar    el resto (sin lugar en el plan: falta el ejemplo, fuera de
+               horizonte, cancel muy vencido…).
   Sugeridas    el WMS ya surtió el 100 % de lo pedido en sus pick tickets pero
                el estatus no dice CONTADO/SURTIDO: el sistema SUGIERE, una
                persona confirma (botón "Confirmar CONTADO").
-  Sin estatus  órdenes sin blank_status capturado (para limpiarlas).
 
 Cada tarjeta trae el avance REAL del almacén (WMS), por talla:
   pedido   = sizes de sus pick tickets (wms_pick_tickets)
@@ -24,7 +26,7 @@ sello blank_status_at, automatizaciones (CONTADO → "mover a cuadros") y
 broadcast iguales que cambiarlo en el CRM. Sólo el rol `blanks` + admin/supersu.
 
 Endpoints (prefijo /api/blanks):
-  GET  /queue?days=3          programadas + pendientes + sugeridas + sin_estatus
+  GET  /queue                 pendientes + adelantar + sugeridas
   POST /{order_id}/status     {status}  cambia el estatus (catálogo blank_statuses)
   POST /{order_id}/confirm    confirma CONTADO (la sugerida por el WMS)
 """
@@ -41,7 +43,6 @@ from wms_constants import TICKET_OPEN_QUERY
 
 router = APIRouter(prefix="/api/blanks")
 
-DEFAULT_WINDOW_DAYS = 3
 LIST_MAX = 500
 TZ = zoneinfo.ZoneInfo("America/Tijuana")
 CONFIRM_STATUS = "CONTADO"          # lo que pone "Confirmar CONTADO"
@@ -154,12 +155,11 @@ def _card_factory(wms: dict, stock: dict, ok_set: set):
 
 
 @router.get("/queue")
-async def queue(request: Request, days: float = DEFAULT_WINDOW_DAYS):
+async def queue(request: Request):
     user = await require_auth(request)
-    days = max(0.5, min(float(days or DEFAULT_WINDOW_DAYS), 30.0))
-    sim = await om.simulate("contado")
+    sim = await om.simulate()
     ok_set = om.blank_ok_from(sim["cfg"])
-    by_order = om.group_by_order(sim)
+    by_order = om.group_by_order(sim, "contado")
     orders = {o["order_id"]: o async for o in db.orders.find({"order_id": {"$in": list(by_order)}}, ORDER_PROJ)}
     # Lo confirmado después de la simulación (dato vivo) ya no es pendiente.
     orders = {k: o for k, o in orders.items() if str(o.get("blank_status") or "").strip().upper() not in ok_set}
@@ -173,18 +173,16 @@ async def queue(request: Request, days: float = DEFAULT_WINDOW_DAYS):
             pairs.add((_norm(o.get("style")), _norm(o.get("color"))))
     stock = await _stock_for(pairs)
     card = _card_factory(wms, stock, ok_set)
-    programadas, pendientes = om.split_window(sim, by_order, orders, days, card, LIST_MAX)
-    everything = programadas + pendientes
-    sugeridas = [c for c in everything if c["suggest_contado"]]
-    sin_estatus = [c for c in everything if not c["blank_status"]]
+    pendientes, adelantar = om.split_plan(sim, by_order, orders, card, LIST_MAX)
+    sugeridas = [c for c in pendientes + adelantar if c["suggest_contado"]]
     midnight = datetime.now(TZ).replace(hour=0, minute=0, second=0, microsecond=0)
     done_today = await db.orders.count_documents({
         "blank_status_at": {"$gte": midnight.astimezone(timezone.utc).isoformat()},
         "blank_status": {"$in": [x for x in (await _statuses()) if x.upper() in ok_set] or list(ok_set)}})
-    return {"sim_at": sim["at"], "days": days, "ok_statuses": sorted(ok_set),
+    return {"sim_at": sim["at"], "ok_statuses": sorted(ok_set),
             "statuses": await _statuses(), "confirm_status": CONFIRM_STATUS,
-            "programadas": programadas, "pendientes": pendientes,
-            "sugeridas": sugeridas, "sin_estatus": sin_estatus, "done_today": done_today,
+            "pendientes": pendientes, "adelantar": adelantar,
+            "sugeridas": sugeridas, "done_today": done_today,
             "can_edit": bool(user_roles(user) & WRITE_ROLES)}
 
 
