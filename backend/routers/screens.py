@@ -267,6 +267,8 @@ async def _write(order_id: str, request: Request, set_ready) -> dict:
     payload = {"screens_positions": sp, "screens": all_ready}
     if all_ready and order.get("screens") is not True:
         payload["screens_done_at"] = now
+    elif not all_ready and order.get("screens") is True:
+        payload["screens_done_at"] = None      # deshecho: ya no cuenta como lista
     _sim_cache["data"] = None
     return await update_order(order_id, OrderUpdate(**payload), request)
 

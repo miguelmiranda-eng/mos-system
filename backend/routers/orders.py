@@ -713,6 +713,37 @@ def _link_canon(v):
     return ((str(v).strip() if v else ""), "")
 
 
+def _truthy(v) -> bool:
+    return v is True or str(v).strip().lower() in ("true", "1", "si", "sí", "yes", "x")
+
+
+def _sync_screens_positions(existing: dict, update: dict, by: str) -> None:
+    """El check SCREENS del CRM (`screens`) y el detalle por posición del
+    módulo Cuadros (`screens_positions`) dicen siempre lo mismo. Si el check
+    cambia desde el CRM (celda, Arte, import de Excel) y la petición no trae
+    el detalle (el módulo sí lo manda), se ajusta aquí:
+      · apagado  → se borran las posiciones y el sello de terminado; si no,
+                   el módulo y Planeación seguirían viéndola con cuadros.
+      · prendido → todas las posiciones quedan listas (quién y cuándo).
+    Modifica `update` en sitio."""
+    if "screens" not in update or "screens_positions" in update:
+        return
+    sp = existing.get("screens_positions") or {}
+    if not _truthy(update.get("screens")):
+        if sp or existing.get("screens_done_at"):
+            update["screens_positions"] = {}
+            update["screens_done_at"] = None
+        return
+    from services.planner_engine import positions_of   # lazy: el router no carga el motor al importar
+    now = datetime.now(timezone.utc).isoformat()
+    positions = list(positions_of({**existing, **update}).keys())
+    if all(sp.get(p) for p in positions) and existing.get("screens") is True:
+        return
+    update["screens_positions"] = {p: sp.get(p) or {"at": now, "by": by} for p in positions}
+    if existing.get("screens") is not True:
+        update["screens_done_at"] = now
+
+
 @router.put("/{order_id}")
 async def update_order(order_id: str, order: OrderUpdate, request: Request):
     user = await require_auth(request)
@@ -804,6 +835,8 @@ async def update_order(order_id: str, order: OrderUpdate, request: Request):
                 int(v) for v in _tallas.values()
                 if isinstance(v, (int, float)) and not isinstance(v, bool)
             )
+
+    _sync_screens_positions(existing, update_data, user.get("name") or user.get("email"))
 
     update_data["updated_at"] = datetime.now(timezone.utc).isoformat()
 
@@ -2445,6 +2478,7 @@ async def import_orders_excel(
                             for _f in _JOB_TITLE_PROTECTED:
                                 if _f in order_data and any(_link_canon(existing.get(_f))):
                                     order_data.pop(_f)
+                        _sync_screens_positions(existing, order_data, user.get("name") or user.get("email"))
                         order_data["updated_at"] = datetime.now(timezone.utc).isoformat()
                         await db.orders.update_one({"order_id": oid}, {"$set": order_data})
                         stats["updated"] += 1
