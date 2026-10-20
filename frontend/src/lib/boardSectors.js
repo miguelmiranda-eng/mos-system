@@ -24,7 +24,7 @@ export const SECTOR_META = [
 export const DEFAULT_SECTORS = {
   programacion: ['DATA ENTRY', 'SCHEDULING', 'READY TO SCHEDULED'],   // DATA ENTRY = entrada; SCHEDULING = maestro
   produccion:   ['NECK', 'EMPAQUE'],   // BLANKS y SCREENS → módulos Blanks y Cuadros (Sidebar SECTOR_MODULES)
-  completados:  ['EDI', 'INVENTARIO', 'FINAL BILL', 'COMPLETOS'],
+  completados:  ['EDI', 'INVENTARIO', 'FINAL BILL'],   // COMPLETOS → pestaña Completas del maestro (SCHEDULING)
   old:          ['RESPALDO MONDAY', 'CANCELLED'],
 };
 

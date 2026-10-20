@@ -89,6 +89,9 @@ function orderMatchesQuery(order, sq) {
   return false;
 }
 
+const COMPLETE_STATUSES = new Set(['LISTO PARA ENVIO', 'LISTO PARA FULFILLMENT']);
+const isCompleteOrder = (o) => COMPLETE_STATUSES.has(String(o?.production_status || '').trim().toUpperCase());
+
 const Dashboard = () => {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
@@ -419,6 +422,12 @@ const Dashboard = () => {
   // SCHEDULING queda como maestro de órdenes en preparación. Sin DATA ENTRY
   // (antes de la migración) todo sigue en SCHEDULING como antes.
   const intakeBoard = activeBoards.includes('DATA ENTRY') ? 'DATA ENTRY' : 'SCHEDULING';
+  // MAESTRO: vista de TODAS las órdenes vivas. Era MASTER; al retirarlo
+  // (scripts/retire_master_completos.py) lo es SCHEDULING, que heredó todo lo
+  // de MASTER, y una pestaña separa abiertas de completas (COMPLETOS ya no existe).
+  const masterBoard = activeBoards.includes('MASTER') ? 'MASTER' : 'SCHEDULING';
+  const isMasterView = currentBoard === masterBoard;
+  const [masterTab, setMasterTab] = useState('open');
   useEffect(() => {
     if (dynamicBoards.length > 0 && currentBoard === 'DATA ENTRY' && !activeBoards.includes('DATA ENTRY')) {
       setCurrentBoard('SCHEDULING');
@@ -621,14 +630,14 @@ const Dashboard = () => {
   // Auto-load MASTER view config per user
   const masterConfigLoaded = useRef(false);
   useEffect(() => {
-    if (currentBoard !== 'MASTER' || masterConfigLoaded.current) return;
+    if (!isMasterView || masterConfigLoaded.current) return;
     const loadMasterConfig = async () => {
       try {
         const res = await fetch(`${API}/config/user-view-config/MASTER`, { credentials: 'include' });
         if (res.ok) {
           const config = await res.json();
           if (config.user_id) {
-            if (config.filters && Object.keys(config.filters).length > 0) setBoardFilters(prev => ({ ...prev, MASTER: config.filters }));
+            if (config.filters && Object.keys(config.filters).length > 0) setBoardFilters(prev => ({ ...prev, [masterBoard]: config.filters }));
             if (config.group_by_date) setGroupByDate(config.group_by_date);
             masterConfigLoaded.current = true;
           }
@@ -644,12 +653,12 @@ const Dashboard = () => {
   // Auto-save MASTER view config per user (debounced)
   const saveTimerRef = useRef(null);
   useEffect(() => {
-    if (currentBoard !== 'MASTER') return;
+    if (!isMasterView) return;
     if (!masterConfigLoaded.current) return;
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(() => {
       const configPayload = {
-        filters: boardFilters['MASTER'] || {},
+        filters: boardFilters[masterBoard] || {},
         group_by_date: groupByDate
       };
       fetch(`${API}/config/user-view-config/MASTER`, {
@@ -1209,7 +1218,7 @@ const Dashboard = () => {
     // En MASTER/EJEMPLOS esta columna también pinta el badge del tablero en la
     // misma fila que las señaléticas; necesita más ancho para que no se
     // recorten los íconos de la derecha (playerita/camión).
-    const nameColW = (currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') ? 320 : 200;
+    const nameColW = (isMasterView || currentBoard === 'EJEMPLOS') ? 320 : 200;
 
     return (
       <React.Fragment key={order.order_id}>
@@ -1253,7 +1262,7 @@ const Dashboard = () => {
               tooltip. Altura fija: ningún contenido de esta columna puede
               volver a dictar el alto del renglón. */}
           {(() => {
-            const showBoard = currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS';
+            const showBoard = isMasterView || currentBoard === 'EJEMPLOS';
             const shipRaw = order.order_number && shipMap[order.order_number] !== undefined
               ? String(shipMap[order.order_number] || '').slice(0, 10) : '';
             const p = shipRaw.split('-');           // [YYYY, MM, DD] sin corrimiento de zona
@@ -1571,8 +1580,14 @@ const Dashboard = () => {
   };
 
 
+  // Completa = estatus que antes mandaba la orden a COMPLETOS.
+  const masterTabFilter = (list) => {
+    if (!isMasterView || activeBoards.includes('COMPLETOS')) return list;
+    return list.filter((o) => isCompleteOrder(o) === (masterTab === 'done'));
+  };
+
   const renderTableBody = () => {
-    const _allOrders = (orders && Array.isArray(orders) ? orders : []);
+    const _allOrders = masterTabFilter(orders && Array.isArray(orders) ? orders : []);
     // Estilo para congelar una cabecera de grupo bajo el encabezado de columnas.
     // z por ENCIMA de las celdas sticky de las filas (z-30) y por DEBAJO de las
     // del encabezado de columnas (z-50); fondo opaco para tapar lo que scrollea.
@@ -1793,7 +1808,7 @@ const Dashboard = () => {
       if (!groups[groupKey]) groups[groupKey] = [];
       groups[groupKey].push(o);
     });
-    const colSpan = 3 + visibleColumns.length + ((currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') ? 1 : 0);
+    const colSpan = 3 + visibleColumns.length + ((isMasterView || currentBoard === 'EJEMPLOS') ? 1 : 0);
     // Los grupos de fecha se ordenan por el valor crudo (ISO) de su primera
     // orden: new Date("30/9/2026") es Invalid Date y rompía el orden.
     const sortKey = (key, list) => isDateField ? String(list[0]?.[groupByDate] || '').slice(0, 10) : key;
@@ -2193,6 +2208,21 @@ const Dashboard = () => {
           {/* Identificador del tablero, junto al selector de agrupación */}
           <span className="h-9 inline-flex items-center px-3 rounded-lg text-xs font-black uppercase tracking-tight text-white whitespace-nowrap mr-3" style={{ backgroundColor: BOARD_COLORS[currentBoard]?.bg || '#1f2937' }}>{currentBoard}</span>
 
+          {/* Maestro: abiertas / completas (reemplaza al tablero COMPLETOS) */}
+          {isMasterView && !activeBoards.includes('COMPLETOS') && (
+            <div className="inline-flex rounded-lg border border-border overflow-hidden mr-3 h-9" data-testid="master-tabs">
+              {[['open', t('master_tab_open')], ['done', t('master_tab_done')]].map(([k, label]) => {
+                const n = (orders || []).filter((o) => isCompleteOrder(o) === (k === 'done')).length;
+                return (
+                  <button key={k} type="button" onClick={() => setMasterTab(k)}
+                    className={cn("px-3 text-xs font-black uppercase tracking-tight transition-colors", masterTab === k ? "bg-royal text-white" : "bg-transparent text-muted-foreground hover:bg-muted")}>
+                    {label} <span className="opacity-70">{n}</span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
           {/* Grouping Selector */}
           {!calendarMode && !readyCalendarMode && !blanksTrackingMode && (
             <div className="mr-4">
@@ -2535,7 +2565,7 @@ const Dashboard = () => {
                 ) : (
                 <div role="table" className="text-sm isolate" style={{
                   display: 'grid',
-                  gridTemplateColumns: `48px 64px ${(currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') ? 320 : 200}px ${visibleColumns.filter(c => c.key !== 'order_number').map(col => `${columnWidths[col.key] || col.width}px`).join(' ')} minmax(180px, 1fr) 110px`,
+                  gridTemplateColumns: `48px 64px ${(isMasterView || currentBoard === 'EJEMPLOS') ? 320 : 200}px ${visibleColumns.filter(c => c.key !== 'order_number').map(col => `${columnWidths[col.key] || col.width}px`).join(' ')} minmax(180px, 1fr) 110px`,
                   minWidth: '100%',
                   width: 'max-content'
                 }}>
@@ -2544,15 +2574,15 @@ const Dashboard = () => {
                   <div className={`py-4 px-1 sticky left-[48px] top-0 z-[50] border-r border-b border-border/40 ${isDark ? 'bg-card' : 'bg-gray-50'}`} style={{ width: 64, minWidth: 64, maxWidth: 64 }}></div>
 
                   {/* Column 3: Permanent Identifier (Sticky) */}
-                  <div className={`py-4 px-3 sticky left-[112px] top-0 z-[50] text-left text-[10px] font-bold tracking-[0.2em] uppercase border-r border-b border-border/40 ${isDark ? 'bg-card text-slate-300' : 'bg-gray-50 text-slate-700'}`} style={{ width: (currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') ? 320 : 200, minWidth: (currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') ? 320 : 200, maxWidth: (currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') ? 320 : 200 }}>
+                  <div className={`py-4 px-3 sticky left-[112px] top-0 z-[50] text-left text-[10px] font-bold tracking-[0.2em] uppercase border-r border-b border-border/40 ${isDark ? 'bg-card text-slate-300' : 'bg-gray-50 text-slate-700'}`} style={{ width: (isMasterView || currentBoard === 'EJEMPLOS') ? 320 : 200, minWidth: (isMasterView || currentBoard === 'EJEMPLOS') ? 320 : 200, maxWidth: (isMasterView || currentBoard === 'EJEMPLOS') ? 320 : 200 }}>
                     <div className="flex items-center justify-between gap-1">
-                      <span className="truncate">{(currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') ? 'Board' : 'Order #'}</span>
-                      <Popover open={openFilter === ((currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') ? '_board' : 'order_number')} onOpenChange={(val) => setOpenFilter(val ? ((currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') ? '_board' : 'order_number') : null)}>
-                        <PopoverTrigger className={`p-0.5 rounded transition-colors flex-shrink-0 ${filters[(currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') ? '_board' : 'order_number'] ? 'bg-primary/20 text-primary animate-pulse' : 'hover:bg-secondary text-muted-foreground'}`}>
+                      <span className="truncate">{(isMasterView || currentBoard === 'EJEMPLOS') ? 'Board' : 'Order #'}</span>
+                      <Popover open={openFilter === ((isMasterView || currentBoard === 'EJEMPLOS') ? '_board' : 'order_number')} onOpenChange={(val) => setOpenFilter(val ? ((isMasterView || currentBoard === 'EJEMPLOS') ? '_board' : 'order_number') : null)}>
+                        <PopoverTrigger className={`p-0.5 rounded transition-colors flex-shrink-0 ${filters[(isMasterView || currentBoard === 'EJEMPLOS') ? '_board' : 'order_number'] ? 'bg-primary/20 text-primary animate-pulse' : 'hover:bg-secondary text-muted-foreground'}`}>
                           <ListFilter className="w-3.5 h-3.5" />
                         </PopoverTrigger>
                         <PopoverContent className="z-[300] min-w-[200px] bg-card border-border p-3 shadow-2xl">
-                          {(currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') ? (
+                          {(isMasterView || currentBoard === 'EJEMPLOS') ? (
                             <>
                               <div className="flex items-center justify-between mb-2">
                                 <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Board</span>
@@ -2654,7 +2684,7 @@ const Dashboard = () => {
                       <div key={col.key} className={`py-4 ${idx === 0 ? 'pl-6 pr-3' : 'px-3'} text-left text-[10px] font-bold tracking-[0.2em] uppercase border-r border-b border-border/40 sticky top-0 z-20 ${isDark ? 'bg-card text-slate-300' : 'bg-gray-50 text-slate-700'} ${draggedCol === col.key ? 'opacity-50' : ''}`} style={{ width: width, minWidth: width, maxWidth: 'none' }} data-testid={`column-header-${col.key}`} draggable={canArrangeColumns} onDragStart={() => handleColumnDragStart(col.key)} onDragOver={(e) => handleColumnDragOver(e, col.key)} onDragEnd={handleColumnDragEnd}>
                         <div className="flex items-center justify-between gap-1">
                           <div className={`flex items-center gap-1.5 select-none overflow-hidden ${canArrangeColumns ? 'cursor-grab active:cursor-grabbing' : ''}`}>
-                            {(currentBoard === 'MASTER' || currentBoard === 'EJEMPLOS') && <svg className="w-3.5 h-3.5 flex-shrink-0 opacity-50" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 3H5a2 2 0 0 0-2 2v4m6-6h10a2 2 0 0 1 2 2v4M9 3v18m0 0h10a2 2 0 0 0 2-2v-4M9 21H5a2 2 0 0 1-2-2v-4m0-6v6m18-6v6" /></svg>}
+                            {(isMasterView || currentBoard === 'EJEMPLOS') && <svg className="w-3.5 h-3.5 flex-shrink-0 opacity-50" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 3H5a2 2 0 0 0-2 2v4m6-6h10a2 2 0 0 1 2 2v4M9 3v18m0 0h10a2 2 0 0 0 2-2v-4M9 21H5a2 2 0 0 1-2-2v-4m0-6v6m18-6v6" /></svg>}
                             <span className="truncate">{col.label}</span>
                             {/* Filter Trigger Icon */}
                             <Popover open={openFilter === col.key} onOpenChange={(val) => setOpenFilter(val ? col.key : null)}>
@@ -3095,7 +3125,7 @@ const Dashboard = () => {
               </div>
               <div className="flex gap-3 pt-2">
                 <button onClick={() => setDeleteBoardConfirm(null)} className="flex-1 py-2.5 rounded bg-primary text-primary-foreground hover:bg-primary/90 transition-colors text-sm font-bold" data-testid="cancel-delete-final">{t('dash_keep_board')}</button>
-                <button onClick={async () => { const ok = await deleteBoard(deleteBoardConfirm.name); setDeleteBoardConfirm(null); if (ok) setCurrentBoard('MASTER'); }} className="flex-1 py-2.5 rounded bg-destructive text-white hover:bg-destructive/90 transition-colors text-sm font-bold uppercase tracking-wide" data-testid="confirm-delete-final">{t('dash_delete_forever')}</button>
+                <button onClick={async () => { const ok = await deleteBoard(deleteBoardConfirm.name); setDeleteBoardConfirm(null); if (ok) setCurrentBoard(masterBoard); }} className="flex-1 py-2.5 rounded bg-destructive text-white hover:bg-destructive/90 transition-colors text-sm font-bold uppercase tracking-wide" data-testid="confirm-delete-final">{t('dash_delete_forever')}</button>
               </div>
             </>
           )}

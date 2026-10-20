@@ -775,7 +775,11 @@ function EmpaqueTab({ a, boards }) {
   const empaque = statuses.filter(s => EMPAQUE_STATUSES.includes(s.status));
   const totalEmpaqueU = empaque.reduce((s, x) => s + (x.quantity || 0), 0);
   const totalEmpaqueO = empaque.reduce((s, x) => s + (x.count || 0), 0);
-  const completos = boards["COMPLETOS"] || 0;
+  // Sin tablero COMPLETOS (retirado: pestaña Completas del maestro) se cuenta
+  // por estatus, igual que esa pestaña.
+  const completos = boards["COMPLETOS"] ?? statuses
+    .filter(s => ["LISTO PARA ENVIO", "LISTO PARA FULFILLMENT"].includes(String(s.status || "").toUpperCase()))
+    .reduce((n, x) => n + (x.count || 0), 0);
   const qc = boards["CONTROL DE CALIDAD"] || 0;
   const rows = statuses.map(s => ({ label: s.status, value: s.quantity }));
 

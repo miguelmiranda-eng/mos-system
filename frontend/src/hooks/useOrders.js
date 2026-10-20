@@ -419,7 +419,7 @@ export const useOrders = (currentBoard, boardFilters) => {
                 const boards = msg.data?.boards;
                 const cb = currentBoardRef.current;
                 const touchesMine = !Array.isArray(boards) || boards.length === 0
-                  || cb === 'MASTER' || boards.includes(cb);
+                  || cb === 'MASTER' || cb === 'SCHEDULING' || boards.includes(cb);   // SCHEDULING = maestro nuevo
                 if (touchesMine) fetchOrdersRef.current(true, true); // Silent but forced refresh
                 if (msg.data?.action === 'add_comment') fetchNotifsRef.current();
               }

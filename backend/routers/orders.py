@@ -2,7 +2,7 @@
 from fastapi import APIRouter, HTTPException, Request, File, UploadFile, Form, Response
 from typing import Optional
 import json
-from deps import db, require_auth, require_admin, log_activity, OrderCreate, OrderUpdate, CommentCreate, BOARDS, DESIGN_POSITIONS, get_dynamic_boards, logger, json_response_bytes, require_api_customer
+from deps import db, require_auth, require_admin, log_activity, OrderCreate, OrderUpdate, CommentCreate, BOARDS, DESIGN_POSITIONS, get_dynamic_boards, logger, json_response_bytes, require_api_customer, INTAKE_BOARD, PREP_BOARD
 from services.qty_embarcada import qty_embarcada_por_orden, entero_o_none
 from ws_manager import ws_manager
 from datetime import datetime, timezone
@@ -83,7 +83,8 @@ def _invalidate_orders_cache(data):
         _orders_cache.clear()
         return
     for key in list(_orders_cache):
-        if key[0] != "orders" or key[1] in (None, "MASTER") or key[1] in boards:
+        # SCHEDULING también: es el maestro nuevo (vista de todo lo vivo).
+        if key[0] != "orders" or key[1] in (None, "MASTER", "SCHEDULING") or key[1] in boards:
             del _orders_cache[key]
 
 
@@ -264,13 +265,24 @@ async def _run_automations(trigger_type, order, user, context=None):
     from routers.automations import run_automations
     return await run_automations(trigger_type, order, user, context)
 
+async def _is_master_view(board) -> bool:
+    """¿Este tablero es la vista MAESTRA (todo lo vivo)? MASTER mientras exista;
+    después de retirarlo (scripts/retire_master_completos.py) lo es SCHEDULING,
+    que heredó todo lo de MASTER. DATA ENTRY nunca entra al maestro: es la
+    entrada, todavía no la mandan a SCHEDULING."""
+    if board == "MASTER":
+        return True
+    return board == PREP_BOARD and "MASTER" not in await get_dynamic_boards()
+
+
 async def _fetch_orders(board, search, limit, include_images, filtro_cliente=None,
                         skip=None, hide_trash=False):
     """skip=None → comportamiento clásico: lista de hasta `limit` órdenes.
     skip=int (Tarea 5.1): página skip/limit y devuelve (items, total)."""
     total = None
     query = {}
-    if board == "MASTER":
+    master_view = await _is_master_view(board)
+    if master_view:
         # Exclude trash AND ghost orders (null/missing board) using an indexable query
         # We use $in with dynamic boards because $nin causes a full collection scan
         active_boards = await get_dynamic_boards()
@@ -280,7 +292,7 @@ async def _fetch_orders(board, search, limit, include_images, filtro_cliente=Non
         # y que cada cliente montara ~1,900 filas. Cada terminal se
         # consulta en su propio tablero.
         active_boards = [b for b in active_boards
-                         if str(b).strip().upper() not in MASTER_EXCLUDED_BOARDS]
+                         if str(b).strip().upper() not in MASTER_EXCLUDED_BOARDS and b != INTAKE_BOARD]
         query["board"] = {"$in": active_boards}
     elif board:
         query["board"] = board
@@ -299,7 +311,7 @@ async def _fetch_orders(board, search, limit, include_images, filtro_cliente=Non
     if search and not include_images and not filtro_cliente:
         # Camino normal de la UI: corpus precalculado (ver _get_search_corpus).
         sq = search.strip().lower()
-        if board == "MASTER":
+        if master_view:
             allowed = set(query["board"]["$in"])
             in_board = lambda o: o.get("board") in allowed
         elif board:

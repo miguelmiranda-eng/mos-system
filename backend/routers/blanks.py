@@ -5,11 +5,15 @@ correr: corre el motor en simulación contando el blank como contado
 (services/order_modules.py, requisito "contado") y sale cuándo y en qué
 máquina ARRANCARÍA cada orden que hoy espera su blank.
 
-  Pendientes   TODAS las órdenes sin blank listo que el plan programa, en
-               orden de arranque (el plan supone blank, cuadros y label hechos:
+  Pendientes   SIN estatus de blank y el plan las programa, en orden de
+               arranque (el plan supone blank, cuadros y label hechos:
                order_modules.simulate).
-  Adelantar    el resto (sin lugar en el plan: falta el ejemplo, fuera de
+  Adelantar    SIN estatus y sin lugar en el plan (falta el ejemplo, fuera de
                horizonte, cancel muy vencido…).
+  Surtido      estatus SURTIDO.
+  Parciales    estatus parcial (PARTIAL, REPORTADO PARCIAL, APPROVED PARTIAL…).
+  En proceso   cualquier otro estatus (PICK TICKET, FROM USA, DYE HOUSE…).
+  CONTADO      sale del módulo (blank terminado); la orden sigue en el maestro.
   Alertas      ya está en máquina / EN PRODUCCION sin blank listo: se imprime
                (o se va a imprimir) sin blank contado; hay que revisarla.
   Sugeridas    el WMS ya surtió el 100 % de lo pedido en sus pick tickets pero
@@ -48,6 +52,22 @@ router = APIRouter(prefix="/api/blanks")
 LIST_MAX = 500
 TZ = zoneinfo.ZoneInfo("America/Tijuana")
 CONFIRM_STATUS = "CONTADO"          # lo que pone "Confirmar CONTADO"
+# Blank TERMINADO para el módulo: sale de la lista. SURTIDO sigue aquí (en su
+# pestaña) aunque Planeación ya lo cuente como listo para imprimir.
+DONE_STATUSES = {"CONTADO", "CONTADO/PICKED"}
+
+
+def _group(status: str) -> str:
+    s = str(status or "").strip().upper()
+    if not s:
+        return "none"
+    if s.startswith("SURTIDO") and "ENVIADO" not in s:
+        return "surtido"
+    if "PARTIAL" in s or "PARCIAL" in s:
+        return "parciales"
+    return "proceso"
+
+
 # Cambian el estatus sólo los del rol `blanks` (aditivo) y admin/supersu.
 WRITE_ROLES = {"blanks"} | SUPER_ROLES
 ORDER_PROJ = {"_id": 0, "order_id": 1, "order_number": 1, "client": 1, "branding": 1, "board": 1,
@@ -161,10 +181,12 @@ async def queue(request: Request):
     user = await require_auth(request)
     sim = await om.simulate()
     ok_set = om.blank_ok_from(sim["cfg"])
-    by_order = om.group_by_order(sim, "contado")
-    orders = {o["order_id"]: o async for o in db.orders.find({"order_id": {"$in": list(by_order)}}, ORDER_PROJ)}
-    # Lo confirmado después de la simulación (dato vivo) ya no es pendiente.
-    orders = {k: o for k, o in orders.items() if str(o.get("blank_status") or "").strip().upper() not in ok_set}
+    sim_ids = list({j["order_id"] for j in sim["jobs"]})
+    orders = {o["order_id"]: o async for o in db.orders.find({"order_id": {"$in": sim_ids}}, ORDER_PROJ)}
+    # Dato vivo: CONTADO (blank terminado) sale del módulo.
+    orders = {k: o for k, o in orders.items()
+              if str(o.get("blank_status") or "").strip().upper() not in DONE_STATUSES}
+    by_order = om.group_by_order(sim, "contado", only=set(orders))
     nums = sorted({str(o.get("order_number")) for o in orders.values() if o.get("order_number") not in (None, "")})
     wms = await _wms_for(nums)
     pairs = set()
@@ -174,16 +196,23 @@ async def queue(request: Request):
         if o.get("style"):
             pairs.add((_norm(o.get("style")), _norm(o.get("color"))))
     stock = await _stock_for(pairs)
-    card = _card_factory(wms, stock, ok_set)
-    pendientes, adelantar, alertas = om.split_plan(sim, by_order, orders, card, LIST_MAX)
-    sugeridas = [c for c in alertas + pendientes + adelantar if c["suggest_contado"]]
+    card = _card_factory(wms, stock, DONE_STATUSES)
+    plan, rest, alertas = om.split_plan(sim, by_order, orders, card, LIST_MAX)
+    # Sin estatus: plan → Pendientes, resto → Adelantar. Con estatus (ya en
+    # proceso): una pestaña por grupo, en el orden del plan y luego el resto.
+    tabs = {"pendientes": [], "adelantar": [], "surtido": [], "parciales": [], "proceso": []}
+    for lst, is_plan in ((plan, True), (rest, False)):
+        for c in lst:
+            g = _group(c["blank_status"])
+            tabs[("pendientes" if is_plan else "adelantar") if g == "none" else g].append(c)
+    sugeridas = [c for c in alertas + plan + rest if c["suggest_contado"]]
     midnight = datetime.now(TZ).replace(hour=0, minute=0, second=0, microsecond=0)
     done_today = await db.orders.count_documents({
         "blank_status_at": {"$gte": midnight.astimezone(timezone.utc).isoformat()},
-        "blank_status": {"$in": [x for x in (await _statuses()) if x.upper() in ok_set] or list(ok_set)}})
+        "blank_status": {"$in": [x for x in (await _statuses()) if x.upper() in DONE_STATUSES] or list(DONE_STATUSES)}})
     return {"sim_at": sim["at"], "ok_statuses": sorted(ok_set),
             "statuses": await _statuses(), "confirm_status": CONFIRM_STATUS,
-            "pendientes": pendientes, "adelantar": adelantar, "alertas": alertas,
+            **tabs, "alertas": alertas,
             "sugeridas": sugeridas, "done_today": done_today,
             "can_edit": bool(user_roles(user) & WRITE_ROLES)}
 

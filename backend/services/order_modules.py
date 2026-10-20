@@ -80,12 +80,13 @@ async def simulate() -> dict:
     return data
 
 
-def group_by_order(sim: dict, component: str) -> dict:
+def group_by_order(sim: dict, component: str, only: set = None) -> dict:
     """{order_id: {start, machine, missing:set, target_date, cancel_date}} sólo
-    de las órdenes con alguna posición esperando `component`; `missing` = lo
-    que además le falta (real, no lo supuesto por la simulación)."""
+    de las órdenes con alguna posición esperando `component` (o, si viene
+    `only`, de esas órdenes: el módulo decide con su propia regla); `missing`
+    = lo que además le falta (real, no lo supuesto por la simulación)."""
     out = {}
-    pending = {j["order_id"] for j in sim["jobs"] if not (j.get("ready") or {}).get(component, True)}
+    pending = set(only) if only is not None else         {j["order_id"] for j in sim["jobs"] if not (j.get("ready") or {}).get(component, True)}
     for j in sim["jobs"]:
         if j["order_id"] not in pending:
             continue
