@@ -97,26 +97,53 @@ def group_by_order(sim: dict, component: str) -> dict:
     return out
 
 
+PRINTING_STATUSES = {"EN PRODUCCION"}
+
+
+def in_production(o: dict) -> str:
+    """Máquina donde la orden YA está (tablero MAQUINA<n>) o "EN PRODUCCION"
+    si el estatus lo dice; "" si todavía no se imprime."""
+    board = str(o.get("board") or "").upper()
+    if board.startswith("MAQUINA"):
+        return board
+    if str(o.get("production_status") or "").strip().upper() in PRINTING_STATUSES:
+        return "EN PRODUCCION"
+    return ""
+
+
 def split_plan(sim: dict, by_order: dict, orders: dict, card, limit: int = 500):
-    """(pendientes, adelantar). Pendientes = el plan les da arranque, en ese
-    orden (lo que la planta va a necesitar primero). Adelantar = sin lugar en el
-    plan, por fecha objetivo; las de cancel muy vencido (> fill_max_overdue_days)
-    al final, marcadas `stale`. `card(order, extra)` arma la tarjeta."""
+    """(pendientes, adelantar, alertas).
+      Alertas    la orden YA está en máquina / EN PRODUCCION y aun así le falta
+                 el componente del módulo: no es trabajo normal, es algo que
+                 revisar (se imprimió sin blank contado, sin cuadros…).
+      Pendientes el plan les da arranque, en ese orden (lo que la planta va a
+                 necesitar primero).
+      Adelantar  sin lugar en el plan, por fecha objetivo; las de cancel muy
+                 vencido (> fill_max_overdue_days) al final, marcadas `stale`.
+    `missing` (qué más falta) no cuenta el label si el estatus ya pasó de LABEL
+    LISTO (la regla del planner sólo acepta LABEL LISTO). `card(order, extra)`
+    arma la tarjeta."""
     from datetime import timedelta
     max_od = int(sim["cfg"].get("fill_max_overdue_days") or 0)
     oldest = (sim["now"].date() - timedelta(days=max_od)).isoformat() if max_od > 0 else ""
-    pend, adv = [], []
+    pend, adv, alerts = [], [], []
     for oid, b in by_order.items():
         o = orders.get(oid)
         if not o:
             continue
+        missing = set(b["missing"])
+        if str(o.get("production_status") or "").strip().upper() in LABEL_OK:
+            missing.discard("label")
+        printing_on = in_production(o)
         stale = bool(oldest and (b["cancel_date"] or "9999-12-31") < oldest)
         extra = {"machine": b["machine"], "start": b["start"], "target_date": b["target_date"],
-                 "missing": sorted(b["missing"]), "stale": stale}
-        (pend if b["start"] else adv).append(card(o, extra))
+                 "missing": [] if printing_on else sorted(missing), "stale": stale,
+                 "alert": bool(printing_on), "printing_on": printing_on}
+        (alerts if printing_on else pend if b["start"] else adv).append(card(o, extra))
+    alerts.sort(key=lambda c: (c["start"] or "9999", c["target_date"] or "9999"))
     pend.sort(key=lambda c: c["start"])
     adv.sort(key=lambda c: (c["stale"], c["target_date"] or "9999"))
-    return pend[:limit], adv[:limit]
+    return pend[:limit], adv[:limit], alerts
 
 
 # ── Componentes (mini tabla de la tarjeta) ──────────────────────────────────

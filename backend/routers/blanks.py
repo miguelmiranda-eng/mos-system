@@ -10,6 +10,8 @@ máquina ARRANCARÍA cada orden que hoy espera su blank.
                order_modules.simulate).
   Adelantar    el resto (sin lugar en el plan: falta el ejemplo, fuera de
                horizonte, cancel muy vencido…).
+  Alertas      ya está en máquina / EN PRODUCCION sin blank listo: se imprime
+               (o se va a imprimir) sin blank contado; hay que revisarla.
   Sugeridas    el WMS ya surtió el 100 % de lo pedido en sus pick tickets pero
                el estatus no dice CONTADO/SURTIDO: el sistema SUGIERE, una
                persona confirma (botón "Confirmar CONTADO").
@@ -173,15 +175,15 @@ async def queue(request: Request):
             pairs.add((_norm(o.get("style")), _norm(o.get("color"))))
     stock = await _stock_for(pairs)
     card = _card_factory(wms, stock, ok_set)
-    pendientes, adelantar = om.split_plan(sim, by_order, orders, card, LIST_MAX)
-    sugeridas = [c for c in pendientes + adelantar if c["suggest_contado"]]
+    pendientes, adelantar, alertas = om.split_plan(sim, by_order, orders, card, LIST_MAX)
+    sugeridas = [c for c in alertas + pendientes + adelantar if c["suggest_contado"]]
     midnight = datetime.now(TZ).replace(hour=0, minute=0, second=0, microsecond=0)
     done_today = await db.orders.count_documents({
         "blank_status_at": {"$gte": midnight.astimezone(timezone.utc).isoformat()},
         "blank_status": {"$in": [x for x in (await _statuses()) if x.upper() in ok_set] or list(ok_set)}})
     return {"sim_at": sim["at"], "ok_statuses": sorted(ok_set),
             "statuses": await _statuses(), "confirm_status": CONFIRM_STATUS,
-            "pendientes": pendientes, "adelantar": adelantar,
+            "pendientes": pendientes, "adelantar": adelantar, "alertas": alertas,
             "sugeridas": sugeridas, "done_today": done_today,
             "can_edit": bool(user_roles(user) & WRITE_ROLES)}
 

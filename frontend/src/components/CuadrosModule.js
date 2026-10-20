@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Layers, RefreshCw, Loader2, CheckCircle2, Circle, FastForward, FileClock, Search } from 'lucide-react';
+import { ArrowLeft, Layers, RefreshCw, Loader2, CheckCircle2, Circle, FastForward, FileClock, Search, AlertTriangle } from 'lucide-react';
 import { toast } from 'sonner';
 import { useLang } from '../contexts/LanguageContext';
 import { Toaster } from './ui/sonner';
@@ -63,7 +63,11 @@ function OrderCard({ c, t, canEdit, busyKey, onToggle, onAll, mode }) {
         {mode === 'pre' && <div className="font-bold">{t('scr_preorder')}</div>}
         {mode !== 'pre' && (
           <>
-            {c.start ? (
+            {c.alert ? (
+              <div className="rounded-md border border-red-500/40 bg-red-500/10 text-red-600 dark:text-red-400 px-2 py-1 font-bold">
+                {t('mod_in_production')} · {c.printing_on === 'EN PRODUCCION' ? (c.machine || c.board) : c.printing_on}
+              </div>
+            ) : c.start ? (
               <>
                 <div className="text-muted-foreground">{t('scr_would_start')}</div>
                 <div className="font-bold">{fmtDay(c.start)} {fmtTime(c.start)} · {c.machine || '—'}</div>
@@ -148,6 +152,7 @@ export default function CuadrosModule() {
 
   const prog = data?.pendientes || [];
   const adv = data?.adelantar || [];
+  const alerts = data?.alertas || [];
   const pre = data?.preordenes || [];
   const progPending = prog.filter((c) => c.positions.some((p) => !p.ready));
   // Buscador de Adelantar: todas las palabras deben aparecer en la orden
@@ -158,7 +163,7 @@ export default function CuadrosModule() {
       .join(' ').toLowerCase();
     return advWords.every((w) => hay.includes(w));
   });
-  const list = tab === 'prog' ? prog : tab === 'adv' ? advShown : pre;
+  const list = tab === 'prog' ? prog : tab === 'adv' ? advShown : tab === 'alert' ? alerts : pre;
   const canEdit = !!data?.can_edit;
   const runAge = data?.sim_at ? Math.round((Date.now() - new Date(data.sim_at).getTime()) / 60000) : null;
 
@@ -198,6 +203,7 @@ export default function CuadrosModule() {
           {tabBtn('prog', t('mod_tab_pending'), progPending.length, Layers)}
           {tabBtn('adv', t('scr_tab_advance'), adv.length, FastForward)}
           {tabBtn('pre', t('scr_tab_preorders'), pre.length, FileClock)}
+          {tabBtn('alert', t('mod_tab_alerts'), alerts.length, AlertTriangle)}
         </div>
       </header>
 
@@ -236,6 +242,9 @@ export default function CuadrosModule() {
               </span>
             )}
           </div>
+        )}
+        {tab === 'alert' && (
+          <div className="rounded-lg border border-red-500/40 bg-red-500/10 text-xs p-3">{t('scr_alerts_hint')}</div>
         )}
         {tab === 'pre' && (
           <div className="rounded-lg border border-border bg-card text-xs p-3 text-muted-foreground">{t('scr_preorders_hint')}</div>

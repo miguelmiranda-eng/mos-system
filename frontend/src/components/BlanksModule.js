@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Shirt, RefreshCw, Loader2, CalendarClock, ListTodo, Sparkles, Search, CheckCircle2 } from 'lucide-react';
+import { ArrowLeft, Shirt, RefreshCw, Loader2, CalendarClock, ListTodo, Sparkles, Search, CheckCircle2, AlertTriangle } from 'lucide-react';
 import { toast } from 'sonner';
 import { useLang } from '../contexts/LanguageContext';
 import { Toaster } from './ui/sonner';
@@ -143,7 +143,11 @@ function OrderCard({ c, t, canEdit, statuses, confirmStatus, busy, onStatus }) {
           </div>
         )}
         <div className="pt-1 border-t border-border">
-          {c.start ? (
+          {c.alert ? (
+            <div className="rounded-md border border-red-500/40 bg-red-500/10 text-red-600 dark:text-red-400 px-2 py-1 font-bold">
+              {t('mod_in_production')} · {c.printing_on === 'EN PRODUCCION' ? (c.machine || c.board) : c.printing_on}
+            </div>
+          ) : c.start ? (
             <>
               <div className="text-muted-foreground">{t('scr_would_start')}</div>
               <div className="font-bold">{fmtDay(c.start)} {fmtTime(c.start)} · {c.machine || '—'}</div>
@@ -209,6 +213,7 @@ export default function BlanksModule() {
     prog: data?.pendientes || [],
     adv: data?.adelantar || [],
     sug: data?.sugeridas || [],
+    alert: data?.alertas || [],
   };
   // Buscador: todas las palabras deben aparecer en la orden.
   const words = q.trim().toLowerCase().split(/\s+/).filter(Boolean);
@@ -256,6 +261,7 @@ export default function BlanksModule() {
           {tabBtn('prog', t('mod_tab_pending'), CalendarClock)}
           {tabBtn('adv', t('scr_tab_advance'), ListTodo)}
           {tabBtn('sug', t('blk_tab_suggested'), Sparkles)}
+          {tabBtn('alert', t('mod_tab_alerts'), AlertTriangle)}
         </div>
       </header>
 
@@ -266,6 +272,7 @@ export default function BlanksModule() {
         {err && <div className="rounded-lg border border-red-500/40 bg-red-500/10 text-red-500 text-sm p-3">{err}</div>}
         {tab === 'sug' && <div className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 text-xs p-3">{t('blk_suggested_hint')}</div>}
         {tab === 'prog' && <div className="rounded-lg border border-border bg-card text-xs p-3 text-muted-foreground">{t('mod_pending_hint')}</div>}
+        {tab === 'alert' && <div className="rounded-lg border border-red-500/40 bg-red-500/10 text-xs p-3">{t('blk_alerts_hint')}</div>}
         {tab === 'adv' && <div className="rounded-lg border border-border bg-card text-xs p-3 text-muted-foreground">{t('mod_advance_hint')}</div>}
         <div className="relative">
           <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
