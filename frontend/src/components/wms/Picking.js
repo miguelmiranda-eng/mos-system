@@ -64,7 +64,7 @@ export const PickingModule = ({ currentUser } = {}) => {
   const [showForm, setShowForm] = useState(false);
   const [incidentTicket, setIncidentTicket] = useState(null);
   const [resupplyTicket, setResupplyTicket] = useState(null);
-  const { can } = useWms();
+  const { can, canTab } = useWms();
   const [incidentDraft, setIncidentDraft] = useState({ sku: '', qty: '1', reason: 'Dañado', replacement_sizes: {}, replacement_description: '', notes: '' });
   const [incidentSaving, setIncidentSaving] = useState(false);
   const [confirmTicket, setConfirmTicket] = useState(null);
@@ -104,6 +104,14 @@ export const PickingModule = ({ currentUser } = {}) => {
   // en realidad estaba creado pero en el tab equivocado (ej. ticket 2123 del 6-jul
   // que ware house si tenia hecho pero el equipo veia solo Pretickets).
   const [activeTab, setActiveTab] = useState('tickets'); // pretickets | tickets | completed | dashboard
+  // Si la pestaña activa queda restringida por Permisos, salta a la primera visible.
+  useEffect(() => {
+    const order = ['pretickets', 'tickets', 'completed', 'workload', 'dashboard'];
+    if (!canTab('picking', activeTab)) {
+      const first = order.find(id => canTab('picking', id));
+      if (first) setActiveTab(first);
+    }
+  }, [activeTab, canTab]);
 
   const [stats, setStats] = useState(null);
   const [filterOp, setFilterOp] = useState('');
@@ -830,7 +838,7 @@ export const PickingModule = ({ currentUser } = {}) => {
             { id: 'completed', label: t('wms_picking_completed'), icon: CheckCircle, count: completedLoaded ? completedTickets.length : undefined },
             { id: 'workload', label: t('wms_pk_tab_workload'), icon: Users, count: unassignedCount },
             { id: 'dashboard', label: t('wms_picking_kpis'), icon: BarChart3 },
-          ].map(tab => {
+          ].filter(tab => canTab('picking', tab.id)).map(tab => {
             const Icon = tab.icon;
             const active = activeTab === tab.id;
             return (

@@ -7,7 +7,7 @@ import { toast } from "sonner";
 import * as XLSX from "xlsx";
 import { saveAs } from "file-saver";
 import { useLang } from "../../contexts/LanguageContext";
-import { fetcher, poster, logLoadError } from "./lib";
+import { fetcher, poster, logLoadError, useWms } from "./lib";
 import { mvTypeLabel, MV_TYPE_FAMILIES } from "./movementTypes";
 import { Btn, Th, Chip, tableCls } from "./ui";
 
@@ -972,10 +972,16 @@ const SkuCatalogoTab = () => {
 export const AuditModule = () => {
   const { t } = useLang();
   const [tab, setTab] = useState("health");
+  // Pestañas visibles según la restricción por pestaña de Permisos.
+  const { canTab } = useWms();
+  const visibleTabs = TABS.filter(tb => canTab('audit', tb.id));
+  useEffect(() => {
+    if (!canTab('audit', tab) && visibleTabs[0]) setTab(visibleTabs[0].id);
+  }, [tab, canTab, visibleTabs]);
   return (
     <div className="space-y-5">
       <div className="flex gap-1 border-b border-border overflow-x-auto">
-        {TABS.map(tb => {
+        {visibleTabs.map(tb => {
           const Icon = tb.icon;
           return (
             <button key={tb.id} onClick={() => setTab(tb.id)}

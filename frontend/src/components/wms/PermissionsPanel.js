@@ -8,7 +8,7 @@
    · Por MÓDULO (ya existía en Configuración WMS): nivel de admin que abre cada
      módulo en el menú. Se movió aquí sin cambios de contrato. */
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Lock, ShieldCheck, RotateCcw, Eye, Save, Loader2, UserPlus, UserMinus } from "lucide-react";
+import { Lock, ShieldCheck, RotateCcw, Eye, Save, Loader2, UserPlus, UserMinus, ChevronRight, ChevronDown } from "lucide-react";
 import { toast } from "sonner";
 import { fetcher, putter, poster, logLoadError } from "./lib";
 import { useLang } from "../../contexts/LanguageContext";
@@ -225,6 +225,23 @@ const ModuleAccessPanel = () => {
     } catch { toast.error(t('wms_conn_err')); loadModuleAccess(); }
     finally { setSavingAccess(false); }
   };
+  // Nivel por PESTAÑA: restringe una pestaña suelta sin cerrar el módulo entero.
+  const [openModule, setOpenModule] = useState(null);
+  const tabsByModule = useMemo(() => Object.fromEntries((moduleAccess?.tab_catalog || []).map(m => [m.module, m.tabs])), [moduleAccess]);
+  const saveTabLevel = async (moduleId, tabId, raw) => {
+    const level = Number(raw);
+    const modTabs = { ...((moduleAccess?.tab_levels || {})[moduleId] || {}) };
+    if (level > 0) modTabs[tabId] = level; else delete modTabs[tabId];
+    const nextTabs = { ...(moduleAccess?.tab_levels || {}), [moduleId]: modTabs };
+    setModuleAccess(a => ({ ...a, tab_levels: nextTabs }));
+    setSavingAccess(true);
+    try {
+      const res = await putter('/module-access', { tab_levels: nextTabs });
+      if (res.ok) { const d = await res.json(); setModuleAccess(a => ({ ...a, tab_levels: d.tab_levels || nextTabs })); toast.success(t('wms_access_updated')); }
+      else { const e = await res.json().catch(() => ({})); toast.error(e.detail || t('wms_access_save_err')); loadModuleAccess(); }
+    } catch { toast.error(t('wms_conn_err')); loadModuleAccess(); }
+    finally { setSavingAccess(false); }
+  };
   if (!moduleAccess || !Object.keys(moduleAccess.defaults || {}).length) return null;
   return (
     <div className="bg-card border border-border rounded-lg overflow-hidden" data-testid="wms-module-access">
@@ -246,24 +263,52 @@ const ModuleAccessPanel = () => {
           const inv = (moduleAccess.inventory_levels || {})[id] ?? (moduleAccess.inventory_defaults || {})[id] ?? null;
           const enforced = (moduleAccess.enforced || []).includes(id);
           const invDisabled = id === 'reconciliation' || id === 'incidents';
+          const tabs = tabsByModule[id] || [];
+          const isOpen = openModule === id;
+          const tabLv = (moduleAccess.tab_levels || {})[id] || {};
+          const nRestricted = Object.values(tabLv).filter(v => v > 0).length;
           return (
-            <div key={id} className="grid grid-cols-[1fr_11rem_11rem] items-center gap-3 bg-muted/30 border border-border rounded-md px-4 py-2" data-testid={`module-access-${id}`}>
-              <span className="text-sm font-medium text-foreground flex items-center gap-2 min-w-0">
-                <span className="truncate">{(moduleAccess.labels || {})[id] || id}</span>
-                {enforced && <span className="text-[9px] font-black uppercase tracking-widest text-primary bg-primary/10 border border-primary/30 rounded px-1.5 py-0.5 shrink-0">backend</span>}
-              </span>
-              <select value={String(lvl)} onChange={e => saveModuleAccess(id, e.target.value)} disabled={savingAccess}
-                className="w-full px-2 py-1.5 bg-card border border-input rounded-md text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-ring/25 disabled:opacity-50">
-                <option value="0">{t('all_boards')}</option>
-                {[1, 2, 3, 4, 5].map(n => <option key={n} value={String(n)}>{t('users_admin_level_plus', { n })}</option>)}
-                <option value={String(soloLevel)}>{t('users_supersu_only')}</option>
-              </select>
-              <select value={inv == null ? '' : String(inv)} onChange={e => saveModuleInv(id, e.target.value)} disabled={savingAccess || invDisabled}
-                title={invDisabled ? t('wms_perm_inv_na') : undefined} data-testid={`module-inv-${id}`}
-                className="w-full px-2 py-1.5 bg-card border border-input rounded-md text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-ring/25 disabled:opacity-50">
-                <option value="">{t('wms_perm_ladder_off')}</option>
-                {[1, 2, 3].map(n => <option key={n} value={String(n)}>{t('wms_perm_inv_level_plus', { n })}</option>)}
-              </select>
+            <div key={id} className="bg-muted/30 border border-border rounded-md" data-testid={`module-access-${id}`}>
+              <div className="grid grid-cols-[1fr_11rem_11rem] items-center gap-3 px-4 py-2">
+                <span className="text-sm font-medium text-foreground flex items-center gap-2 min-w-0">
+                  {tabs.length > 0 ? (
+                    <button onClick={() => setOpenModule(isOpen ? null : id)} className="shrink-0 text-muted-foreground hover:text-foreground" data-testid={`module-tabs-toggle-${id}`} title={t('wms_tab_access_toggle')}>
+                      {isOpen ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                    </button>
+                  ) : <span className="w-4 shrink-0" />}
+                  <span className="truncate">{(moduleAccess.labels || {})[id] || id}</span>
+                  {enforced && <span className="text-[9px] font-black uppercase tracking-widest text-primary bg-primary/10 border border-primary/30 rounded px-1.5 py-0.5 shrink-0">backend</span>}
+                  {nRestricted > 0 && <span className="text-[9px] font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400 bg-amber-500/10 border border-amber-500/30 rounded px-1.5 py-0.5 shrink-0" title={t('wms_tab_access_restricted_hint')}>{t('wms_tab_access_restricted', { n: nRestricted })}</span>}
+                </span>
+                <select value={String(lvl)} onChange={e => saveModuleAccess(id, e.target.value)} disabled={savingAccess}
+                  className="w-full px-2 py-1.5 bg-card border border-input rounded-md text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-ring/25 disabled:opacity-50">
+                  <option value="0">{t('all_boards')}</option>
+                  {[1, 2, 3, 4, 5].map(n => <option key={n} value={String(n)}>{t('users_admin_level_plus', { n })}</option>)}
+                  <option value={String(soloLevel)}>{t('users_supersu_only')}</option>
+                </select>
+                <select value={inv == null ? '' : String(inv)} onChange={e => saveModuleInv(id, e.target.value)} disabled={savingAccess || invDisabled}
+                  title={invDisabled ? t('wms_perm_inv_na') : undefined} data-testid={`module-inv-${id}`}
+                  className="w-full px-2 py-1.5 bg-card border border-input rounded-md text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-ring/25 disabled:opacity-50">
+                  <option value="">{t('wms_perm_ladder_off')}</option>
+                  {[1, 2, 3].map(n => <option key={n} value={String(n)}>{t('wms_perm_inv_level_plus', { n })}</option>)}
+                </select>
+              </div>
+              {isOpen && tabs.length > 0 && (
+                <div className="border-t border-border/60 px-4 py-2 space-y-1">
+                  <p className="text-[11px] text-muted-foreground mb-1">{t('wms_tab_access_help')}</p>
+                  {tabs.map(tb => (
+                    <div key={tb.id} className="grid grid-cols-[1fr_11rem] items-center gap-3 pl-6">
+                      <span className="text-xs text-foreground/80 truncate">{t(tb.label_key)}</span>
+                      <select value={String(tabLv[tb.id] || 0)} onChange={e => saveTabLevel(id, tb.id, e.target.value)} disabled={savingAccess} data-testid={`tab-access-${id}-${tb.id}`}
+                        className="w-full px-2 py-1 bg-card border border-input rounded-md text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-ring/25 disabled:opacity-50">
+                        <option value="0">{t('all_boards')}</option>
+                        {[1, 2, 3, 4, 5].map(n => <option key={n} value={String(n)}>{t('users_admin_level_plus', { n })}</option>)}
+                        <option value={String(soloLevel)}>{t('users_supersu_only')}</option>
+                      </select>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           );
         })}

@@ -45,7 +45,7 @@ const AuditoriasModule    = named(() => import("./wms/Auditorias"), "AuditoriasM
 const IncidentsModule     = lazy(() => import("./wms/Incidents"));
 const ReportsModule       = lazy(() => import("./wms/Reports"));
 import { TopNav, LangToggle } from "./wms/TopNav";
-import { buildModules, filterModules, groupModules, badgeOf } from "./wms/modules";
+import { buildModules, filterModules, groupModules, badgeOf, adminLevelOf } from "./wms/modules";
 
 // Re-export useWms so external consumers keep the same import path
 export { useWms };
@@ -212,11 +212,23 @@ export default function WMS() {
   // valida igual. {} hasta que carga → cae a los defaults del código.
   const [moduleLevels, setModuleLevels] = useState({});
   const [moduleInvLevels, setModuleInvLevels] = useState(null);
+  // Niveles por PESTAÑA ({módulo: {pestaña: nivel}}): restringen pestañas sueltas
+  // sin cerrar el módulo. 0/ausente = visible para todos; canTab lo aplica.
+  const [tabLevels, setTabLevels] = useState({});
   useEffect(() => {
     fetcher('/module-access')
-      .then(d => { setModuleLevels(d?.levels || {}); if (d?.inventory_levels) setModuleInvLevels(d.inventory_levels); })
+      .then(d => { setModuleLevels(d?.levels || {}); if (d?.inventory_levels) setModuleInvLevels(d.inventory_levels); setTabLevels(d?.tab_levels || {}); })
       .catch(logLoadError('module access'));
   }, []);
+  // ¿Este usuario puede ver la pestaña `tabId` del módulo `moduleId`? Mismo
+  // modelo que el acceso por módulo: nivel de admin (6 = solo supersu). Sin nivel
+  // configurado -> visible. El gate del módulo ya corrió antes que esto.
+  const canTab = useCallback((moduleId, tabId) => {
+    const lvl = tabLevels?.[moduleId]?.[tabId];
+    if (!lvl || lvl <= 0) return true;
+    if (lvl >= 6) return currentUser?.role === 'supersu';
+    return adminLevelOf(currentUser) >= lvl;
+  }, [tabLevels, currentUser]);
 
   const associatedCustomer = currentUser?.associated_customer || '';
 
@@ -301,8 +313,8 @@ export default function WMS() {
     can: canPush, supported: ('serviceWorker' in navigator) && ('PushManager' in window),
     on: pushOn, busy: pushBusy, toggle: togglePush, test: testPush,
   }), [canPush, pushOn, pushBusy, togglePush, testPush]);
-  const wmsCtx = useMemo(() => ({ badges, refreshBadges: loadBadges, openAsn, can, permissions, refreshPermissions, push }),
-    [badges, loadBadges, openAsn, can, permissions, refreshPermissions, push]);
+  const wmsCtx = useMemo(() => ({ badges, refreshBadges: loadBadges, openAsn, can, canTab, permissions, refreshPermissions, push }),
+    [badges, loadBadges, openAsn, can, canTab, permissions, refreshPermissions, push]);
 
   // Forzar módulo inicial según rol (customer=dashboard, picker=directed)
   useEffect(() => {

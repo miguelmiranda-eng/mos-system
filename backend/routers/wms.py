@@ -8748,6 +8748,71 @@ async def require_wms_module_access(request: Request, module_id: str):
     return await require_admin_level(request, lvl)
 
 
+# ── Acceso por PESTAÑA dentro de cada módulo (2026-10-20) ────────────────────
+# El acceso por módulo abre/cierra el módulo entero; esto restringe pestañas
+# SUELTAS sin cerrar el módulo. Mismo modelo que el acceso por módulo: nivel de
+# admin por pestaña (0 = todos · 1..5 = admin mínimo · 6 = supersu). Default 0
+# (sin restricción extra); el gate del módulo sigue mandando. Es control de
+# VISIBILIDAD (oculta la pestaña); el blindaje en servidor es aparte.
+# Catálogo (módulo -> [(tab_id, label_key)]): única fuente para el panel. Las
+# pestañas de Configuración (home) NO entran: se gobiernan por el panel de Acciones.
+WMS_MODULE_TABS = {
+    "picking": [("pretickets", "wms_pk_tab_pretickets"), ("tickets", "wms_pk_tab_active"),
+                ("completed", "wms_picking_completed"), ("workload", "wms_pk_tab_workload"),
+                ("dashboard", "wms_picking_kpis")],
+    "cycle_count": [("active", "wms_cc_tab_active"), ("kpis", "wms_cc_tab_kpis"),
+                    ("efficiency", "wms_cc_tab_efficiency"), ("tasks", "wms_cc_tab_tasks"),
+                    ("cuarentena", "wms_cc_tab_audit")],
+    "locations": [("custom", "wms_tab_my_locations"), ("system", "wms_tab_system_inventory"),
+                  ("narro", "wms_tab_narro"), ("pallet", "wms_tab_pallet")],
+    "asn": [("all", "wms_asn_tab_all"), ("pending", "wms_status_pending"),
+            ("partial", "wms_status_in_progress"), ("received", "wms_status_completed")],
+    "movements": [("movements", "wms_tab_movements"), ("box", "wms_tab_by_box"),
+                  ("inout", "wms_in_out"), ("upcs", "wms_tab_upcs")],
+    "reconciliation": [("pending", "wms_recon_tab_pending"), ("phantom", "wms_recon_tab_phantom"),
+                       ("second_count", "wms_recon_tab_second_count"), ("log", "wms_recon_tab_log"),
+                       ("adjustments", "wms_recon_tab_adjustments"), ("lpn", "wms_recon_tab_lpn"),
+                       ("photo", "wms_photo_inventory")],
+    "auditorias": [("kpis", "wms_aud_tab_kpis"), ("sampling", "wms_aud_tab_sampling"),
+                   ("ira_ila", "wms_aud_tab_ira_ila"), ("pick", "wms_aud_tab_pick"),
+                   ("putaway", "wms_aud_tab_putaway"), ("receiving", "wms_aud_tab_receiving"),
+                   ("reasons", "wms_aud_tab_reasons")],
+    "audit": [("health", "wms_audit_tab_health"), ("fantasmas", "wms_audit_tab_phantom_rows"),
+              ("skucat", "wms_audit_tab_sku_catalog"), ("selftest", "wms_audit_tab_selftest"),
+              ("box", "wms_audit_tab_box"), ("sku", "wms_audit_tab_sku"),
+              ("movements", "wms_audit_tab_movements")],
+    "reports": [("pendientes", "wms_rep_tab_pending"), ("productividad", "wms_rep_tab_productivity"),
+                ("historial", "wms_rep_tab_history"), ("excepciones", "wms_rep_tab_exceptions")],
+    "staging": [("scan", "wms_stg_tab_scan"), ("orders", "wms_stg_tab_orders"), ("map", "wms_stg_tab_map")],
+    "receiving": [("externo", "wms_rcv_tab_external"), ("retorno", "wms_rcv_tab_return")],
+}
+
+
+def _module_tabs_payload() -> list:
+    return [{"module": m, "tabs": [{"id": tid, "label_key": lk} for tid, lk in tabs]}
+            for m, tabs in WMS_MODULE_TABS.items()]
+
+
+async def get_wms_module_tab_levels() -> dict:
+    """{module: {tab: nivel}} guardado, limpiado contra el catálogo. Lo que no
+    esté (módulo/pestaña fuera del catálogo, valor inválido) se descarta."""
+    doc = await db.config_options.find_one({"config_id": "wms_module_access"}, {"_id": 0, "tab_levels": 1}) or {}
+    raw = doc.get("tab_levels") or {}
+    out = {}
+    for m, tabs in WMS_MODULE_TABS.items():
+        ids = {tid for tid, _ in tabs}
+        for tid, v in (raw.get(m) or {}).items():
+            if tid not in ids:
+                continue
+            try:
+                lvl = max(ALL_LEVEL, min(SUPERSU_ONLY_LEVEL, int(v)))
+            except (TypeError, ValueError):
+                continue
+            if lvl > ALL_LEVEL:  # 0 = default, no se guarda ruido
+                out.setdefault(m, {})[tid] = lvl
+    return out
+
+
 @router.get("/module-access")
 async def wms_module_access_get(request: Request):
     """Niveles de acceso por modulo — para el panel y para el filtro del front.
@@ -8761,6 +8826,8 @@ async def wms_module_access_get(request: Request):
             "labels": WMS_MODULE_ACCESS_LABELS,
             "order": list(WMS_MODULE_ACCESS_DEFAULTS.keys()),
             "enforced": sorted(WMS_MODULE_ACCESS_ENFORCED),
+            "tab_levels": await get_wms_module_tab_levels(),
+            "tab_catalog": _module_tabs_payload(),
             "all_level": ALL_LEVEL,
             "supersu_only_level": SUPERSU_ONLY_LEVEL}
 
@@ -8796,10 +8863,25 @@ async def wms_module_access_put(request: Request):
             except (TypeError, ValueError):
                 continue
         sets["inventory_levels"] = clean_inv
+    if "tab_levels" in body:
+        clean_tabs = {}
+        for m, tabs in WMS_MODULE_TABS.items():
+            ids = {tid for tid, _ in tabs}
+            for tid, v in ((body.get("tab_levels") or {}).get(m) or {}).items():
+                if tid not in ids:
+                    continue
+                try:
+                    lvl = max(ALL_LEVEL, min(SUPERSU_ONLY_LEVEL, int(v)))
+                except (TypeError, ValueError):
+                    continue
+                if lvl > ALL_LEVEL:
+                    clean_tabs.setdefault(m, {})[tid] = lvl
+        sets["tab_levels"] = clean_tabs
     await db.config_options.update_one({"config_id": "wms_module_access"}, {"$set": sets}, upsert=True)
-    await log_activity(user, "wms_module_access_update", {k: v for k, v in sets.items() if k in ("levels", "inventory_levels")})
+    await log_activity(user, "wms_module_access_update", {k: v for k, v in sets.items() if k in ("levels", "inventory_levels", "tab_levels")})
     return {"ok": True, "levels": await get_wms_module_levels(),
-            "inventory_levels": await get_wms_module_inventory_levels()}
+            "inventory_levels": await get_wms_module_inventory_levels(),
+            "tab_levels": await get_wms_module_tab_levels()}
 
 
 # ==================== PERMISOS POR ACCIÓN ====================

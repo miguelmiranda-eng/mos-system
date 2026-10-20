@@ -62,7 +62,7 @@ export const CycleCountModule = () => {
   // Supervisión (3er conteo, reportes, KPIs, eficiencia) = acción
   // cycle_count.supervise, la misma que exige el backend. `invLevel` se
   // conserva como escalar para el código que compara contra 3.
-  const { can } = useWms();
+  const { can, canTab } = useWms();
   const canSupervise = can('cycle_count.supervise');
   const invLevel = canSupervise ? 3 : (parseInt(user?.inventory_level, 10) || 0);
   const canExportReport = canSupervise;
@@ -106,6 +106,14 @@ export const CycleCountModule = () => {
   const [confirmDialog, setConfirmDialog] = useState(null);
 
   const [activeTab, setActiveTab] = useState('active'); // 'active' | 'kpis' | 'efficiency' | 'cuarentena'
+  // Si Permisos restringe la pestaña activa, salta a la primera visible.
+  useEffect(() => {
+    const order = ['active', 'kpis', 'efficiency', 'tasks', 'cuarentena'];
+    if (!canTab('cycle_count', activeTab)) {
+      const first = order.find(id => canTab('cycle_count', id));
+      if (first) setActiveTab(first);
+    }
+  }, [activeTab, canTab]);
   // Cola de ubicaciones con material de la carga inicial de Excel, reportada
   // por el piso al toparse con una caja no confiable.
   const [cuarentena, setCuarentena] = useState(null);
@@ -1277,6 +1285,7 @@ export const CycleCountModule = () => {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-1 bg-muted/50 p-1 rounded-lg border border-border">
+          {canTab('cycle_count', 'active') && (
           <button
             onClick={() => setActiveTab('active')}
             className={`flex items-center gap-2 px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${activeTab === 'active' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
@@ -1284,7 +1293,8 @@ export const CycleCountModule = () => {
             <ClipboardList className="w-4 h-4" />
             {t('wms_cc_tab_active')}
           </button>
-          {canExportReport && (
+          )}
+          {canExportReport && canTab('cycle_count', 'kpis') && (
             <button
               onClick={() => {
                 setActiveTab('kpis');
@@ -1301,7 +1311,7 @@ export const CycleCountModule = () => {
               KPIs
             </button>
           )}
-          {canSupervise && (
+          {canSupervise && canTab('cycle_count', 'efficiency') && (
             <button
               onClick={() => { setActiveTab('efficiency'); if (effEvents === null && !loadingEff) loadEfficiency(); }}
               className={`flex items-center gap-2 px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${activeTab === 'efficiency' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
@@ -1313,6 +1323,7 @@ export const CycleCountModule = () => {
           )}
           {/* Tareas: Location Check. Las crea el picker desde la PDA cuando no
               encuentra una caja en su ubicación; inventarios las cierra aquí. */}
+          {canTab('cycle_count', 'tasks') && (
           <button
             onClick={() => { setActiveTab('tasks'); if (lcItems === null && !loadingLc) loadLocationChecks(lcShowResolved); }}
             className={`flex items-center gap-2 px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${activeTab === 'tasks' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
@@ -1326,9 +1337,11 @@ export const CycleCountModule = () => {
               </span>
             )}
           </button>
+          )}
           {/* Cola de auditoría del material de la carga inicial. La llena el
               piso: cada vez que un operador se topa con una caja no confiable
               reporta su ubicación, y aquí se ve ordenada por cuánto estorba. */}
+          {canTab('cycle_count', 'cuarentena') && (
           <button
             onClick={() => { setActiveTab('cuarentena'); if (cuarentena === null && !loadingCuar) loadCuarentena(); }}
             className={`flex items-center gap-2 px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${activeTab === 'cuarentena' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
@@ -1342,6 +1355,7 @@ export const CycleCountModule = () => {
               </span>
             )}
           </button>
+          )}
         </div>
 
         <div className="flex items-center gap-2">

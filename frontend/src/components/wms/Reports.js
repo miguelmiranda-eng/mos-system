@@ -5,7 +5,7 @@ import {
 import * as XLSX from "xlsx";
 import { toast } from "sonner";
 import { useLang } from "../../contexts/LanguageContext";
-import { fetcher } from "./lib";
+import { fetcher, useWms } from "./lib";
 import { Card, StatCard, SoftAlert, Btn, Chip, Th, EmptyState, TableShell, tableCls, cls } from "./ui";
 
 // Reportes del WMS: recibos, putaway y pick tickets. Cuatro vistas, cada una
@@ -60,6 +60,12 @@ export const ReportsModule = () => {
   const tRef = useRef(t);
   useEffect(() => { tRef.current = t; }, [t]);
   const [tab, setTab] = useState("pendientes");
+  // Pestañas que este admin puede ver (restricción por pestaña desde Permisos).
+  const { canTab } = useWms();
+  const visibleTabs = TABS.filter(tb => canTab('reports', tb.id));
+  useEffect(() => {
+    if (!canTab('reports', tab) && visibleTabs[0]) setTab(visibleTabs[0].id);
+  }, [tab, canTab, visibleTabs]);
   const [desde, setDesde] = useState(haceDias(30));
   const [hasta, setHasta] = useState(hoy());
   const [customer, setCustomer] = useState("");
@@ -185,7 +191,7 @@ export const ReportsModule = () => {
       </div>
 
       <div className="flex gap-1 border-b border-border">
-        {TABS.map(tb => {
+        {visibleTabs.map(tb => {
           const Icon = tb.icon;
           return (
             <button key={tb.id} onClick={() => setTab(tb.id)}

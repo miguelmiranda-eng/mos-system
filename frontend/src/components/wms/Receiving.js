@@ -4,7 +4,7 @@ import { Package, Plus, Loader2, MapPin, Printer, Trash2, Factory, CheckCircle2,
 import SearchableSelect from "../SearchableSelect";
 import ReturnReceiving from "./ReturnReceiving";
 import { useLang } from "../../contexts/LanguageContext";
-import { fetcher, poster, logLoadError, useWmsSizes, useWmsCatalogs, mergeUnique, API, cleanScan } from "./lib";
+import { fetcher, poster, logLoadError, useWmsSizes, useWmsCatalogs, mergeUnique, API, cleanScan, useWms } from "./lib";
 import { AsnStatus } from "./constants";
 import { previewComposition } from "./composition";
 import { SoftAlert, Btn, Chip, cls } from "./ui";
@@ -175,6 +175,15 @@ export const ReceivingModule = () => {
   // (sobrante que vuelve de producción). Arranca en externo, que es el 95% del
   // trabajo diario.
   const [intake, setIntake] = useState('externo');
+  // Pestañas visibles (externo/retorno) según la restricción por pestaña de Permisos.
+  const { canTab } = useWms();
+  const intakeTabs = [
+    { id: 'externo', labelKey: 'wms_rcv_tab_external', icon: Truck },
+    { id: 'retorno', labelKey: 'wms_rcv_tab_return', icon: Undo2 },
+  ].filter(v => canTab('receiving', v.id));
+  useEffect(() => {
+    if (!canTab('receiving', intake) && intakeTabs[0]) setIntake(intakeTabs[0].id);
+  }, [intake, canTab, intakeTabs]);
   const [openAsns, setOpenAsns] = useState([]);
   // Fibras del compositor (services/part_number.py) para leer composiciones en
   // el cliente: la tela de la línea ("50% ALGODON 50% POLIESTER") y las del
@@ -995,11 +1004,8 @@ export const ReceivingModule = () => {
           externo y lo que sobraba de producción volvía por la puerta de atrás
           (Generar caja, en Mover), sin país de origen en el 78% de los casos.
           El retorno vive aquí, con su propio flujo. ── */}
-      <div className="inline-flex rounded-lg border border-border bg-card p-1" role="tablist">
-        {[
-          { id: 'externo', labelKey: 'wms_rcv_tab_external', icon: Truck },
-          { id: 'retorno', labelKey: 'wms_rcv_tab_return', icon: Undo2 },
-        ].map(v => {
+      <div className={`inline-flex rounded-lg border border-border bg-card p-1 ${intakeTabs.length <= 1 ? 'hidden' : ''}`} role="tablist">
+        {intakeTabs.map(v => {
           const Icon = v.icon;
           const activo = intake === v.id;
           return (

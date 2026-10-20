@@ -7,7 +7,7 @@ import {
 import * as XLSX from "xlsx";
 import { toast } from "sonner";
 import { useLang } from "../../contexts/LanguageContext";
-import { fetcher, poster } from "./lib";
+import { fetcher, poster, useWms } from "./lib";
 import { Btn, Chip, Th, ModuleToolbar } from "./ui";
 import PhotoInventoryTab from "./PhotoInventory";
 
@@ -50,6 +50,12 @@ const fmt = (iso) => {
 export const ReconciliationModule = () => {
   const { t } = useLang();
   const [tab, setTab] = useState("pending");
+  // Pestañas visibles según la restricción por pestaña de Permisos.
+  const { canTab } = useWms();
+  const visibleTabs = TABS.filter(tb => canTab('reconciliation', tb.id));
+  useEffect(() => {
+    if (!canTab('reconciliation', tab) && visibleTabs[0]) setTab(visibleTabs[0].id);
+  }, [tab, canTab, visibleTabs]);
   const [pending, setPending] = useState(null);
   const [log, setLog] = useState(null);
   const [lpn, setLpn] = useState(null);
@@ -346,7 +352,7 @@ export const ReconciliationModule = () => {
       />
 
       <div className="flex gap-1 border-b border-border">
-        {TABS.map(tb => {
+        {visibleTabs.map(tb => {
           const Icon = tb.icon;
           const badge = tb.id === "pending" && pending ? (pending.faltantes_count + pending.creadas_count)
             : tb.id === "phantom" && phantom ? phantom.count

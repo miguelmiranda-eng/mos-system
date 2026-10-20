@@ -279,7 +279,7 @@ const MapTab = ({ data, onPick }) => {
 
 export function StagingModule() {
   const { t } = useLang();
-  const { can } = useWms();
+  const { can, canTab } = useWms();
   const canOperate = can('staging.operate');
   const [tab, setTab] = useState(() => { try { return localStorage.getItem(TAB_KEY) || 'scan'; } catch { return 'scan'; } });
   const [data, setData] = useState(null);
@@ -315,7 +315,12 @@ export function StagingModule() {
   };
   const transit = byStatus('transit');
   const stored = byStatus('stored');
-  const tabs = [['scan', t('wms_stg_tab_scan')], ['orders', t('wms_stg_tab_orders')], ['map', t('wms_stg_tab_map')]];
+  const tabs = [['scan', t('wms_stg_tab_scan')], ['orders', t('wms_stg_tab_orders')], ['map', t('wms_stg_tab_map')]]
+    .filter(([id]) => canTab('staging', id));
+  // Si Permisos restringe la pestaña activa, salta a la primera visible.
+  useEffect(() => {
+    if (!canTab('staging', tab) && tabs[0]) pick(tabs[0][0]);
+  }, [tab, canTab, tabs]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="space-y-5" data-testid="wms-staging">

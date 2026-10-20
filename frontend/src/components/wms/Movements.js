@@ -3,7 +3,7 @@ import { History, Tag, Search, X, Loader2, User, Trash2, CheckCircle2, ArrowDown
 import * as XLSX from "xlsx";
 import { toast } from "sonner";
 import { useLang } from "../../contexts/LanguageContext";
-import { fetcher, poster, deleter, logLoadError, useWmsSizes } from "./lib";
+import { fetcher, poster, deleter, logLoadError, useWmsSizes, useWms } from "./lib";
 import { Btn, Chip, cls, tableCls, EmptyState } from "./ui";
 
 const TABS = [
@@ -975,10 +975,16 @@ const BoxHistoryTab = () => {
 export const MovementsModule = () => {
   const { t } = useLang();
   const [tab, setTab] = useState('movements');
+  // Pestañas visibles según la restricción por pestaña de Permisos.
+  const { canTab } = useWms();
+  const visibleTabs = TABS.filter(tb => canTab('movements', tb.id));
+  useEffect(() => {
+    if (!canTab('movements', tab) && visibleTabs[0]) setTab(visibleTabs[0].id);
+  }, [tab, canTab, visibleTabs]);
   return (
     <div className="space-y-4">
       <div className="flex gap-1 p-1 bg-muted rounded-lg w-fit">
-        {TABS.map(tb => {
+        {visibleTabs.map(tb => {
           const Icon = tb.icon;
           const active = tab === tb.id;
           return (

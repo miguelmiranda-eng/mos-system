@@ -4,7 +4,7 @@ import { FileUp, Loader2, X, Package, Search, AlertTriangle, Trash2, Pencil, Plu
 import * as XLSX from "xlsx";
 import { saveAs } from "file-saver";
 import { useLang } from "../../contexts/LanguageContext";
-import { API, fetcher, deleter, putter, poster, logLoadError, useWmsCatalogs } from "./lib";
+import { API, fetcher, deleter, putter, poster, logLoadError, useWmsCatalogs, useWms } from "./lib";
 import { AsnStatus } from "./constants";
 import { StatCard, Btn, EmptyState, ModuleToolbar } from "./ui";
 import { AddColumnModal } from "../dashboard/AddColumnModal";
@@ -129,6 +129,12 @@ export const AsnModule = ({ currentUser, initialDetail }) => {
   const [asns, setAsns] = useState([]);
   const [query, setQuery] = useState("");
   const [activeTab, setActiveTab] = useState('all'); // 'all' | pending | partial | received
+  // Pestañas visibles según la restricción por pestaña de Permisos.
+  const { canTab } = useWms();
+  const visibleTabs = TABS.filter(tb => canTab('asn', tb.id));
+  useEffect(() => {
+    if (!canTab('asn', activeTab) && visibleTabs[0]) setActiveTab(visibleTabs[0].id);
+  }, [activeTab, canTab, visibleTabs]);
 
   // Configuración del módulo (prefijos, prendas, fibras, países).
   const [showConfig, setShowConfig] = useState(false);
@@ -981,7 +987,7 @@ export const AsnModule = ({ currentUser, initialDetail }) => {
         <>
       {/* Status tabs */}
       <div className="flex flex-wrap gap-1 p-1 bg-muted/50 rounded-lg w-fit border border-border">
-        {TABS.map(tab => {
+        {visibleTabs.map(tab => {
           const isActive = activeTab === tab.id;
           const sd = STATUS_STYLES[tab.id];
           const count = tabCounts[tab.id] ?? 0;

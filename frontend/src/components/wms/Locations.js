@@ -44,7 +44,7 @@ export const LocationsModule = ({ currentUser }) => {
   // valida las mismas acciones, así que un botón visible nunca termina en 403.
   // Contenido de una ubicación (vaciar, borrar renglón/caja) = acciones de
   // inventario; HOLD/SAT, crear, renombrar y eliminar = acciones de ubicaciones.
-  const { can } = useWms();
+  const { can, canTab } = useWms();
   const canDeleteRow = can('inventory.delete_row');
   const canDeleteBox = can('inventory.delete_box');
   const canManageLocations = canDeleteRow || canDeleteBox;
@@ -83,6 +83,14 @@ export const LocationsModule = ({ currentUser }) => {
     setExpandedZones(new Set());
     startTabTransition(() => { setActiveTab(next); });
   };
+  // Si Permisos restringe la pestaña activa, salta a la primera visible.
+  useEffect(() => {
+    const order = ['custom', 'system', 'narro', 'pallet'];
+    if (!canTab('locations', activeTab)) {
+      const first = order.find(id => canTab('locations', id));
+      if (first) switchTab(first);
+    }
+  }, [activeTab, canTab]); // eslint-disable-line react-hooks/exhaustive-deps
   const toggleZone = (zone) => {
     const wasOpen = expandedZones.has(zone);
     setExpandedZones(prev => {
@@ -668,6 +676,7 @@ export const LocationsModule = ({ currentUser }) => {
 
       {/* Tabs de Separación */}
       <div className="flex gap-1 p-1 bg-muted/50 rounded-lg w-fit border border-border">
+        {canTab('locations', 'custom') && (
         <button
           onClick={() => switchTab('custom')}
           className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${activeTab === 'custom' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground hover:bg-muted'}`}
@@ -675,6 +684,8 @@ export const LocationsModule = ({ currentUser }) => {
           {t('wms_tab_my_locations')}
           <span className={`ml-2 px-1.5 py-0.5 rounded text-xs ${activeTab === 'custom' ? 'bg-black/10' : 'bg-background text-muted-foreground'}`}>{locations.filter(l => l.tab !== 'narro' && l.tab !== 'pallet' && l.is_custom).length}</span>
         </button>
+        )}
+        {canTab('locations', 'system') && (
         <button
           onClick={() => switchTab('system')}
           className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${activeTab === 'system' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground hover:bg-muted'}`}
@@ -682,6 +693,8 @@ export const LocationsModule = ({ currentUser }) => {
           {t('wms_tab_system_inventory')}
           <span className={`ml-2 px-1.5 py-0.5 rounded text-xs ${activeTab === 'system' ? 'bg-black/10' : 'bg-background text-muted-foreground'}`}>{locations.filter(l => l.tab !== 'narro' && l.tab !== 'pallet' && !l.is_custom).length}</span>
         </button>
+        )}
+        {canTab('locations', 'narro') && (
         <button
           onClick={() => switchTab('narro')}
           className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${activeTab === 'narro' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground hover:bg-muted'}`}
@@ -689,6 +702,8 @@ export const LocationsModule = ({ currentUser }) => {
           NARRO
           <span className={`ml-2 px-1.5 py-0.5 rounded text-xs ${activeTab === 'narro' ? 'bg-black/10' : 'bg-background text-muted-foreground'}`}>{locations.filter(l => l.tab === 'narro').length}</span>
         </button>
+        )}
+        {canTab('locations', 'pallet') && (
         <button
           onClick={() => switchTab('pallet')}
           className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${activeTab === 'pallet' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground hover:bg-muted'}`}
@@ -696,6 +711,7 @@ export const LocationsModule = ({ currentUser }) => {
           Pallet
           <span className={`ml-2 px-1.5 py-0.5 rounded text-xs ${activeTab === 'pallet' ? 'bg-black/10' : 'bg-background text-muted-foreground'}`}>{locations.filter(l => l.tab === 'pallet').length}</span>
         </button>
+        )}
       </div>
 
       {showNewLoc && (

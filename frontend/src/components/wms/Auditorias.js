@@ -54,19 +54,24 @@ const downloadSheets = (filename, sheets) => {
 
 export function AuditoriasModule() {
   const { t } = useLang();
-  const { can } = useWms();
+  const { can, canTab } = useWms();
   const canManage = typeof can === "function" && can("auditorias.manage");
 
   const [tab, setTab] = useState("kpis");
   const [since, setSince] = useState(() => isoDaysAgo(30));
   const [until, setUntil] = useState(() => isoDaysAgo(0));
+  // Pestañas visibles según la restricción por pestaña de Permisos.
+  const visibleTabs = TABS.filter((x) => canTab('auditorias', x.id));
+  useEffect(() => {
+    if (!canTab('auditorias', tab) && visibleTabs[0]) setTab(visibleTabs[0].id);
+  }, [tab, canTab, visibleTabs]);
 
   return (
     <div className="space-y-5">
       {/* Controles de rango + pestañas */}
       <Card className="p-3 flex flex-wrap items-center gap-3">
         <div className="inline-flex flex-wrap gap-1 bg-muted/40 border border-border rounded-lg p-1">
-          {TABS.map((x) => (
+          {visibleTabs.map((x) => (
             <button
               key={x.id}
               onClick={() => setTab(x.id)}
