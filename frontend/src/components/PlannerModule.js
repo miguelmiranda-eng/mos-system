@@ -724,9 +724,10 @@ const BoardCard = ({ job, segs, seq, live, today, onAdjust, draggable, tr, lang 
   const sc = getStatusColor(status);
   const printed = Math.max(0, (job.hits || 0) - (job.remaining || 0));
   const pctDone = job.hits ? Math.min(100, Math.round((printed / job.hits) * 100)) : 0;
-  // Lo que falta para arrancar sólo importa si todavía no arranca: con la orden
-  // ya imprimiéndose, "Falta label" es ruido.
-  const started = job.started || printed > 0;
+  // Lo que falta para arrancar sólo importa si todavía no se imprime: con la
+  // orden ya imprimiéndose, "Falta label" es ruido. Estar en el tablero de la
+  // máquina (o reprogramada ahí a mano) no basta para ocultarlo.
+  const started = (job.printing ?? job.started) || printed > 0;
   const missing = started ? [] : Object.entries(job.ready || {}).filter(([, ok]) => !ok).map(([k]) => tr(
     { contado: "plan_req_counted", cuadros: "plan_req_screens", label: "plan_req_label", ejemplo: "plan_req_sample" }[k] || k));
   const others = (job.machines || []).filter((m) => m !== first.machine).map((m) => m.replace("MAQUINA", "M"));

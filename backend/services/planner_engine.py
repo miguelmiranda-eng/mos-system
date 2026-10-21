@@ -740,7 +740,10 @@ def schedule(jobs: List[dict], machines: List[dict], cfg: dict, cal: Calendar,
             continue
         if is_manual_test(j, ov, cfg):
             continue
-        if not (j["is_ready"] or j["started"] or "force" in ov):
+        # Reprogramada a mano a una máquina = una persona decidió que entra:
+        # cuenta como forzada aunque le falte algo (la tarjeta dice qué falta).
+        pinned = bool((ov.get("assign") or {}).get("machine"))
+        if not (j["is_ready"] or j["started"] or "force" in ov or pinned):
             if j.get("sample_state") != "HOLD":
                 waiting.append(j)
             continue

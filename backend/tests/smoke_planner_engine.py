@@ -735,5 +735,19 @@ check("su espalda: razón = espera su FRENTE (no programado)",
       and h2["ESPALDA"]["horizon_reason"]["position"] == "FRENTE"
       and not h2["ESPALDA"]["horizon_reason"]["position_scheduled"], h2["ESPALDA"].get("horizon_reason"))
 
+print("== Reprogramada a mano a una máquina = entra aunque le falte algo (caso 3740) ==")
+j3740, _ = pe.build_jobs([order(2200, 1080, ["FRENTE", "ESPALDA"], board="NECK",
+                                production_status="PROCESO DE NECK LABEL")], {}, cfgW, calW, MS2, LUNES.date())
+check("(control) sin reprogramar, no entra (falta label)",
+      not pe.schedule(j3740, machines(2), cfgW, calW, LUNES, 1.0, {}))
+ov3740 = {"o2200:FRENTE": {"assign": {"machine": "MAQUINA2"}}, "o2200:ESPALDA": {"assign": {"machine": "MAQUINA2", "queue_pos": 2}}}
+p3740 = {j["position"]: j for j in pe.schedule(j3740, machines(2), cfgW, calW, LUNES, 1.0, {}, ov3740)}
+check("reprogramada a MAQUINA2: entra al programa en esa máquina",
+      p3740.get("FRENTE", {}).get("machines") == ["MAQUINA2"] and p3740.get("ESPALDA", {}).get("machines") == ["MAQUINA2"],
+      {k: v.get("machines") for k, v in p3740.items()})
+check("y sigue diciendo qué le falta (label)", p3740["FRENTE"]["ready"]["label"] is False and not p3740["FRENTE"]["printing"])
+pnb = pe.schedule(j3740, machines(2), cfgW, calW, LUNES, 1.0, {}, {"o2200:FRENTE": {"assign": {"not_before": "2026-10-01"}}})
+check("sólo 'no antes de' (sin máquina) no la fuerza", not pnb)
+
 print(f"\n{ok} PASS, {fail} FAIL")
 sys.exit(1 if fail else 0)
