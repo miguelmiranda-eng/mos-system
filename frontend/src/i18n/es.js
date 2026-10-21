@@ -6554,6 +6554,7 @@ const es = {
   blk_done_today: "listas hoy",
   blk_readonly: "Solo lectura: cambiar el estatus del blank es del rol Blanks. Pídeselo a un administrador.",
   scr_comp_screens: "Cuadros",
+  scr_comp_prod: "Production Status",
   scr_readonly: "Solo lectura: palomear cuadros es del rol Cuadros (screens). Pídeselo a un administrador.",
   scr_tab_preorders: "Preórdenes",
   scr_preorder: "Preorden (aún sin orden)",

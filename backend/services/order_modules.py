@@ -197,8 +197,13 @@ def components(o: dict, include_screens: bool = False, blank_ok: set = None) -> 
     sep = o.get("art_sep_status") is True
     art_state = "ok" if (sep or art.upper() in ART_OK) else _state(art, ART_OK)
     prod = str(o.get("production_status") or "").strip()
-    label_val = prod if prod.upper() in LABEL_OK | LABEL_STEPS else ""
-    label_state = _state(label_val, LABEL_OK)
+    # El neck label se LEE del Production Status, pero sólo se muestra lo que
+    # dice del label: en un paso de label, ese paso; ya pasado (NECESITA
+    # EMPACAR, EN PROCESO DE EMPAQUE…), "LABEL LISTO ✓". El estatus completo va
+    # en su propio recuadro (prod), si no se leía "neck label: necesita empacar".
+    pu = prod.upper()
+    label_val = prod if pu in LABEL_STEPS or pu == "LABEL LISTO" else ("LABEL LISTO ✓" if pu in LABEL_OK else "")
+    label_state = "ok" if pu in LABEL_OK else _state(label_val, LABEL_OK)
     if o.get("art_neck_status") is True and label_state != "ok":
         label_val = (label_val + " · " if label_val else "") + "arte neck ✓"
     out = [
@@ -212,6 +217,7 @@ def components(o: dict, include_screens: bool = False, blank_ok: set = None) -> 
         done = o.get("screens") is True
         val = "✓" if done else (" · ".join(sorted(sp)) + " ✓" if sp else "")
         out.append({"key": "screens", "value": val, "state": "ok" if done else ("pending" if sp else "empty")})
+    out.append({"key": "prod", "value": prod, "state": "info" if prod else "empty"})
     return out
 
 

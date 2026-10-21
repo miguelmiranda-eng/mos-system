@@ -6740,6 +6740,7 @@ const en = {
   blk_done_today: "ready today",
   blk_readonly: "Read only: changing the blank status belongs to the Blanks role. Ask an administrator.",
   scr_comp_screens: "Screens",
+  scr_comp_prod: "Production Status",
   scr_readonly: "Read only: checking off screens belongs to the Screens role. Ask an administrator.",
   scr_tab_preorders: "Pre-orders",
   scr_preorder: "Pre-order (no order yet)",

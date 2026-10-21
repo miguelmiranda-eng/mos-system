@@ -74,17 +74,18 @@ export function useOrderChangeReload(reloadRef) {
 }
 
 // Mini tabla de componentes (sólo lectura, los mismos campos del CRM).
-// ok = ya no detiene la impresión.
+// ok = ya no detiene la impresión; info = dato de la orden (Production Status).
 const COMP_STYLE = {
   ok: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400',
   pending: 'border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400',
   empty: 'border-border bg-secondary/50 text-muted-foreground',
+  info: 'border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-300',
 };
-const COMP_DOT = { ok: 'bg-emerald-500', pending: 'bg-amber-500', empty: 'bg-muted-foreground/40' };
+const COMP_DOT = { ok: 'bg-emerald-500', pending: 'bg-amber-500', empty: 'bg-muted-foreground/40', info: 'bg-sky-500' };
 
 export function Components({ items, t }) {
   if (!items?.length) return null;
-  const cols = items.length > 4 ? 'sm:grid-cols-5 max-w-3xl' : 'sm:grid-cols-4 max-w-2xl';
+  const cols = items.length > 5 ? 'sm:grid-cols-6 max-w-4xl' : items.length > 4 ? 'sm:grid-cols-5 max-w-3xl' : 'sm:grid-cols-4 max-w-2xl';
   return (
     <div className={`mt-2 grid grid-cols-2 ${cols} gap-1.5`}>
       {items.map((c) => (
