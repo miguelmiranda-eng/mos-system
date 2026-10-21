@@ -35,6 +35,7 @@ import {
   Table2,
   Crosshair,
   Tag,
+  PackageCheck,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useLang } from '../../contexts/LanguageContext';
@@ -54,6 +55,8 @@ const SECTOR_MODULES = {
     { path: '/cuadros', labelKey: 'scr_title', icon: Layers, color: '#52b788', before: 'NECK' },
     // Fase de prueba: el módulo Neck convive con el tablero NECK hasta retirarlo.
     { path: '/neck', labelKey: 'nck_menu', icon: Tag, color: '#ec4899', before: 'NECK' },
+    // Fase de prueba: el módulo Empaque convive con el tablero EMPAQUE hasta retirarlo.
+    { path: '/empaque', labelKey: 'emp_menu', icon: PackageCheck, color: '#f59e0b', before: 'EMPAQUE' },
   ],
 };
 

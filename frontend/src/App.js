@@ -707,6 +707,8 @@ const SamplesModule = lazy(() => import("./components/SamplesModule"));
 const CuadrosModule = lazy(() => import("./components/CuadrosModule"));
 const BlanksModule = lazy(() => import("./components/BlanksModule"));
 const NeckModule = lazy(() => import("./components/NeckModule"));
+const EmpaqueModule = lazy(() => import("./components/EmpaqueModule"));
+const PackStation = lazy(() => import("./components/PackStation"));
 const SmartAgenda = lazy(() => import("./components/SmartAgenda"));
 const ShippingModule = lazy(() => import("./components/ShippingModule"));
 const GuestShipping = lazy(() => import("./components/GuestShipping"));
@@ -876,6 +878,16 @@ function AppRouter() {
       <Route path="/neck" element={
         <ProtectedRoute>
           <NeckModule />
+        </ProtectedRoute>
+      } />
+      <Route path="/empaque" element={
+        <ProtectedRoute>
+          <EmpaqueModule />
+        </ProtectedRoute>
+      } />
+      <Route path="/empaque/estacion/:machine?" element={
+        <ProtectedRoute>
+          <PackStation />
         </ProtectedRoute>
       } />
       <Route path="/blanks" element={

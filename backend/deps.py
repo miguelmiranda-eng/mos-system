@@ -730,7 +730,8 @@ ADDITIVE_ROLES = {"supersu", "admin", "ceo", "inventory", "picker", "general",
                   "qc", "inspector_qc", "paint", "paint_lead", "sample_lead",
                   "screens",           # Cuadros: palomea en el módulo /cuadros
                   "blanks",            # Blanks: cambia/confirma el estatus en /blanks
-                  "neck"}              # Neck: estatus del label y corte en /neck
+                  "neck",              # Neck: estatus del label y corte en /neck
+                  "empaque"}           # Empaque: estatus de empaque en /empaque
 EXCLUSIVE_ROLES = {"customer", "shipping_guest", "operator", "external_api"}
 # Orden de "representatividad" para derivar el role PRIMARIO cuando hay varios.
 ROLE_PRECEDENCE = ["supersu", "admin", "ceo", "inventory", "qc", "inspector_qc",
@@ -738,7 +739,7 @@ ROLE_PRECEDENCE = ["supersu", "admin", "ceo", "inventory", "qc", "inspector_qc",
                    # Roles de MÓDULO (Cuadros, Blanks): son permisos, no identidad. Al final
                    # para que nunca queden como rol PRINCIPAL junto a otro (un picker con
                    # Blanks sigue siendo picker y conserva sus pantallas).
-                   "screens", "blanks", "neck"]
+                   "screens", "blanks", "neck", "empaque"]
 
 
 def user_roles(user: Dict) -> set:
