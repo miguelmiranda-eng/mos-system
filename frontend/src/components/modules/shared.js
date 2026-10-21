@@ -83,19 +83,23 @@ const COMP_STYLE = {
 };
 const COMP_DOT = { ok: 'bg-emerald-500', pending: 'bg-amber-500', empty: 'bg-muted-foreground/40', info: 'bg-sky-500' };
 
+// Una fila pareja: cada recuadro del mismo ancho, título y valor en UN renglón
+// (el texto completo sale al pasar el cursor). Antes se apretaban y partían
+// "PRODUCTION STATUS / sin dato" en tres renglones.
+const COMP_COLS = { 4: 'sm:grid-cols-4', 5: 'sm:grid-cols-5', 6: 'sm:grid-cols-3 xl:grid-cols-6' };
+
 export function Components({ items, t }) {
   if (!items?.length) return null;
-  const cols = items.length > 5 ? 'sm:grid-cols-6 max-w-4xl' : items.length > 4 ? 'sm:grid-cols-5 max-w-3xl' : 'sm:grid-cols-4 max-w-2xl';
   return (
-    <div className={`mt-2 grid grid-cols-2 ${cols} gap-1.5`}>
+    <div className={`mt-3 grid grid-cols-2 ${COMP_COLS[items.length] || 'sm:grid-cols-4'} gap-1.5`}>
       {items.map((c) => (
-        <div key={c.key} className={`rounded-md border px-2 py-1 ${COMP_STYLE[c.state] || COMP_STYLE.empty}`}
-          title={c.value || t('scr_comp_none')}>
-          <div className="flex items-center gap-1.5 text-[10px] font-black uppercase tracking-wider">
-            <span className={`w-1.5 h-1.5 rounded-full ${COMP_DOT[c.state] || COMP_DOT.empty}`} />
-            {t(`scr_comp_${c.key}`)}
+        <div key={c.key} className={`min-w-0 rounded-md border px-2 py-1.5 ${COMP_STYLE[c.state] || COMP_STYLE.empty}`}
+          title={`${t(`scr_comp_${c.key}`)}: ${c.value || t('scr_comp_none')}`}>
+          <div className="flex items-center gap-1.5 text-[10px] font-black uppercase tracking-wide min-w-0">
+            <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${COMP_DOT[c.state] || COMP_DOT.empty}`} />
+            <span className="truncate">{t(`scr_comp_${c.key}`)}</span>
           </div>
-          <div className="text-[11px] font-bold leading-tight line-clamp-2 break-words">{c.value || t('scr_comp_none')}</div>
+          <div className="text-xs font-bold leading-tight truncate mt-0.5">{c.value || t('scr_comp_none')}</div>
         </div>
       ))}
     </div>

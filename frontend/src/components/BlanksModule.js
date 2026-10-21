@@ -94,7 +94,7 @@ function OrderCard({ c, t, canEdit, statuses, confirmStatus, busy, onStatus }) {
         <SizesTable rows={c.sizes} t={t} />
       </div>
 
-      <div className="text-xs lg:w-64 shrink-0 space-y-2">
+      <div className="text-xs lg:w-72 shrink-0 space-y-2 lg:border-l lg:border-border lg:pl-4">
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-muted-foreground">{t('blk_status')}:</span>
           {canEdit ? (
@@ -276,7 +276,7 @@ export default function BlanksModule() {
         </div>
       </header>
 
-      <main className="px-4 md:px-8 py-6 space-y-3 max-w-6xl mx-auto">
+      <main className="px-4 md:px-8 py-6 space-y-3 max-w-7xl mx-auto">
         {data && !canEdit && (
           <div className="rounded-lg border border-border bg-card text-xs p-3 text-muted-foreground">{t('blk_readonly')}</div>
         )}
