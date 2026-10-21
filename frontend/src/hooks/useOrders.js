@@ -637,19 +637,11 @@ export const useOrders = (currentBoard, boardFilters) => {
         const filtered = data.items || [];
         const total = data.total ?? filtered.length;
         if (filtered.length >= 1) {
-          const found = filtered[0];
-          // Solo saltar de tablero con UN resultado. Con varios, el tablero del
-          // "primero" es arbitrario y cargarlo detrás del modal era caro (p. ej.
-          // FINAL BILL, ~2k filas: 2 s extra al cerrar). Cada fila del modal ya
-          // trae su botón "Ir al tablero".
-          if (total === 1) setCurrentBoard(found.board);
-          if (total === 1) {
-            const isExactOrderedMatch = found.order_number && String(found.order_number).trim().toLowerCase() === searchQuery.trim().toLowerCase();
-            const msg = isExactOrderedMatch 
-              ? `${t('order')} ${found.order_number} → ${found.board}`
-              : `Referencia encontrada en orden: ${found.order_number} (${found.board})`;
-            toast.success(msg);
-          } else {
+          // Con UN resultado el Dashboard lleva a la orden (maestro + pestaña +
+          // resaltado, ver goToOrder); con varios, cada fila del modal trae su
+          // botón "Ir al tablero".
+          // Un resultado: el aviso lo da goToOrder (dice maestro + pestaña).
+          if (total !== 1) {
             toast.info(`${total} coincidencias encontradas`);
           }
           return { items: filtered, total, query: searchQuery };

@@ -176,6 +176,7 @@ const Dashboard = () => {
   const [evidenceOrder, setEvidenceOrder] = useState(null);  // modal de evidencia de sample (playerita)
   const [historyOrder, setHistoryOrder] = useState(null);
   const [highlightedOrderId, setHighlightedOrderId] = useState(null);
+  const goToOrderRef = useRef(null);   // goToOrder se define más abajo (necesita el maestro)
   const [showAddColumn, setShowAddColumn] = useState(false);
   const [showTrash, setShowTrash] = useState(false);
   const [showAnalytics, setShowAnalytics] = useState(false);
@@ -344,12 +345,12 @@ const Dashboard = () => {
         const bodyTop = anchor.getBoundingClientRect().top - sc.getBoundingClientRect().top + sc.scrollTop;
         sc.scrollTop = Math.max(0, bodyTop + y - sc.clientHeight / 2);
       }
-      if (attempts < 8) {
+      if (attempts < 25) {
         setTimeout(() => attemptScroll(attempts + 1), 200);
       }
     };
     attemptScroll();
-    const timer = setTimeout(() => setHighlightedOrderId(null), 3000);
+    const timer = setTimeout(() => setHighlightedOrderId(null), 6000);
     return () => clearTimeout(timer);
   }, [highlightedOrderId]);
 
@@ -394,6 +395,7 @@ const Dashboard = () => {
   const handleSearchEnter = useCallback(async (v) => {
     const results = await handleGlobalSearch(v, setCurrentBoard);
     if (results === '__GUIDE__') { setShowGuide(true); clearSearch(); }
+    else if (results && results.total === 1 && results.items?.[0]) { goToOrderRef.current?.(results.items[0]); }
     else if (results) {
       setSearchTotal(results.total);
       setSearchQueryLast(results.query);
@@ -443,6 +445,36 @@ const Dashboard = () => {
     ? (currentBoard === intakeBoard ? [masterBoard] : [])
     : allBoardsIncludingHidden.filter(b => b !== currentBoard && b !== 'PAPELERA DE RECICLAJE' && !b.startsWith('MAQUINA'));
   const canMoveToMachines = !movesLocked || currentBoard.startsWith('MAQUINA');
+
+  // BÚSQUEDA → dónde vive la orden en el modelo de módulos:
+  //   EDI / FINAL BILL / INVENTARIO → esa pestaña del maestro;
+  //   cualquier tablero vivo (SCHEDULING, NECK, máquinas, Empaque…) → el
+  //   maestro, pestaña Abiertas o Completas según su estatus;
+  //   DATA ENTRY, CANCELLED, papelera… → su propio tablero.
+  // Siempre se resalta la fila. Sin el modelo nuevo, su tablero como antes.
+  const searchTarget = (order) => {
+    const b = order?.board || '';
+    if (!masterTabsOn) return { board: b, label: b };
+    if (tabBoards.includes(b)) return { board: b, label: `${masterBoard} / MASTER · ${tName(b) || b}` };
+    const liveInMaster = activeBoards.includes(b) && b !== intakeBoard && !tabBoards.includes(b)
+      && !['CANCELLED', 'RESPALDO MONDAY', 'PAPELERA DE RECICLAJE', 'EJEMPLOS'].includes(b);
+    if (!liveInMaster) return { board: b, label: b };
+    const done = isCompleteOrder(order);
+    return {
+      board: masterBoard, tab: done ? 'done' : 'open',
+      label: `${masterBoard} / MASTER · ${t(done ? 'master_tab_done' : 'master_tab_open')}${b !== masterBoard ? ` (${b})` : ''}`,
+    };
+  };
+  const goToOrder = (order) => {
+    const dest = searchTarget(order);
+    if (dest.tab) setMasterTab(dest.tab);
+    setCurrentBoard(dest.board);
+    setSearchResults(null);
+    clearSearch();
+    setHighlightedOrderId(order.order_id);
+    toast.success(`${order.order_number} → ${dest.label}`);
+  };
+  goToOrderRef.current = goToOrder;
   const hasMoveTargets = nonMachineMoveTargets.length > 0 || canMoveToMachines;
   const [tabCounts, setTabCounts] = useState({});
   useEffect(() => {
@@ -2990,7 +3022,7 @@ const Dashboard = () => {
                         <div className="text-2xl font-mono font-black text-royal leading-none">{order.order_number}</div>
                         {order.client && <div className="text-[11px] font-bold text-muted-foreground uppercase tracking-widest mt-1.5 truncate">{order.client}</div>}
                       </div>
-                      <span className="px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider shadow-sm flex-shrink-0" style={{ backgroundColor: BOARD_COLORS[order.board]?.accent || '#666', color: '#fff' }}>{order.board}</span>
+                      <span className="px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider shadow-sm flex-shrink-0" style={{ backgroundColor: BOARD_COLORS[searchTarget(order).board]?.accent || '#666', color: '#fff' }} title={order.board}>{searchTarget(order).label}</span>
                     </div>
                     {(order.quantity || order.blank_status) && (
                       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-3 text-[11px] text-muted-foreground">
@@ -3006,7 +3038,7 @@ const Dashboard = () => {
                         <MessageSquare className="w-4 h-4" /> {t('action_add_comment')}
                       </button>
                       <button
-                        onClick={(e) => { e.stopPropagation(); setCurrentBoard(order.board); setSearchResults(null); clearSearch(); setHighlightedOrderId(order.order_id); toast.success(`${order.order_number} → ${order.board}`); }}
+                        onClick={(e) => { e.stopPropagation(); goToOrder(order); }}
                         className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-primary/10 text-primary active:bg-primary active:text-white text-[11px] font-bold"
                       >
                         <ExternalLink className="w-4 h-4" /> {t('dash_go_to_board')}
@@ -3047,7 +3079,7 @@ const Dashboard = () => {
                               <Truck className="w-4 h-4" />
                             </span>
                           )}
-                          <span className="px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider shadow-sm border border-white/10" style={{ backgroundColor: BOARD_COLORS[order.board]?.accent || '#666', color: '#fff' }}>{order.board}</span>
+                          <span className="px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider shadow-sm border border-white/10" style={{ backgroundColor: BOARD_COLORS[searchTarget(order).board]?.accent || '#666', color: '#fff' }} title={order.board}>{searchTarget(order).label}</span>
                         </div>
                       </div>
                       {columns.filter(c => c.key !== 'order_number').map(col => (
@@ -3078,7 +3110,7 @@ const Dashboard = () => {
                             <MessageSquare className="w-4 h-4" />
                           </button>
                           <button
-                            onClick={() => { setCurrentBoard(order.board); setSearchResults(null); clearSearch(); setHighlightedOrderId(order.order_id); toast.success(`${order.order_number} → ${order.board}`); }}
+                            onClick={() => goToOrder(order)}
                             className="p-2 rounded-xl bg-primary/10 text-primary hover:bg-primary hover:text-white transition-all shadow-sm glow-primary-hover"
                             title={t('dash_go_to_board')}
                           >
