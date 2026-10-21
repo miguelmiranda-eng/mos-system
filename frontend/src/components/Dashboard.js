@@ -434,7 +434,9 @@ const Dashboard = () => {
   // Pestañas del maestro: Abiertas / Completas (filtro) + los tableros de
   // cierre (EDI, FINAL BILL, INVENTARIO), que salieron del menú.
   const masterTabsOn = usesMasterTabs(activeBoards);
-  const tabBoards = masterTabsOn ? MASTER_TAB_BOARDS.filter((b) => activeBoards.includes(b)) : [];
+  // Ocultar un tablero (FINAL BILL e INVENTARIO lo están) lo quita del menú, NO
+  // de las pestañas del maestro: por eso se cruza con TODOS los tableros.
+  const tabBoards = masterTabsOn ? MASTER_TAB_BOARDS.filter((b) => allBoardsIncludingHidden.includes(b)) : [];
   const inMasterTabs = masterTabsOn && (isMasterView || tabBoards.includes(currentBoard));
   // Modelo de módulos: la orden ya NO se mueve por tableros (los módulos
   // actualizan sus datos y las automatizaciones ponen los estados de cierre).

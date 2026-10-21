@@ -4,13 +4,17 @@ Sirve la bandeja del encargado de Final Bill. Solo entran las órdenes cuyo
 `production_status` es LISTO PARA ENVIO o LISTO PARA INVENTARIO — son las dos
 etapas donde la orden ya salió de producción y toca facturarla.
 
-MARCAR "REVISADA" NO MUEVE LA ORDEN
-───────────────────────────────────
-La revisión se guarda como una BANDERA en la orden (`final_bill_review`), no
-como un cambio de `production_status` ni de tablero. Esos dos campos los leen
-producción, envíos y el WMS: moverlos desde aquí sacaría la orden de los
-tableros de otra gente para resolver un problema que solo es de este módulo.
-La bandera es reversible y deja quién y cuándo.
+MARCAR "REVISADA" → PESTAÑA FINAL BILL DEL MAESTRO
+──────────────────────────────────────────────────
+La revisión se guarda como una BANDERA en la orden (`final_bill_review`,
+reversible, con quién y cuándo) y NO toca `production_status`. Antes tampoco
+movía el tablero (había tableros por área y moverla se la quitaba a otra
+gente). Con el modelo de módulos todo vive en SCHEDULING / MASTER y sus
+pestañas, así que (decisión del usuario 2026-10-21): revisada una orden viva
+(pestaña Completas) pasa al tablero FINAL BILL = pestaña Final Bill del
+maestro; desmarcarla la regresa a SCHEDULING. Las de INVENTARIO / EDI /
+CANCELLED no se mueven. El movimiento va por update_order (bitácora,
+automatizaciones y aviso en vivo).
 
 La tercera pestaña filtra POR LA BANDERA, sin mirar el status: una orden ya
 revisada sigue en el historial aunque después avance de etapa.
@@ -259,6 +263,35 @@ async def final_bill_options(request: Request):
     return out
 
 
+FINAL_BILL_BOARD = "FINAL BILL"
+MASTER_BOARD = "SCHEDULING"
+# Tableros de donde una orden revisada NO se mueve (ya están cerradas por otro
+# camino, o no son trabajo vivo).
+_STAY_BOARDS = {FINAL_BILL_BOARD, EDI_BOARD, "INVENTARIO", "CANCELLED", "PAPELERA DE RECICLAJE",
+                "RESPALDO MONDAY", "DATA ENTRY"}
+
+
+async def _move_after_review(order_ids: list, reviewed: bool, request: Request) -> int:
+    """Revisada → FINAL BILL; desmarcada (y estaba en FINAL BILL) → SCHEDULING."""
+    from routers.orders import update_order   # lazy (evita ciclo)
+    from deps import OrderUpdate
+    moved = 0
+    async for o in db.orders.find({"order_id": {"$in": order_ids}}, {"_id": 0, "order_id": 1, "board": 1}):
+        board = o.get("board") or ""
+        if reviewed and board not in _STAY_BOARDS:
+            target = FINAL_BILL_BOARD
+        elif not reviewed and board == FINAL_BILL_BOARD:
+            target = MASTER_BOARD
+        else:
+            continue
+        try:
+            await update_order(o["order_id"], OrderUpdate(board=target), request)
+            moved += 1
+        except HTTPException as e:   # p. ej. candado de QC: se queda donde está
+            logger.warning("[final-bill] no se movió %s a %s: %s", o["order_id"], target, e.detail)
+    return moved
+
+
 @router.post("/{order_id}/review")
 async def set_review(order_id: str, request: Request):
     """Marca (o desmarca) la orden como revisada por Final Bill.
@@ -300,7 +333,8 @@ async def set_review(order_id: str, request: Request):
         order.get("order_number"), "revisada" if reviewed else "desmarcada",
         user.get("name"),
     )
-    return {"ok": True, "order_id": order_id, "reviewed": reviewed}
+    moved = await _move_after_review([order_id], reviewed, request)
+    return {"ok": True, "order_id": order_id, "reviewed": reviewed, "moved": moved}
 
 
 @router.post("/review-bulk")
@@ -329,7 +363,8 @@ async def set_review_bulk(request: Request):
         "final_bill_review_bulk" if reviewed else "final_bill_unreview_bulk",
         {"order_ids": ids, "count": res.modified_count},
     )
-    return {"ok": True, "modified": res.modified_count, "reviewed": reviewed}
+    moved = await _move_after_review(ids, reviewed, request)
+    return {"ok": True, "modified": res.modified_count, "reviewed": reviewed, "moved": moved}
 
 
 # ══════════════════════════════════════════════════════════════════════════
