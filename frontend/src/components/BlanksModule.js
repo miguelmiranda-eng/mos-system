@@ -276,7 +276,7 @@ export default function BlanksModule() {
         </div>
       </header>
 
-      <main className="px-4 md:px-8 py-6 space-y-3 max-w-7xl">
+      <main className="px-4 md:px-8 py-6 space-y-3">
         {data && !canEdit && (
           <div className="rounded-lg border border-border bg-card text-xs p-3 text-muted-foreground">{t('blk_readonly')}</div>
         )}
