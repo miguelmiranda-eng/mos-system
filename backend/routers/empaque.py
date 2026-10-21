@@ -257,10 +257,10 @@ async def _set_status(order_id: str, status: str, request: Request) -> dict:
     from routers.orders import update_order   # lazy (evita ciclo)
     user = await require_auth(request)
     if not (user_roles(user) & WRITE_ROLES):
-        raise HTTPException(403, "Sólo el rol Empaque puede cambiar el estatus de empaque")
+        raise HTTPException(403, "Sólo el rol Empaque puede cambiar el Production Status de empaque")
     status = str(status or "").strip().upper()
     if status not in PACK_STATUSES:
-        raise HTTPException(400, f"Estatus de empaque no válido: {status}")
+        raise HTTPException(400, f"Production Status no válido para empaque: {status}")
     o = await db.orders.find_one({"order_id": order_id}, {"_id": 0, "production_status": 1})
     if not o:
         raise HTTPException(404, "Orden no encontrada")

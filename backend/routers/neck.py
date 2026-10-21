@@ -142,10 +142,10 @@ async def _set_status(order_id: str, status: str, request: Request) -> dict:
     from routers.orders import update_order   # lazy (evita ciclo)
     user = await require_auth(request)
     if not (user_roles(user) & WRITE_ROLES):
-        raise HTTPException(403, "Sólo el rol Neck puede cambiar el estatus del label")
+        raise HTTPException(403, "Sólo el rol Neck puede cambiar el Production Status de neck")
     status = str(status or "").strip().upper()
     if status not in LABEL_STATUSES:
-        raise HTTPException(400, f"Estatus de label no válido: {status}")
+        raise HTTPException(400, f"Production Status no válido para neck: {status}")
     if not await db.orders.find_one({"order_id": order_id}, {"_id": 1}):
         raise HTTPException(404, "Orden no encontrada")
     om.invalidate()                     # el label cambia la simulación de todos los módulos

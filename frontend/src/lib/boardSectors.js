@@ -49,8 +49,12 @@ export const boardKey = (board) => (board || '')
  * Un tablero que no esté en ningún sector NO desaparece: sale suelto arriba.
  * Así, si mañana se crea un tablero nuevo, aparece en el menú aunque nadie lo
  * haya asignado todavía.
+ *
+ * keepIds: sectores que se pintan aunque ya no tengan tableros, porque viven
+ * MÓDULOS en ellos (Producción: Blanks, Cuadros, Neck, Empaque reemplazaron a
+ * sus tableros; al retirarlos el sector quedaba vacío y desaparecía).
  */
-export const resolveSectors = (sectors, availableBoards) => {
+export const resolveSectors = (sectors, availableBoards, keepIds = []) => {
   const asignados = new Set();
 
   const resueltos = SECTOR_META
@@ -62,7 +66,7 @@ export const resolveSectors = (sectors, availableBoards) => {
       items.forEach(b => asignados.add(b));
       return { ...meta, items };
     })
-    .filter(sector => sector.items.length > 0);
+    .filter(sector => sector.items.length > 0 || keepIds.includes(sector.id));
 
   const sueltos = availableBoards.filter(b => !asignados.has(b));
 

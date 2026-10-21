@@ -53,9 +53,7 @@ const SECTOR_MODULES = {
   produccion: [
     { path: '/blanks', labelKey: 'blk_menu', icon: Shirt, color: '#0ea5e9', before: 'NECK' },
     { path: '/cuadros', labelKey: 'scr_title', icon: Layers, color: '#52b788', before: 'NECK' },
-    // Fase de prueba: el módulo Neck convive con el tablero NECK hasta retirarlo.
     { path: '/neck', labelKey: 'nck_menu', icon: Tag, color: '#ec4899', before: 'NECK' },
-    // Fase de prueba: el módulo Empaque convive con el tablero EMPAQUE hasta retirarlo.
     { path: '/empaque', labelKey: 'emp_menu', icon: PackageCheck, color: '#f59e0b', before: 'EMPAQUE' },
   ],
 };
@@ -110,7 +108,7 @@ const Sidebar = ({
   // El reparto por sectores lo guarda supersu en la base; mientras carga (o si
   // falla) se usa el de por defecto.
   const { sectors, saveSectors } = useBoardSectors();
-  const { sectors: groups, ungrouped: ungroupedBoards } = resolveSectors(sectors, regularBoards);
+  const { sectors: groups, ungrouped: ungroupedBoards } = resolveSectors(sectors, regularBoards, Object.keys(SECTOR_MODULES));
   const [isSectorsModalOpen, setIsSectorsModalOpen] = useState(false);
 
   const activeGroupId = groups.find(g => g.items.includes(currentBoard))?.id;
