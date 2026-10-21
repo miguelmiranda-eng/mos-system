@@ -221,7 +221,7 @@ async def station(machine: str, request: Request):
     keep.sort(key=lambda o: (not o["running"],
                              str(o.get("production_status") or "").upper() != IN_PROCESS, str(o.get("order_number"))))
     packers = await db.pack_boxes.distinct("packer", {"machine": machine})
-    sizes = [s async for s in db.pack_box_sizes.find({"active": {"$ne": False}}, {"_id": 0}).sort("name", 1)]
+    sizes = [s async for s in db.pack_box_sizes.find({"active": {"$ne": False}}, {"_id": 0}).sort([("rank", 1), ("name", 1)])]
     return {"machine": machine, "machine_state": cur.get("state"), "orders": keep,
             "packers": sorted(p for p in packers if p), "box_sizes": sizes,
             "can_edit": bool(user_roles(user) & WRITE_ROLES)}
@@ -408,7 +408,7 @@ async def finish(order_id: str, request: Request):
 @router.get("/box-sizes")
 async def list_sizes(request: Request):
     await require_auth(request)
-    return {"items": [s async for s in db.pack_box_sizes.find({"active": {"$ne": False}}, {"_id": 0}).sort("name", 1)]}
+    return {"items": [s async for s in db.pack_box_sizes.find({"active": {"$ne": False}}, {"_id": 0}).sort([("rank", 1), ("name", 1)])]}
 
 
 @router.post("/box-sizes")
@@ -422,7 +422,10 @@ async def save_size(request: Request):
     sid = body.get("box_size_id") or f"bxs_{uuid.uuid4().hex[:10]}"
     await db.pack_box_sizes.update_one({"box_size_id": sid}, {"$set": {
         "box_size_id": sid, "name": name, **d, "active": True, "updated_at": _now(),
-        "updated_by": user.get("email") or user.get("user_id")}}, upsert=True)
+        "updated_by": user.get("email") or user.get("user_id")},
+        # Orden del catálogo: las más usadas primero (la primera es la sugerida);
+        # las nuevas, al final.
+        "$setOnInsert": {"rank": 999}}, upsert=True)
     return await list_sizes(request)
 
 

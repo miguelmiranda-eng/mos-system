@@ -580,7 +580,11 @@ export default function PackStation() {
 
   // Navegación por pasos: atrás = un paso atrás.
   const step = !machine ? 1 : !orderId ? 2 : !sizeKey ? 3 : 4;
-  const pickMachine = (m) => { store.set(MACHINE_KEY, m); setMachine(m); navigate(`/empaque/estacion/${m}`, { replace: true }); };
+  // Al elegir la máquina se pregunta SIEMPRE quién empaca (cambia por turno).
+  const pickMachine = (m) => {
+    store.set(MACHINE_KEY, m); setMachine(m); navigate(`/empaque/estacion/${m}`, { replace: true });
+    setSheet('packer');
+  };
   const back = () => {
     if (step === 4) setSizeKey('');
     else if (step === 3) { setOrderId(''); setView(null); }
