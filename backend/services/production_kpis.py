@@ -83,10 +83,11 @@ def _utc(d: date, hour: int = 0) -> str:
     return datetime.combine(d, time(hour), tzinfo=TZ).astimezone(timezone.utc).isoformat()
 
 
-async def produced_window(d_from: date, d_to: date) -> dict:
+async def produced_window(d_from: date, d_to: date, until: datetime = None) -> dict:
     """Capturas de producción por día operativo entre d_from y d_to (inclusive),
     ya sin pruebas de máquina. {"rows": [{date, shift, machine, order, pos, client, group, n}],
-    "excluded": n}. Se miden con measure()."""
+    "excluded": n}. Se miden con measure(). `until` (opcional): sólo capturas
+    hechas hasta ese instante — para "la semana pasada al mismo punto"."""
     q = {"created_at": {"$gte": _utc(d_from), "$lt": _utc(d_to + timedelta(days=1), NIGHT_CUTOFF_HOUR)}}
     rows, excluded, no_client = [], 0, set()
     async for lg in db.production_logs.find(
@@ -95,6 +96,8 @@ async def produced_window(d_from: date, d_to: date) -> dict:
         try:
             dt = datetime.fromisoformat(str(lg["created_at"])).astimezone(TZ)
         except (KeyError, ValueError):
+            continue
+        if until is not None and dt > until:
             continue
         shift = lg.get("shift") or ""
         d = op_date(dt, shift)

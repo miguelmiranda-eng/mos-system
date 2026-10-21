@@ -983,6 +983,14 @@ async def build_dashboard() -> dict:
     # Producido real esta semana (production_logs), por DÍA OPERATIVO: la noche
     # del domingo que se captura el lunes de madrugada es de la semana pasada.
     prod_week = kpis.sum_days(await kpis.produced_window(w0, today), w0, today)
+    # Día operativo en curso (antes de las 07:00 sigue la noche de ayer) y la
+    # semana pasada "al mismo punto": desde su lunes hasta este mismo día de la
+    # semana y hora, hace 7 días. Misma regla de día operativo que prod_week.
+    op_t = kpis.op_today(now)
+    prod_today = kpis.sum_days(await kpis.produced_window(op_t, op_t), op_t, op_t)
+    lw_cut = now - timedelta(days=7)
+    lw0, lw_to = w0 - timedelta(days=7), kpis.op_today(lw_cut)
+    prod_lw = kpis.sum_days(await kpis.produced_window(lw0, lw_to, until=lw_cut), lw0, lw_to)
 
     # Producido por orden + última captura por máquina/orden (para test y excepciones).
     oids = [o["order_id"] for o in ctx["orders"] if o.get("order_id")]
@@ -1167,7 +1175,10 @@ async def build_dashboard() -> dict:
     return {
         "today": today.isoformat(), "week_start": w0.isoformat(),
         "unit_note": "1 impresión = 1 print; frente+espalda = 2. units = piezas (hits ÷ hits por pieza)",
+        "last_week": {"produced_to_date": prod_lw["hits"], "produced_units_to_date": prod_lw["units"],
+                      "to_date_until": lw_cut.isoformat()},
         "this_week": {"produced": prod_week["hits"], "produced_units": prod_week["units"],
+                      "produced_today": prod_today["hits"], "produced_units_today": prod_today["units"],
                       "pending": weeks[0]["demand"], "pending_units": round(week_units[0]),
                       "due_this_week": pend_total(due_items), "overdue": pend_total(overdue_items),
                       "capacity_regular": this_reg, "capacity_overtime": this_ot,
