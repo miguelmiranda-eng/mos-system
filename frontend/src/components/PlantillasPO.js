@@ -45,6 +45,13 @@ function norm(s) {
 const TOL_RENGLON = 8;
 const TOL_ABAJO = 26;
 
+// Campos cuyo valor NUNCA es un número suelto. Sólo en éstos se exige que el
+// renglón traiga texto: así, si el desplazamiento cae en otra fila porque esta
+// página viene con un renglón menos, se devuelve vacío en vez del dato de otro
+// campo. En cantidad o precio esa guarda estorbaría — ahí un número es lo
+// correcto.
+const CAMPOS_DE_TEXTO = ["design_num", "color", "blank", "description", "brand"];
+
 /** Cuál de las apariciones de ese texto es la señalada.
  *  El mismo rótulo se repite en una hoja —"CUST" está en el encabezado del
  *  cliente y otra vez en la columna "CUST PO"—, así que guardar sólo el texto
@@ -55,10 +62,39 @@ function ocurrenciaDe(palabras, w) {
   return palabras.filter((o) => igual(o.t, w.t) && (o.y < w.y || (o.y === w.y && o.x < w.x))).length;
 }
 
+/** Las filas de texto de la página, en orden de lectura. */
+function filasDe(palabras) {
+  const filas = [];
+  [...palabras].sort((a, b) => a.y - b.y || a.x - b.x).forEach((w) => {
+    const f = filas.find((x) => Math.abs(x.y - w.y) <= TOL_RENGLON);
+    if (f) f.ws.push(w); else filas.push({ y: w.y, ws: [w] });
+  });
+  return filas.map((f) => ({
+    y: f.y,
+    ws: f.ws,
+    texto: [...f.ws].sort((a, b) => a.x - b.x).map((w) => w.t).join(" ").trim(),
+  }));
+}
+
+/** Si una fila se reconoce por su PINTA, devuelve con qué expresión y cómo
+ *  llamarla. Es lo que permite anclar en hojas que no traen un solo rótulo: el
+ *  PO siempre son 7 dígitos y la fecha siempre es d/m/aa, aunque no digan
+ *  "PO" ni "fecha" en ninguna parte. */
+function formaDe(texto, t) {
+  const x = (texto || "").trim();
+  if (/^\d{1,2}\/\d{1,2}\/\d{2,4}$/.test(x)) {
+    return { re: "^\\d{1,2}/\\d{1,2}/\\d{2,4}$", nombre: t('ppo_forma_fecha') };
+  }
+  if (/^\d{4,}$/.test(x)) {
+    return { re: `^\\d{${x.length}}$`, nombre: t('ppo_forma_numero', { n: x.length }) };
+  }
+  return null;
+}
+
 /** Del dato señalado deduce su ancla: el rótulo de su izquierda (mismo renglón)
  *  o el encabezado de arriba. Se guarda el ancla, nunca la coordenada, para que
  *  el mapeo aguante que el cliente mueva el bloque de lugar. */
-function deducirAncla(palabras, idx) {
+function deducirAncla(palabras, idx, t, campo) {
   const w = palabras[idx];
   // Las palabras a la izquierda, de la más cercana a la más lejana.
   const izqs = palabras
@@ -94,6 +130,32 @@ function deducirAncla(palabras, idx) {
     modo: "debajo_de", rotulo: arriba.t,
     spec: { tipo: "debajo_de", rotulo: arriba.t, ocurrencia: ocurrenciaDe(palabras, arriba) },
   });
+  // Anclas por FORMA, para hojas sin rótulos.
+  const filas = filasDe(palabras);
+  const iFila = filas.findIndex((f) => f.ws.includes(w));
+  if (iFila >= 0) {
+    const propia = formaDe(filas[iFila].texto, t);
+    if (propia) opciones.push({
+      modo: "patron", rotulo: propia.nombre,
+      spec: { tipo: "patron", patron: propia.re, grupo: 0 },
+    });
+    // La fila reconocible más cercana, mirando primero hacia arriba.
+    for (const dir of [-1, 1]) {
+      for (let j = iFila + dir; j >= 0 && j < filas.length; j += dir) {
+        const f = formaDe(filas[j].texto, t);
+        if (!f) continue;
+        opciones.push({
+          modo: iFila > j ? "renglon_abajo" : "renglon_arriba",
+          rotulo: f.nombre, n: Math.abs(iFila - j),
+          spec: {
+            tipo: "renglon", ancla: f.re, desplazamiento: iFila - j,
+            ...(CAMPOS_DE_TEXTO.includes(campo) ? { texto: true } : {}),
+          },
+        });
+        break;
+      }
+    }
+  }
   opciones.push({ modo: "fijo", rotulo: w.t, spec: { tipo: "fijo", valor: w.t } });
   // Un valor de varias palabras sin etiqueta de la cual colgarse — el caso de la
   // tienda cuando viene como título suelto — sólo se puede tomar entero.
@@ -298,7 +360,7 @@ export default function PlantillasPO() {
       opciones = [{ modo: "huella", rotulo: w.t, valor: w.t }];
       if (renglon && renglon !== w.t) opciones.push({ modo: "huella", rotulo: renglon, valor: renglon });
     } else {
-      opciones = deducirAncla(pg.palabras, idx);
+      opciones = deducirAncla(pg.palabras, idx, t, campoActivo);
     }
     setMenu({ idx, opciones, x: ev.clientX - caja.left, y: ev.clientY - caja.top });
   };
@@ -515,7 +577,7 @@ export default function PlantillasPO() {
               <p className="text-xs text-muted-foreground">{t('ppo_t_ayuda')}</p>
 
               <div className="flex gap-2">
-                {["rejilla", "pares"].map((tipo) => (
+                {["rejilla", "pares", "posicion"].map((tipo) => (
                   <button key={tipo} onClick={() => editarTallas({ tipo })}
                     className={`flex-1 px-2 py-2 rounded-lg border text-[11px] font-black uppercase tracking-wide ${((sel.tallas || {}).tipo || "rejilla") === tipo ? "bg-primary/15 border-primary/50 text-primary" : "border-border hover:bg-secondary/40"}`}>
                     {t(`ppo_t_${tipo}`)}
@@ -535,6 +597,13 @@ export default function PlantillasPO() {
                     value={(sel.tallas || {}).rotulo_cantidades ?? "QTY"}
                     onChange={(v) => editarTallas({ rotulo_cantidades: v })} />
                 </div>
+              ) : ((sel.tallas || {}).tipo === "posicion") ? (
+                <>
+                  <Campo label={t('ppo_t_etiquetas')} mono
+                    value={((sel.tallas || {}).etiquetas || []).join(", ")}
+                    onChange={(v) => editarTallas({ etiquetas: v.split(",").map((x) => x.trim().toUpperCase()).filter(Boolean) })} />
+                  <p className="text-[11px] text-amber-600">{t('ppo_t_posicion_aviso')}</p>
+                </>
               ) : (
                 <Campo label={t('ppo_t_excluir')} mono
                   value={((sel.tallas || {}).excluir || ["TOTAL", "UNITS"]).join(", ")}
@@ -651,7 +720,7 @@ export default function PlantillasPO() {
                         {menu.opciones.map((o, i) => (
                           <button key={i} onClick={() => aplicar(o)}
                             className="w-full text-left px-2 py-1.5 rounded-lg hover:bg-secondary/60 text-sm">
-                            {t(`ppo_modo_${o.modo}`, { r: o.rotulo })}
+                            {t(`ppo_modo_${o.modo}`, { r: o.rotulo, n: o.n })}
                           </button>
                         ))}
                         <button onClick={() => setMenu(null)} className="w-full text-left px-2 py-1.5 rounded-lg hover:bg-secondary/60 text-xs text-muted-foreground">

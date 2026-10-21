@@ -336,6 +336,94 @@ def _debajo_alineado_derecha():
     return malas
 
 
+
+class _PaginaFalsa:
+    """Una pagina con solo lo que las primitivas sin-rotulo necesitan.
+
+    Se arma a mano en vez de usar un PDF del cliente: estas dos primitivas son
+    para hojas graficas (la semanal de Culture Kings) y ese archivo no vive en el
+    repo. Con un doble la prueba corre siempre y en cualquier maquina."""
+
+    def __init__(self, filas):
+        # filas = [(top, [(x, texto), ...]), ...]
+        self.palabras = [{"text": t, "x0": x, "x1": x + 10, "top": top, "bottom": top + 10}
+                         for top, ws in filas for x, t in ws]
+        self.lineas = [" ".join(t for _, t in sorted(ws)) for _, ws in filas]
+        self.texto = "\n".join(self.lineas)
+
+
+# Calcado de la hoja semanal real: fecha, nombre, color, prenda, cantidad, PO,
+# y la fila de tallas SIN cabecera (esta dibujada) con el total pegado a la
+# derecha, 5pt mas abajo.
+_HOJA = [
+    (7.3,   [(570.0, "11/2/26")]),
+    (385.7, [(74.3, "CK"), (109.2, "PR"), (143.0, "CURSIVE"), (238.9, "TEE")]),
+    (407.3, [(71.2, "BLACK")]),
+    (433.4, [(62.2, "DROP"), (126.1, "SHOULDER"), (245.6, "TEE")]),
+    (457.0, [(63.7, "301")]),
+    (484.0, [(60.7, "4006112")]),
+    (581.6, [(75.2, "9"), (120.8, "31"), (170.0, "56"), (221.4, "84"),
+             (281.5, "77"), (349.4, "44")]),
+    (586.6, [(559.6, "301")]),
+]
+# La misma hoja pero SIN el renglon de prenda: pasa de verdad en las paginas de
+# hoodie y sweatpants, y es lo que delata un desplazamiento mal elegido.
+_HOJA_CORTA = [f for f in _HOJA if f[0] != 433.4]
+
+
+def _sin_rotulos():
+    """Las dos primitivas para hojas que no traen un solo rotulo."""
+    from routers.import_router import SIZES_MAP as _S
+    from services.po_templates import _renglon, _tallas_por_posicion
+
+    malas = []
+
+    def ok(cond, msg):
+        if not cond:
+            malas.append(f"sin-rotulos: {msg}")
+
+    pag, corta = _PaginaFalsa(_HOJA), _PaginaFalsa(_HOJA_CORTA)
+    FECHA = r"^\d{1,2}/\d{1,2}/\d{2,4}$"
+    PO = r"^\d{7}$"
+
+    # Ancla por forma, hacia abajo y hacia arriba.
+    v = _renglon(pag, {"ancla": FECHA, "desplazamiento": 1, "texto": True})
+    ok(v == "CK PR CURSIVE TEE", f"nombre desde la fecha dio {v!r}")
+    v = _renglon(pag, {"ancla": PO, "desplazamiento": -1})
+    ok(v == "301", f"cantidad desde el PO dio {v!r}")
+    v = _renglon(pag, {"ancla": PO, "desplazamiento": 0})
+    ok(v == "4006112", f"el renglon del ancla dio {v!r}")
+
+    # La guarda de texto: en la hoja sin prenda, el desplazamiento cae en la
+    # cantidad y debe devolver VACIO, no el numero de otro campo.
+    v = _renglon(corta, {"ancla": FECHA, "desplazamiento": 3, "texto": True})
+    ok(v is None, f"sin prenda debia dar vacio, dio {v!r}")
+    # Sin la guarda, el mismo desplazamiento si trae el numero: la guarda es lo
+    # unico que separa los dos casos, no la suerte.
+    v = _renglon(corta, {"ancla": FECHA, "desplazamiento": 3})
+    ok(v == "301", f"sin guarda debia dar el numero, dio {v!r}")
+
+    # Un ancla que no existe o un desplazamiento fuera de la hoja: vacio, no error.
+    ok(_renglon(pag, {"ancla": r"^NO EXISTE$", "desplazamiento": 1}) is None, "ancla inexistente")
+    ok(_renglon(pag, {"ancla": FECHA, "desplazamiento": 99}) is None, "desplazamiento fuera de rango")
+    ok(_renglon(pag, {"ancla": "(("}) is None, "expresion invalida debia dar vacio")
+
+    # Tallas por posicion: se toman las PRIMERAS N, asi el total de la derecha
+    # queda fuera aunque caiga en el mismo renglon.
+    r = _tallas_por_posicion(pag, {"etiquetas": ["XS", "S", "M", "L", "XL", "2XL"]}, _S)
+    ok(r["total"] == 301, f"las tallas debian sumar 301, sumaron {r['total']}")
+    ok(r["sizes"].get("XS") == 9 and r["sizes"].get("L") == 84,
+       f"las tallas cayeron en la columna equivocada: {r['sizes']}")
+    ok(301 not in r["sizes"].values(), f"el total se coló como talla: {r['sizes']}")
+
+    # Declarar menos etiquetas toma menos columnas, no revienta.
+    r = _tallas_por_posicion(pag, {"etiquetas": ["XS", "S", "M"]}, _S)
+    ok(r["total"] == 96, f"con 3 etiquetas debian ser 96, fueron {r['total']}")
+    # Sin etiquetas no hay nada que mapear.
+    ok(_tallas_por_posicion(pag, {}, _S)["sizes"] == {}, "sin etiquetas debia dar vacio")
+    return malas
+
+
 def main():
     if not os.path.isdir(CORPUS) or not os.path.exists(GOLDEN):
         print("=" * 60)
@@ -370,6 +458,7 @@ def main():
 
     difs += _ruteo()
     difs += _salida()
+    difs += _sin_rotulos()
     difs += _debajo_alineado_derecha()
     difs += _motor_existente()
     difs += _bloqueo_por_motor()

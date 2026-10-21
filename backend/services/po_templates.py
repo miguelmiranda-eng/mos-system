@@ -350,10 +350,105 @@ def _tallas_en_pares(pag, spec, mapa_tallas):
     return {"sizes": {}, "total": 0, "renglones": []}
 
 
+def _renglones(pag):
+    """Los renglones de texto de la pagina, sin vacios, en orden de lectura."""
+    return [l.strip() for l in pag.lineas if l.strip()]
+
+
+def _renglon(pag, spec):
+    """Un renglon ENTERO, ubicado respecto de otro que se reconoce por su forma.
+
+    Para formatos que no traen un solo rotulo: la hoja semanal de Culture Kings
+    es una plantilla grafica donde "XS S M L XL" vive dentro de una IMAGEN y el
+    texto son solo los valores sueltos. No hay de que colgarse, pero el ORDEN de
+    los renglones si es estable, y siempre hay alguno reconocible por su pinta
+    (el PO son 7 digitos, la fecha es d/m/aa).
+
+    `ancla` es la expresion que identifica ese renglon y `desplazamiento` cuantos
+    renglones moverse desde el (-1 = el de arriba). Sin `ancla` cuenta desde el
+    principio de la pagina.
+
+    Se ancla a una FORMA, no a una coordenada: si el cliente mueve el bloque de
+    lugar o le mete un renglon antes, sigue funcionando."""
+    import re as _re
+    filas = _renglones(pag)
+    if not filas:
+        return None
+    base = 0
+    patron = spec.get("ancla")
+    if patron:
+        try:
+            rx = _re.compile(patron, _re.I)
+        except _re.error:
+            return None
+        idx = next((i for i, f in enumerate(filas) if rx.search(f)), None)
+        if idx is None:
+            return None
+        base = idx
+    i = base + int(spec.get("desplazamiento") or 0)
+    if not (0 <= i < len(filas)):
+        return None
+    valor = filas[i]
+    # Un renglon que es puro numero casi nunca es el dato que se buscaba cuando
+    # se pidio texto: delata que el desplazamiento cayo en otra fila porque esta
+    # pagina trae un renglon menos (en estas hojas el tipo de prenda a veces
+    # falta). Mejor nada que un dato de otro campo.
+    if spec.get("texto") and valor.replace(",", "").replace(".", "").isdigit():
+        return None
+    return valor
+
+
+def _tallas_por_posicion(pag, spec, mapa_tallas):
+    """Tallas sin etiqueta: una fila de numeros, en el orden que diga la plantilla.
+
+    Es el caso de las hojas donde la cabecera de tallas esta DIBUJADA (imagen) y
+    solo las cantidades son texto. No hay nada que leer para saber que columna es
+    cual, asi que la plantilla lo declara una vez en `etiquetas` y aqui se aplica
+    por orden de izquierda a derecha.
+
+    Se toman las PRIMERAS len(etiquetas) de la fila: el total suele ir al final
+    del mismo renglon, a la derecha, y asi queda fuera sin tener que adivinar."""
+    etiquetas = [str(e).strip().upper() for e in (spec.get("etiquetas") or []) if str(e).strip()]
+    if not etiquetas:
+        return {"sizes": {}, "total": 0, "renglones": []}
+
+    def es_num(t):
+        return t.replace(",", "").isdigit()
+
+    filas = {}
+    for w in pag.palabras:
+        if es_num(w["text"].strip()):
+            filas.setdefault(round(w["top"] / 6), []).append(w)
+
+    mejor = None
+    for _, ws in sorted(filas.items()):
+        if len(ws) < len(etiquetas):
+            continue
+        if mejor is None or len(ws) > len(mejor):
+            mejor = ws
+    if not mejor:
+        return {"sizes": {}, "total": 0, "renglones": []}
+
+    valores = [int(w["text"].strip().replace(",", ""))
+               for w in sorted(mejor, key=lambda w: w["x0"])][:len(etiquetas)]
+    sizes, total, renglones = {}, 0, []
+    for etiqueta, n in zip(etiquetas, valores):
+        destino = mapa_tallas.get(etiqueta)
+        if not destino:
+            continue
+        sizes[destino] = sizes.get(destino, 0) + n
+        total += n
+        renglones.append(f"{etiqueta} - {n}")
+    return {"sizes": sizes, "total": total, "renglones": renglones}
+
+
 def _leer_tallas(pag, spec, mapa_tallas):
     """Despacha al lector de tallas que pida la plantilla."""
-    if (spec or {}).get("tipo") == "pares":
+    tipo = (spec or {}).get("tipo")
+    if tipo == "pares":
         return _tallas_en_pares(pag, spec, mapa_tallas)
+    if tipo == "posicion":
+        return _tallas_por_posicion(pag, spec, mapa_tallas)
     return _rejilla(pag, spec or {}, mapa_tallas)
 
 
@@ -364,6 +459,7 @@ PRIMITIVAS = {
     "debajo_de": _debajo_de,
     "patron": _patron,
     "columna": _columna,
+    "renglon": _renglon,
 }
 
 
