@@ -170,6 +170,14 @@ const OverrideBadges = ({ manual, warnings, locked, tr }) => (
   </span>
 );
 
+// Máquina DEDICADA a otro cliente (misma regla que el motor: el cliente de la
+// máquina "contenido" en el de la orden). Devuelve el cliente de la máquina o "".
+const foreignTo = (machineCfg, client) => {
+  const pc = String(machineCfg?.preferred_client || "").trim().toUpperCase();
+  if (!machineCfg?.dedicated || !pc) return "";
+  return String(client || "").toUpperCase().includes(pc) ? "" : machineCfg.preferred_client;
+};
+
 const AdjustPanel = ({ job, machines, overrides, engineOn, onClose, onChanged, tr }) => {
   const [scope, setScope] = useState("job");
   const [machine, setMachine] = useState((job.machines || [])[0] || "");
@@ -264,7 +272,11 @@ const AdjustPanel = ({ job, machines, overrides, engineOn, onClose, onChanged, t
             </div>
             <p className="text-[11px] text-slate-400">{tr("plan_ov_assign_hint")}</p>
             <Btn tone="blue" disabled={!machine && !notBefore}
-              onClick={() => send("assign", { machine: machine || undefined, queue_pos: queuePos || undefined, not_before: notBefore || undefined })}>
+              onClick={() => {
+                const owner = machine ? foreignTo(machines.find((m) => m.machine === machine), job.client) : "";
+                if (owner && !window.confirm(tr("plan_foreign_confirm", { m: machine.replace("MAQUINA", "M"), c: owner, o: job.client || "—" }))) return;
+                send("assign", { machine: machine || undefined, queue_pos: queuePos || undefined, not_before: notBefore || undefined });
+              }}>
               <Pin className="w-4 h-4" />{tr("plan_ov_assign_btn")}
             </Btn>
           </section>
@@ -711,7 +723,7 @@ const fmtDay = (iso, lang) => {
     { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" }).replace(/\./g, "").replace(",", "").replace(/ de /g, " ");
 };
 
-const BoardCard = ({ job, segs, seq, live, today, onAdjust, draggable, tr, lang }) => {
+const BoardCard = ({ job, segs, seq, live, today, onAdjust, draggable, foreign, machine, tr, lang }) => {
   const first = segs[0];
   const last = segs[segs.length - 1];
   // La fila es una cola (lo que no termina un turno lo termina el siguiente):
@@ -799,6 +811,12 @@ const BoardCard = ({ job, segs, seq, live, today, onAdjust, draggable, tr, lang 
               {garment}
             </span>
           )}
+          {foreign && (
+            <span className="px-1.5 py-0.5 rounded-md bg-orange-100 text-orange-800 text-[11px] font-black"
+              title={tr("plan_foreign_hint", { m: String(machine || "").replace("MAQUINA", "M"), c: foreign })}>
+              {tr("plan_foreign_badge")}
+            </span>
+          )}
           {job.is_test && (
             <span className="px-1.5 py-0.5 rounded-md bg-violet-100 text-violet-800 text-[11px] font-black">TEST</span>
           )}
@@ -859,7 +877,8 @@ const machineColumns = (run) => {
   });
 };
 
-const MachineBoard = ({ run, onAdjust, onReorder, full, tr }) => {
+const MachineBoard = ({ run, onAdjust, onReorder, full, machines, tr }) => {
+  const cfgOf = useMemo(() => Object.fromEntries((machines || []).map((m) => [m.machine, m])), [machines]);
   const { lang } = useLang();
   const [machineF, setMachineF] = useState("");
   const [q, setQ] = useState("");
@@ -984,6 +1003,10 @@ const MachineBoard = ({ run, onAdjust, onReorder, full, tr }) => {
     // abajo lo sigue acomodando el motor.
     const n = Math.max(d.from, to) + 1;
     const byId = Object.fromEntries(c.items.map((x) => [x.job.job_id, x.job]));
+    // Fijar ahí una orden de otro cliente en una máquina dedicada: confirmar.
+    const moved = byId[d.id];
+    const owner = foreignTo(cfgOf[c.machine], moved?.client);
+    if (owner && !window.confirm(tr("plan_foreign_confirm", { m: c.machine.replace("MAQUINA", "M"), c: owner, o: moved.client || "—" }))) return;
     setLocalOrder((lo) => ({ ...lo, [c.machine]: d.ids }));
     setSaving(c.machine);
     try {
@@ -1053,7 +1076,8 @@ const MachineBoard = ({ run, onAdjust, onReorder, full, tr }) => {
                       dragging ? "opacity-50 outline-2 outline-dashed outline-blue-400 outline-offset-2" : ""}`}>
                     <BoardCard job={x.job} segs={x.segs}
                       seq={c.items.indexOf(x) + 1} live={live[x.job.order_id]} today={today}
-                      onAdjust={onAdjust} draggable={canDrag} tr={tr} lang={lang} />
+                      onAdjust={onAdjust} draggable={canDrag} foreign={foreignTo(cfgOf[c.machine], x.job.client)}
+                      machine={c.machine} tr={tr} lang={lang} />
                   </div>
                 );
               })}
@@ -1762,7 +1786,7 @@ const HorizonAlert = ({ run, weeks, canEdit, onAdjust, tr }) => {
 };
 
 const ScheduleTab = ({ config, efficiency, run, running, onRun, canEdit, onToggle, onAdjust, onReorder, overrides, history, onUndo,
-  onApplyMoves, applied, onRevertMove, lastApply, onReleaseHolds, tr }) => {
+  onApplyMoves, applied, onRevertMove, lastApply, onReleaseHolds, machines, tr }) => {
   const [status, setStatus] = useState("");
   const [kindF, setKindF] = useState("");
   const [extraOnly, setExtraOnly] = useState(false);
@@ -1998,7 +2022,8 @@ const ScheduleTab = ({ config, efficiency, run, running, onRun, canEdit, onToggl
           </div>
         </div>
         {boardView === "board"
-          ? <MachineBoard run={run} onAdjust={canEdit ? onAdjust : null} onReorder={canEdit ? onReorder : null} full={boardFull} tr={tr} />
+          ? <MachineBoard run={run} onAdjust={canEdit ? onAdjust : null} onReorder={canEdit ? onReorder : null} full={boardFull}
+              machines={machines} tr={tr} />
           : <MachineGrid run={run} onAdjust={canEdit ? onAdjust : null} tr={tr} />}
       </Card>
 
@@ -4101,7 +4126,7 @@ const PlannerModule = () => {
             {tab === "schedule" && <ScheduleTab config={cfgData.config} efficiency={cfgData.efficiency} run={run} running={running} onRun={() => runEngine("manual")} canEdit={canEdit}
               onToggle={toggleEngine} onAdjust={setAdjusting} onReorder={reorderMachine} overrides={ovData.active} history={ovData.history}
               onUndo={undoOverride} onReleaseHolds={releaseHolds} onApplyMoves={applyMoves} applied={applied} onRevertMove={revertMove}
-              lastApply={lastApply} tr={tr} />}
+              lastApply={lastApply} machines={cfgData.machines} tr={tr} />}
             {tab === "projection" && <ProjectionTab canEdit={canEdit} run={run} onCalendarSaved={afterConfigChange} calendar={cfgData.calendar}
               hitsPerShift={cfgData.config.hits_per_shift} tr={tr} />}
             {tab === "machines" && <MachinesTab cfgData={cfgData} canEdit={canEdit} onSaved={afterConfigChange} tr={tr} />}
