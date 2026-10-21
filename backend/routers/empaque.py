@@ -11,12 +11,12 @@ aquí (la orden ya se imprimió): lo urgente lo marca el ENVÍO. La fecha de
 cada orden = su próxima salida en Envíos programados (scheduled_shipments
 con export); sin envío programado, su cancel date.
 
-  Programados   por empacar / en proceso con fecha en los próximos N días
-                (o ya vencida).
-  Por empacar   NECESITA EMPACAR, por fecha.
+  (Sin Programados: empaque sólo trabaja órdenes ya impresas, no hay nada
+  que adelantar.)
+  Por empacar   TODAS las NECESITA EMPACAR, por fecha; cada una dice en qué
+                máquina se pintó o se está pintando.
   En proceso    EN PROCESO DE EMPAQUE, por fecha.
   Por llegar    (sólo lectura) en máquina con EN PRODUCCION: lo que viene.
-  En QC         (sólo lectura) NECESITA QC / CORRECIÓN DE QC.
   Sugeridas     el DPL (packing list digital de la orden) ya suma la cantidad
                 pero el estatus no dice NECESITA QC: el sistema SUGIERE, una
                 persona confirma.
@@ -31,7 +31,7 @@ bitácora, guardas, candado de QC, automatizaciones y broadcast. Editan el
 rol `empaque` + admin/supersu.
 
 Endpoints (prefijo /api/empaque):
-  GET  /queue?days=3          programados, pendientes, proceso, llegando, qc, sugeridas, alertas
+  GET  /queue                 pendientes, proceso, llegando, sugeridas, alertas
   POST /{order_id}/status     {status}
   POST /{order_id}/confirm    NECESITA QC (mandar a QC)
 """
@@ -53,7 +53,6 @@ WRITE_ROLES = {"empaque"} | SUPER_ROLES
 NEEDS = "NECESITA EMPACAR"
 IN_PROCESS = "EN PROCESO DE EMPAQUE"
 QC_STATUS = "NECESITA QC"
-QC_STATUSES = {QC_STATUS, "CORRECIÓN DE QC", "CORRECCIÓN DE QC"}
 PRINTING = "EN PRODUCCION"
 # Lo que el módulo deja elegir. LISTO PARA ENVIO es de QC.
 PACK_STATUSES = [NEEDS, IN_PROCESS, QC_STATUS]
@@ -153,7 +152,29 @@ def _dpl_for(orders: dict) -> tuple[dict, int]:
     return out, pending
 
 
-def _card_factory(ships: dict, dpls: dict, caps: dict, today: str):
+async def _printed_on(orders: dict) -> dict:
+    """{order_id: {machine, printing, last_at}}: en qué máquina se pintó la orden.
+    Si sigue en un tablero MAQUINA, ésa (se está pintando); si no, la máquina de
+    su última captura de producción (production_logs)."""
+    out = {}
+    ids = list(orders)
+    if ids:
+        pipe = [{"$match": {"order_id": {"$in": ids}, "machine": {"$regex": "^MAQUINA"}}},
+                {"$sort": {"created_at": 1}},
+                {"$group": {"_id": "$order_id", "machine": {"$last": "$machine"}, "last_at": {"$last": "$created_at"},
+                            "machines": {"$addToSet": "$machine"}}}]
+        async for r in db.production_logs.aggregate(pipe):
+            out[r["_id"]] = {"machine": r["machine"], "machines": sorted(r.get("machines") or []),
+                             "last_at": r.get("last_at"), "printing": False}
+    for oid, o in orders.items():
+        b = str(o.get("board") or "")
+        if b.startswith("MAQUINA"):
+            out[oid] = {**out.get(oid, {}), "machine": b, "printing": True}
+    return out
+
+
+def _card_factory(ships: dict, dpls: dict, caps: dict, today: str, machines: dict = None):
+    machines = machines or {}
     def card(o: dict) -> dict:
         qty = int(o.get("quantity") or 0)
         ship = ships.get(str(o.get("order_number") or "")) or {}
@@ -196,6 +217,9 @@ def _card_factory(ships: dict, dpls: dict, caps: dict, today: str):
                 "pl_label": o.get("packing_link_label") or "", "pl_url": o.get("packing_link") or "",
                 "suggest_qc": bool(data) and bool(qty) and packed >= qty and st in (NEEDS, IN_PROCESS),
                 "stuck": stuck,
+                "printed_on": (machines.get(o["order_id"]) or {}).get("machine"),
+                "printed_on_all": (machines.get(o["order_id"]) or {}).get("machines") or [],
+                "printing_now": bool((machines.get(o["order_id"]) or {}).get("printing")),
                 "printavo_url": om.printavo_url(o), "components": om.components(o, include_screens=True)}
     return card
 
@@ -205,10 +229,10 @@ def _by_due(c: dict):
 
 
 @router.get("/queue")
-async def queue(request: Request, days: float = om.DEFAULT_WINDOW_DAYS):
+async def queue(request: Request):
     user = await require_auth(request)
     boards = [b for b in await get_dynamic_boards() if str(b).strip().upper() not in DEAD_BOARDS]
-    wanted = [NEEDS, IN_PROCESS, PRINTING, *QC_STATUSES]
+    wanted = [NEEDS, IN_PROCESS, PRINTING]
     orders = {o["order_id"]: o async for o in db.orders.find(
         {"board": {"$in": boards}, "production_status": {"$in": wanted}}, ORDER_PROJ).limit(3000)}
     # Por llegar = en máquina imprimiendo (en SCHEDULING con EN PRODUCCION
@@ -218,39 +242,61 @@ async def queue(request: Request, days: float = om.DEFAULT_WINDOW_DAYS):
     dpls, dpl_pending = _dpl_for(packing)
     from routers.pack_station import packed_totals   # lazy (pack_station importa este módulo)
     caps = await packed_totals(list(packing))
+    machines = await _printed_on(orders)
     today = date.today().isoformat()
-    card = _card_factory(ships, dpls, caps, today)
-    horizon = (date.today() + timedelta(days=max(0.0, om.window_days(days)))).isoformat()
+    card = _card_factory(ships, dpls, caps, today, machines)
 
-    tabs = {"programados": [], "pendientes": [], "proceso": [], "llegando": [], "qc": [],
+    tabs = {"pendientes": [], "proceso": [], "llegando": [],
             "sugeridas": [], "alertas": []}
     for o in orders.values():
         st, c = _status(o), None
         if st in (NEEDS, IN_PROCESS):
             c = card(o)
-            due_soon = bool(c["due"] and c["due"] <= horizon)
-            if st == IN_PROCESS:
-                tabs["proceso"].append(c)
-            elif due_soon:
-                tabs["programados"].append(c)
-            else:
-                tabs["pendientes"].append(c)
-            if st == IN_PROCESS and due_soon:
-                tabs["programados"].append(c)
+            # Por empacar = TODAS las NECESITA EMPACAR, por fecha. Sin pestaña
+            # Programados: empaque sólo trabaja órdenes ya impresas, no hay nada
+            # que adelantar (decisión del usuario 2026-10-21).
+            tabs["proceso" if st == IN_PROCESS else "pendientes"].append(c)
             if c["suggest_qc"]:
                 tabs["sugeridas"].append(c)
             if c["stuck"] or c["overdue"]:
                 tabs["alertas"].append(c)
-        elif st in QC_STATUSES:
-            tabs["qc"].append(card(o))
         elif st == PRINTING and str(o.get("board") or "").startswith("MAQUINA"):
             tabs["llegando"].append(card(o))
     for k, lst in tabs.items():
         lst.sort(key=_by_due)
         tabs[k] = lst[:LIST_MAX]
     return {"statuses": PACK_STATUSES, "confirm_status": QC_STATUS, "stuck_days": STUCK_DAYS,
-            "days": om.window_days(days), "dpl_pending": dpl_pending, **tabs,
+            "dpl_pending": dpl_pending, **tabs,
             "can_edit": bool(user_roles(user) & WRITE_ROLES)}
+
+
+@router.get("/kpis")
+async def kpis(request: Request):
+    """KPIs del día para la pestaña Resumen (lo de la cola sale de /queue):
+    empacado en la estación hoy (cajas y piezas) y órdenes mandadas a QC hoy y
+    en los últimos 7 días (bitácora: Production Status → NECESITA QC). "Hoy" es
+    el día de Tijuana."""
+    import zoneinfo
+    await require_auth(request)
+    tz = zoneinfo.ZoneInfo("America/Tijuana")
+    start = datetime.now(tz).replace(hour=0, minute=0, second=0, microsecond=0)
+    today_utc = start.astimezone(timezone.utc).isoformat()
+    week_utc = (start - timedelta(days=6)).astimezone(timezone.utc).isoformat()
+    packed = {"boxes": 0, "pcs": 0, "packers": 0}
+    async for r in db.pack_boxes.aggregate([
+            {"$match": {"created_at": {"$gte": today_utc}, "voided": {"$ne": True}}},
+            {"$group": {"_id": None, "boxes": {"$sum": 1}, "pcs": {"$sum": "$total"}, "packers": {"$addToSet": "$packer"}}}]):
+        packed = {"boxes": r["boxes"], "pcs": int(r["pcs"] or 0), "packers": len(r.get("packers") or [])}
+    to_qc = {"today": 0, "week": 0}
+    async for r in db.activity_logs.aggregate([
+            {"$match": {"timestamp": {"$gte": week_utc}, "action": "update_order",
+                        "details.changes.production_status.to": QC_STATUS}},
+            {"$group": {"_id": {"$gte": ["$timestamp", today_utc]}, "orders": {"$addToSet": "$details.order_id"}}}]):
+        n = len(r.get("orders") or [])
+        to_qc["week"] += n
+        if r["_id"]:
+            to_qc["today"] = n
+    return {"packed_today": packed, "to_qc": to_qc}
 
 
 async def _set_status(order_id: str, status: str, request: Request) -> dict:

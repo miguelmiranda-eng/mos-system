@@ -1,14 +1,15 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  ArrowLeft, PackageCheck, RefreshCw, Loader2, CalendarCheck, ListTodo, Sparkles, Search, Send,
-  AlertTriangle, Loader, Truck, ShieldCheck, FileSpreadsheet, Tablet,
+  ArrowLeft, PackageCheck, RefreshCw, Loader2, ListTodo, Sparkles, Search, Send,
+  AlertTriangle, Loader, Truck, FileSpreadsheet, Tablet, LayoutDashboard,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useLang } from '../contexts/LanguageContext';
 import { Toaster } from './ui/sonner';
+import { EmpaqueSummary } from './modules/PackingLoadChart';
 import {
-  REFRESH_MS, call, fmtDay, readWindow, saveWindow, WindowSelect, useOrderChangeReload, Components, PrintavoLink,
+  REFRESH_MS, call, fmtDay, useOrderChangeReload, Components, PrintavoLink,
 } from './modules/shared';
 
 // Módulo de Empaque. Reemplazará al tablero EMPAQUE. Entra lo que dice
@@ -40,6 +41,12 @@ function OrderCard({ c, t, canEdit, readOnly, statuses, confirmStatus, busy, onS
           <PrintavoLink url={c.printavo_url} t={t} />
           {c.priority && <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-red-500/15 text-red-500">{c.priority}</span>}
           {c.packing_type && <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-secondary">{c.packing_type}</span>}
+          {c.printed_on && (
+            <span className={`text-[10px] font-black px-1.5 py-0.5 rounded ${c.printing_now ? 'bg-emerald-600 text-white' : 'bg-sky-500/15 text-sky-700 dark:text-sky-300'}`}
+              title={c.printed_on_all?.length > 1 ? c.printed_on_all.join(', ') : undefined}>
+              {t(c.printing_now ? 'emp_printing_on' : 'emp_printed_on', { m: c.printed_on.replace('MAQUINA', 'M') })}
+            </span>
+          )}
           <span className="text-sm text-muted-foreground truncate">{c.client}{c.branding ? ` · ${c.branding}` : ''}</span>
         </div>
         <div className="text-xs text-muted-foreground mt-1 flex flex-wrap gap-x-4 gap-y-1">
@@ -122,18 +129,18 @@ export default function EmpaqueModule() {
   const [data, setData] = useState(null);
   const [err, setErr] = useState('');
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState('sched');
-  const [days, setDays] = useState(() => readWindow('mos_empaque_days'));
-  const changeDays = (d) => { setDays(d); saveWindow('mos_empaque_days', d); };
+  const [tab, setTab] = useState('pend');
   const [q, setQ] = useState('');
   const [busyId, setBusyId] = useState('');
   const loadRef = useRef(null);
   const dplRetry = useRef(0);
 
+  const [kpis, setKpis] = useState(null);
   const load = useCallback(async () => {
     try {
-      const d = await call(`/empaque/queue?days=${days}`);
+      const d = await call('/empaque/queue');
       setData(d);
+      call('/empaque/kpis').then(setKpis).catch(() => {});
       setErr('');
       // El DPL se descarga en segundo plano: una o dos recargas lo completan.
       if (d.dpl_pending > 0 && dplRetry.current < 2) {
@@ -147,7 +154,7 @@ export default function EmpaqueModule() {
     } finally {
       setLoading(false);
     }
-  }, [days]);
+  }, []);
   loadRef.current = load;
 
   useEffect(() => {
@@ -173,15 +180,14 @@ export default function EmpaqueModule() {
   const statuses = data?.statuses || [];
 
   const lists = {
-    sched: data?.programados || [],
+    dash: [],
     pend: data?.pendientes || [],
     proc: data?.proceso || [],
     sug: data?.sugeridas || [],
     alert: data?.alertas || [],
     coming: data?.llegando || [],
-    qc: data?.qc || [],
   };
-  const readOnlyTab = tab === 'coming' || tab === 'qc';
+  const readOnlyTab = tab === 'coming';
   const words = q.trim().toLowerCase().split(/\s+/).filter(Boolean);
   const all = lists[tab];
   const shown = words.length === 0 ? all : all.filter((c) => {
@@ -194,13 +200,13 @@ export default function EmpaqueModule() {
     <button type="button" onClick={() => setTab(key)}
       className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-black uppercase tracking-wider transition-colors
         ${tab === key ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-secondary'}`}>
-      <Icon size={14} /> {label} <span className="opacity-70">{lists[key].length}</span>
+      <Icon size={14} /> {label} {key !== 'dash' && <span className="opacity-70">{lists[key].length}</span>}
     </button>
   );
   const hint = {
-    sched: t('emp_scheduled_hint', { n: days }), pend: t('emp_pending_hint'), proc: t('emp_process_hint'),
+    pend: t('emp_pending_hint'), proc: t('emp_process_hint'),
     sug: t('emp_suggested_hint'), alert: t('emp_alerts_hint', { d: data?.stuck_days || 3 }),
-    coming: t('emp_coming_hint'), qc: t('emp_qc_hint'),
+    coming: t('emp_coming_hint'),
   }[tab];
 
   return (
@@ -225,14 +231,12 @@ export default function EmpaqueModule() {
           </button>
         </div>
         <div className="flex gap-2 mt-4 flex-wrap">
-          {tabBtn('sched', t('mod_tab_scheduled'), CalendarCheck)}
+          {tabBtn('dash', t('emp_tab_summary'), LayoutDashboard)}
           {tabBtn('pend', t('emp_tab_pending'), ListTodo)}
           {tabBtn('proc', t('blk_tab_process'), Loader)}
           {tabBtn('sug', t('emp_tab_suggested'), Sparkles)}
           {tabBtn('alert', t('mod_tab_alerts'), AlertTriangle)}
           {tabBtn('coming', t('emp_tab_coming'), Truck)}
-          {tabBtn('qc', t('emp_tab_qc'), ShieldCheck)}
-          <WindowSelect days={days} onChange={changeDays} t={t} />
         </div>
       </header>
 
@@ -241,6 +245,10 @@ export default function EmpaqueModule() {
           <div className="rounded-lg border border-border bg-card text-xs p-3 text-muted-foreground">{t('emp_readonly')}</div>
         )}
         {err && <div className="rounded-lg border border-red-500/40 bg-red-500/10 text-red-500 text-sm p-3">{err}</div>}
+        {tab === 'dash' ? (
+          data ? <EmpaqueSummary data={data} kpis={kpis} t={t} onGo={setTab} />
+            : <div className="flex justify-center py-20"><Loader2 className="animate-spin" /></div>
+        ) : (<>
         {hint && (
           <div className={`rounded-lg border text-xs p-3 ${tab === 'alert' ? 'border-red-500/40 bg-red-500/10'
             : tab === 'sug' ? 'border-emerald-500/40 bg-emerald-500/10' : 'border-border bg-card text-muted-foreground'}`}>{hint}</div>
@@ -266,6 +274,7 @@ export default function EmpaqueModule() {
               busy={busyId === c.order_id} onStatus={onStatus} />
           ))
         )}
+        </>)}
       </main>
     </div>
   );
