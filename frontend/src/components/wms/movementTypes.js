@@ -21,6 +21,8 @@ export const MV_TYPE_KEYS = {
   staged_store: "wms_bs_mv_staged_store", staged_issue: "wms_bs_mv_staged_issue",
   // Resurtido sobre el mismo ticket (services/resupply.py).
   pick_resupply_created: "wms_bs_mv_pick_resupply_created", pick_resupply_cancelled: "wms_bs_mv_pick_resupply_cancelled",
+  // Reversa de surtido: el material vuelve al inventario en la ubicación elegida.
+  pick_reverted: "wms_mv_pick_reverted",
   cycle_count_shrink: "wms_bs_mv_cycle_count_shrink", cycle_count_manual_discard: "wms_bs_mv_cycle_count_manual_discard",
   cycle_count_manual_create: "wms_bs_mv_cycle_count_manual_create", cycle_count_bind_box: "wms_bs_mv_cycle_count_bind_box",
   box_generated: "wms_bs_mv_box_generated", box_style_restored: "wms_bs_mv_box_style_restored",
@@ -75,6 +77,26 @@ export const MV_TYPE_KEYS = {
 // ~100 en la bitácora, muchos de scripts de limpieza) salen con el código
 // en palabras ("lif cart cleanup").
 export const mvTypeLabel = (type, t) => (MV_TYPE_KEYS[type] ? t(MV_TYPE_KEYS[type]) : String(type || "").replace(/_/g, " "));
+
+// Dirección del movimiento para el historial: ENTRADA = el material entra al
+// inventario, SALIDA = sale. Las reubicaciones/ajustes internos quedan en blanco
+// (no entran ni salen del almacén). Para la hoja de historial del balance por SKU.
+const MV_IN_TYPES = new Set([
+  "receiving", "receiving_update", "asn_receipt", "asn_imported",
+  "manual_inventory_add", "box_generated", "box_reactivated", "material_return",
+  "pick_reverted", "staged_unpick", "cycle_count_manual_create", "cycle_count_restore",
+  "box_style_restored",
+]);
+const MV_OUT_TYPES = new Set([
+  "pick_deduction", "pick_size", "pick_boxes", "shipment", "exit_to_production",
+  "neck_cut_delivery", "manual_inventory_remove", "writeoff_papel_muerto",
+  "empty_box_removed", "cycle_count_shrink", "cycle_count_manual_discard",
+  "box_deleted", "staged_issue", "inventory_deleted",
+]);
+export const mvDirection = (type, t) =>
+  MV_IN_TYPES.has(type) ? t("wms_mv_dir_in")
+    : MV_OUT_TYPES.has(type) ? t("wms_mv_dir_out")
+    : "";
 
 // Familias para el desplegable de Auditoría → Movimientos: un clic filtra
 // todas las variantes de un mismo hecho físico. El putaway de la PDA se

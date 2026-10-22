@@ -8,7 +8,7 @@ import * as XLSX from "xlsx";
 import { saveAs } from "file-saver";
 import { useLang } from "../../contexts/LanguageContext";
 import { fetcher, poster, logLoadError, useWms } from "./lib";
-import { mvTypeLabel, MV_TYPE_FAMILIES } from "./movementTypes";
+import { mvTypeLabel, mvDirection, MV_TYPE_FAMILIES } from "./movementTypes";
 import { Btn, Th, Chip, tableCls } from "./ui";
 
 // Módulo de Auditoría — admin nivel 5 y supersu (el backend valida con
@@ -411,6 +411,31 @@ const SkuTab = () => {
       ...(dg.causas || []).map((x, i) => ({ Campo: `Causa ${i + 1}`, Valor: x })),
     ];
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(resumen), "Resumen");
+
+    // Hoja "Historial": la vida completa del material — cada entrada, salida,
+    // ajuste y reubicación en orden cronológico, con tipo legible, dirección,
+    // fecha, caja, ubicación y referencia (orden/ticket/recibo).
+    const hist = (data.historial || []).map((m) => ({
+      "Fecha": m.created_at ? new Date(m.created_at).toLocaleString() : "",
+      "Tipo": mvTypeLabel(m.type, t),
+      "Dirección": mvDirection(m.type, t),
+      "Caja": m.box_id || "",
+      "Talla": m.size || "",
+      "Unidades": m.units || "",
+      "Antes": m.before || "",
+      "Después": m.after || "",
+      "Δ": m.delta || "",
+      "De": m.from || "",
+      "A": m.to || "",
+      "Ubicación": m.location || "",
+      "Orden": m.order_number || "",
+      "Ticket": m.ticket_id || "",
+      "Recibo": m.receiving_id || "",
+      "Usuario": m.user_name || "",
+      "Detalle": m.detail || "",
+    }));
+    const wsHist = XLSX.utils.json_to_sheet(hist.length ? hist : [{ "Fecha": "(sin movimientos)" }]);
+    XLSX.utils.book_append_sheet(wb, wsHist, "Historial");
 
     const buf = XLSX.write(wb, { bookType: "xlsx", type: "array" });
     const tag = [data.style, data.color, data.size].filter(Boolean).join("_").replace(/[^\w-]+/g, "");

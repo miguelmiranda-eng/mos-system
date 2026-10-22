@@ -9687,14 +9687,21 @@ async def audit_sku(request: Request, style: str, color: str = "", size: str = "
         "causas": causas,
     }
 
-    movements = await get_sku_movement_history(style.strip(), color.strip(), size.strip(), 100)
+    # Historia de vida del material: TODOS los movimientos que lo tocaron
+    # (entradas, surtidos, ajustes, reubicaciones, reversas…). Aplanados a
+    # columnas con el MISMO proyector que Auditoría → Movimientos (pantalla =
+    # Excel) y en orden cronológico (viejo → nuevo) para leerlo como timeline.
+    # Tope alto (2000): cubre la vida de un SKU sin reventar el payload.
+    movements = await get_sku_movement_history(style.strip(), color.strip(), size.strip(), 2000)
+    historial = [r for m in reversed(movements) for r in _explode_movement_rows(m)]
     return {
         "style": style.strip().upper(), "color": color.strip().upper(), "size": size.strip().upper(),
         "balance": {"recibido": recibido, "pickeado": pickeado, "esperado": esperado,
                     "en_mano": on_hand, "diferencia": diff},
         "recibos": recv_list, "tickets": tickets, "inventario": inv_rows,
         "cajas_por_status": boxes_by_status, "cajas_desglose": cajas_desglose,
-        "cajas_lista": cajas_lista, "diagnostico": diagnostico, "movimientos": movements,
+        "cajas_lista": cajas_lista, "diagnostico": diagnostico,
+        "movimientos": movements[:100], "historial": historial,
     }
 
 
