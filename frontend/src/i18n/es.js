@@ -4513,6 +4513,8 @@ const es = {
   wms_audit_tickets_count: "{n} tickets",
   wms_audit_expected_rp: "Esperado (R−P)",
   wms_audit_on_hand_system: "En mano (sistema)",
+  wms_audit_hist_range: "Historial:",
+  wms_audit_hist_all: "Toda la vida",
   wms_audit_balances: "cuadra",
   wms_audit_review_phantom: "revisar: fantasma o entradas sin rastrear",
   wms_audit_diagnosis_label: "Diagnóstico:",

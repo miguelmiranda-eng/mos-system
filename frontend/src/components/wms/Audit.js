@@ -359,6 +359,9 @@ const SkuTab = () => {
   const [form, setForm] = useState({ style: "", color: "", size: "" });
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
+  // Rango de fecha para la hoja "Historial" del export (vacío = toda la vida).
+  const [histFrom, setHistFrom] = useState("");
+  const [histTo, setHistTo] = useState("");
 
   const run = async (e) => {
     e?.preventDefault();
@@ -409,13 +412,24 @@ const SkuTab = () => {
       { Campo: "", Valor: "" },
       { Campo: "Diagnóstico", Valor: dg.mensaje || "" },
       ...(dg.causas || []).map((x, i) => ({ Campo: `Causa ${i + 1}`, Valor: x })),
+      { Campo: "", Valor: "" },
+      { Campo: "Historial — desde", Valor: histFrom || "(inicio)" },
+      { Campo: "Historial — hasta", Valor: histTo || "(hoy)" },
     ];
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(resumen), "Resumen");
 
     // Hoja "Historial": la vida completa del material — cada entrada, salida,
     // ajuste y reubicación en orden cronológico, con tipo legible, dirección,
-    // fecha, caja, ubicación y referencia (orden/ticket/recibo).
-    const hist = (data.historial || []).map((m) => ({
+    // fecha, caja, ubicación y referencia (orden/ticket/recibo). Acotada al
+    // rango de fecha elegido (vacío = toda la vida).
+    const inRange = (iso) => {
+      const d = (iso || "").slice(0, 10);
+      if (!d) return !histFrom && !histTo;   // sin fecha: solo si no hay filtro
+      if (histFrom && d < histFrom) return false;
+      if (histTo && d > histTo) return false;
+      return true;
+    };
+    const hist = (data.historial || []).filter((m) => inRange(m.created_at)).map((m) => ({
       "Fecha": m.created_at ? new Date(m.created_at).toLocaleString() : "",
       "Tipo": mvTypeLabel(m.type, t),
       "Dirección": mvDirection(m.type, t),
@@ -439,8 +453,9 @@ const SkuTab = () => {
 
     const buf = XLSX.write(wb, { bookType: "xlsx", type: "array" });
     const tag = [data.style, data.color, data.size].filter(Boolean).join("_").replace(/[^\w-]+/g, "");
+    const rango = (histFrom || histTo) ? `_${histFrom || "inicio"}_a_${histTo || "hoy"}` : "";
     saveAs(new Blob([buf], { type: "application/octet-stream" }),
-      `Balance_SKU_${tag || "export"}_${new Date().toISOString().split("T")[0]}.xlsx`);
+      `Balance_SKU_${tag || "export"}${rango}_${new Date().toISOString().split("T")[0]}.xlsx`);
     toast.success(t("wms_excel_exported"));
   };
   return (
@@ -457,7 +472,23 @@ const SkuTab = () => {
       </form>
       {data && (
         <>
-          <div className="flex justify-end">
+          <div className="flex flex-wrap items-end justify-end gap-2">
+            <div className="flex items-center gap-2 mr-auto text-xs text-muted-foreground">
+              <span className="font-semibold uppercase tracking-wider">{t("wms_audit_hist_range")}</span>
+              <label className="flex items-center gap-1">
+                <span>{t("wms_aud_from")}</span>
+                <input type="date" value={histFrom} max={histTo || undefined} onChange={(e) => setHistFrom(e.target.value)}
+                  className="px-2 py-1 bg-card border border-input rounded-md text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-ring/25" />
+              </label>
+              <label className="flex items-center gap-1">
+                <span>{t("wms_aud_to")}</span>
+                <input type="date" value={histTo} min={histFrom || undefined} onChange={(e) => setHistTo(e.target.value)}
+                  className="px-2 py-1 bg-card border border-input rounded-md text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-ring/25" />
+              </label>
+              {(histFrom || histTo) && (
+                <button onClick={() => { setHistFrom(""); setHistTo(""); }} className="text-primary hover:underline">{t("wms_audit_hist_all")}</button>
+              )}
+            </div>
             <Btn onClick={exportExcel} disabled={loading}>
               <Download className="w-4 h-4" /> {t("export_excel")}
             </Btn>

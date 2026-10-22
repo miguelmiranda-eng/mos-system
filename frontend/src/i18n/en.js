@@ -4699,6 +4699,8 @@ const en = {
   wms_audit_tickets_count: "{n} tickets",
   wms_audit_expected_rp: "Expected (R−P)",
   wms_audit_on_hand_system: "On hand (system)",
+  wms_audit_hist_range: "History:",
+  wms_audit_hist_all: "Full life",
   wms_audit_balances: "balances",
   wms_audit_review_phantom: "review: phantom or untracked entries",
   wms_audit_diagnosis_label: "Diagnosis:",
