@@ -7859,20 +7859,36 @@ async def confirm_pick(ticket_id: str, request: Request, stocktake_id: str = Non
     return {"message": "Pick confirmado", "ticket_id": target_id}
 
 
-async def _revert_pick_ticket(ticket, user, reason=""):
-    """Reversa COMPLETA de un surtido ya hecho (no un borrado a ciegas):
-    - regresa cada pieza a su caja de origen (des-vacía las cajas vaciadas),
-    - re-acredita lo que salió SIN caja directo al inventario,
-    - reproyecta cada celda tocada DESDE las cajas (la caja es la verdad),
+async def _revert_pick_ticket(ticket, user, reason="", destination_location=""):
+    """Reversa de un surtido ya hecho (no un borrado a ciegas). El material NO
+    vuelve solo a sus racks de origen: el supervisor ELIGE la ubicación destino y
+    ahí se coloca, conservando la identidad (país/composición/talla) de cada caja
+    de origen. En concreto:
+    - agrupa las piezas surtidas por identidad (sku/color/talla/país/composición),
+    - crea UNA caja por grupo en `destination_location` con esas piezas,
+    - reproyecta cada celda del destino DESDE las cajas (la caja es la verdad),
     - anula el surtido en tránsito/OM (wms_staged_boxes) si existe,
-    - archiva los movimientos pick_deduction en UN 'pick_reverted' y los borra
-      (así el surtido sale de la pantalla de Surtido, que se arma de ellos),
+    - archiva los pick_deduction en UN 'pick_reverted' y los borra (sale de la
+      pantalla de Surtido),
     - devuelve el ticket a pendiente/sin asignar (como antes de surtir).
+    Las cajas de ORIGEN quedan como están: el material ya había salido de ahí.
     Antes de tocar nada deja un respaldo en wms_pick_revert_bak.
-    Devuelve un resumen de lo restaurado."""
+
+    Lanza HTTPException(400) si la ubicación destino no existe."""
     ticket_id = ticket["ticket_id"]
     order_number = ticket.get("order_number")
     order_id = ticket.get("order_id")
+
+    # La ubicación destino la ELIGE el supervisor; debe existir en wms_locations.
+    dest = (destination_location or "").strip().upper()
+    if not dest:
+        raise HTTPException(400, "Elige la ubicación a donde regresa el material.")
+    loc_doc = await db.wms_locations.find_one(
+        {"name": {"$regex": f"^{re.escape(dest)}$", "$options": "i"}}, {"_id": 0, "name": 1})
+    if not loc_doc:
+        raise HTTPException(400, f"La ubicación '{dest}' no existe. Créala primero o elige otra.")
+    dest = loc_doc["name"]
+
     movs = await db.wms_movements.find(
         {"type": "pick_deduction", "details.ticket_id": ticket_id}, {"_id": 0}).to_list(5000)
     staged = await db[staging.COLL].find_one(
@@ -7883,59 +7899,73 @@ async def _revert_pick_ticket(ticket, user, reason=""):
     await db.wms_pick_revert_bak.insert_one({
         "revert_id": revert_id, "ticket_id": ticket_id, "order_number": order_number,
         "at": now_iso(), "by": user.get("user_id"), "by_name": user.get("name", ""),
-        "reason": reason, "ticket": ticket, "movements": movs, "staged": staged,
+        "reason": reason, "destination": dest, "ticket": ticket, "movements": movs, "staged": staged,
     })
 
-    restored_boxes = 0
-    restored_units = 0
-    no_box_credit = 0
-    cells = {}          # (style, sku, color, size, location) -> None (dedupe para reproyectar)
-    no_box_cells = {}   # (style, color, size, location, customer) -> qty (saldo sin caja)
-
+    # Agrupa las piezas surtidas por IDENTIDAD, leyendo la caja de origen para
+    # conservar país/composición (son parte de la identidad del inventario). Lo
+    # que salió sin caja se agrupa sin país/composición.
+    groups = {}   # (sku, style, color, size, coo, fabric, customer, is_bpo) -> {"qty", "origins"}
+    returned_units = 0
     for mv in movs:
         d = mv.get("details", {})
-        style = d.get("style") or ""
-        color = d.get("color") or ""
-        size = d.get("size") or ""
+        m_style = d.get("style") or ""
+        m_color = d.get("color") or ""
+        m_size = d.get("size") or ""
         for b in (d.get("boxes") or []):
             bid = b.get("box_id")
             taken = int(b.get("taken") or 0)
             if taken <= 0:
                 continue
             box = await db.wms_boxes.find_one({"box_id": bid}) if bid else None
-            if not box:
-                # La caja ya no existe: re-acredita el saldo a inventario por ubicación.
-                loc = b.get("location") or d.get("location") or ""
-                k = (style, color, size, loc, "")
-                no_box_cells[k] = no_box_cells.get(k, 0) + taken
-                no_box_credit += taken
-                continue
-            set_fields = {"last_reverted_at": now_iso(), "last_revert_id": revert_id}
-            if box.get("status") == "depleted":
-                set_fields["status"] = "stored"   # des-vacía: la caja vuelve a estar viva
-            await db.wms_boxes.find_one_and_update(
-                {"_id": box["_id"]},
-                {"$inc": {"units": taken, "qty": taken}, "$set": set_fields})
-            restored_boxes += 1
-            restored_units += taken
-            cells[(box.get("style") or style, box.get("sku") or style,
-                   box.get("color", color), box.get("size", size),
-                   box.get("location") or b.get("location") or "")] = None
+            if box:
+                key = (box.get("sku") or m_style, box.get("style") or m_style,
+                       box.get("color", m_color), box.get("size", m_size),
+                       box.get("country_of_origin") or box.get("coo") or "",
+                       box.get("fabric_content") or "", box.get("customer") or "",
+                       bool(box.get("is_bpo")))
+            else:
+                key = (m_style, m_style, m_color, m_size, "", "", "", False)
+            g = groups.setdefault(key, {"qty": 0, "origins": []})
+            g["qty"] += taken
+            if bid:
+                g["origins"].append(bid)
+            returned_units += taken
         nb = int(d.get("no_box_units") or 0)
         if nb > 0:
-            loc = d.get("location") or ""
-            k = (style, color, size, loc, "")
-            no_box_cells[k] = no_box_cells.get(k, 0) + nb
-            no_box_credit += nb
+            key = (m_style, m_style, m_color, m_size, "", "", "", False)
+            g = groups.setdefault(key, {"qty": 0, "origins": []})
+            g["qty"] += nb
+            returned_units += nb
 
-    # Reproyecta cada celda con caja DESDE las cajas (fija units/total_boxes = suma real).
-    for (st, sku, col, sz, loc) in cells:
-        await _reproject_material_rows(st, sku, col, sz, loc, user=user,
-                                       contexto={"ticket_id": ticket_id, "reason": "revert_surtido"})
-    # El saldo SIN caja se suma DESPUÉS del reproyecto (el reproyecto fija el valor
-    # absoluto de las cajas; esto es papel heredado que no tiene caja detrás).
-    for (st, col, sz, loc, cust), qty in no_box_cells.items():
-        await _update_inventory_enhanced(st, col, sz, qty, "add", location=loc, customer=cust)
+    # Crea UNA caja por grupo en la ubicación destino. seq_num se fija para que el
+    # re-base del contador de BOX-id siga viendo el máximo real.
+    created = []
+    if groups:
+        first_seq = await _reserve_box_seqs(len(groups))
+        for i, (key, g) in enumerate(groups.items()):
+            sku, style, color, size, coo, fabric, customer, is_bpo = key
+            seq = first_seq + i
+            box_id = f"BOX-{seq:06d}"
+            await db.wms_boxes.insert_one({
+                "box_id": box_id, "barcode": box_id, "lpn_id": box_id, "seq_num": seq,
+                "sku": sku or style, "style": style, "color": color, "size": size,
+                "units": g["qty"], "qty": g["qty"], "location": dest,
+                "status": "stored", "state": "raw", "is_bpo": is_bpo,
+                "customer": customer, "coo": coo, "country_of_origin": coo,
+                "fabric_content": fabric,
+                "created_at": now_iso(), "received_at": now_iso(),
+                # Rastro de la reversa: de qué surtido y de qué cajas vino.
+                "reverted_from_ticket": ticket_id, "revert_id": revert_id,
+                "origin_box_ids": g["origins"],
+            })
+            created.append({"box_id": box_id, "size": size, "coo": coo,
+                            "qty": g["qty"], "origins": g["origins"]})
+        # Reproyecta cada celda del destino desde las cajas (verdad = cajas).
+        for (g_style, g_sku, g_color, g_size) in {(k[1], k[0], k[2], k[3]) for k in groups}:
+            await _reproject_material_rows(g_style, g_sku, g_color, g_size, dest, user=user,
+                                           contexto={"ticket_id": ticket_id, "reason": "revert_surtido",
+                                                     "destination": dest})
 
     # Anula el surtido en tránsito/OM si lo había (sale del mapa de surtidos).
     if staged:
@@ -7951,9 +7981,9 @@ async def _revert_pick_ticket(ticket, user, reason=""):
     # surtido desaparece de ahí sin perder la historia (queda en 'pick_reverted').
     await log_movement(user, "pick_reverted", {
         "ticket_id": ticket_id, "order_number": order_number, "revert_id": revert_id,
-        "reason": reason, "restored_boxes": restored_boxes, "restored_units": restored_units,
-        "no_box_credit": no_box_credit, "reverted_movements": len(movs),
-        "original_deductions": movs,
+        "reason": reason, "destination": dest, "returned_units": returned_units,
+        "created_boxes": [c["box_id"] for c in created], "boxes_detail": created,
+        "reverted_movements": len(movs), "original_deductions": movs,
     })
     if movs:
         await db.wms_movements.delete_many({"type": "pick_deduction", "details.ticket_id": ticket_id})
@@ -7979,8 +8009,8 @@ async def _revert_pick_ticket(ticket, user, reason=""):
         await db.orders.update_one({"order_id": order_id}, {"$unset": {"wms_status": ""}})
 
     await notify_badge_change("picking")
-    return {"revert_id": revert_id, "restored_boxes": restored_boxes,
-            "restored_units": restored_units, "no_box_credit": no_box_credit,
+    return {"revert_id": revert_id, "destination": dest, "returned_units": returned_units,
+            "created_boxes": len(created), "boxes": created,
             "reverted_movements": len(movs), "staged_voided": bool(staged)}
 
 
@@ -7993,6 +8023,9 @@ async def revert_pick_ticket(ticket_id: str, request: Request):
     user = await require_action(request, "picking.revert_surtido")
     body = await request.json() if request.headers.get("content-length") else {}
     reason = str(body.get("reason") or "").strip()
+    destination_location = str(body.get("destination_location") or "").strip()
+    if not destination_location:
+        raise HTTPException(400, "Elige la ubicación a donde regresa el material.")
     ticket = await db.wms_pick_tickets.find_one({"ticket_id": ticket_id})
     if not ticket:
         raise HTTPException(404, "Pick ticket no encontrado")
@@ -8000,7 +8033,8 @@ async def revert_pick_ticket(ticket_id: str, request: Request):
         {"type": "pick_deduction", "details.ticket_id": ticket_id})
     if not has_mov and not ticket.get("deducted_map") and not ticket.get("picked_sizes"):
         raise HTTPException(409, "El ticket no tiene surtido que revertir.")
-    summary = await _revert_pick_ticket(ticket, user, reason=reason)
+    summary = await _revert_pick_ticket(ticket, user, reason=reason,
+                                        destination_location=destination_location)
     return {"message": "Surtido revertido", "ticket_id": ticket_id, **summary}
 
 

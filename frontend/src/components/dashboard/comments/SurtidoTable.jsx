@@ -96,26 +96,47 @@ function TicketBlock({ ticket, currentUser, onReverted }) {
   const hasExtras = pivot.rows.some((r) => r.extra > 0);
   const noSurtido = pivot.totalPicked === 0; // 0 surtido en el WMS = nunca se pickeó aquí
   const [reverting, setReverting] = useState(false);
+  const [panelOpen, setPanelOpen] = useState(false);
+  const [dest, setDest] = useState("");
+  const [reason, setReason] = useState("");
+  const [locs, setLocs] = useState(null); // null = aún sin cargar
   const canRevert = canRevertSurtido(currentUser);
 
-  // Revertir surtido: devuelve el material al inventario, limpia los movimientos
-  // de surtido y regresa el ticket a pendiente. Destructivo: confirma primero.
-  const handleRevert = useCallback(async () => {
+  // Al abrir el panel, carga los nombres de ubicación para el selector (una vez).
+  const openPanel = useCallback(async () => {
+    setPanelOpen(true);
+    if (locs !== null) return;
+    try {
+      const res = await fetch(`${API}/wms/locations/names`, { credentials: "include" });
+      const data = res.ok ? await res.json() : [];
+      setLocs((Array.isArray(data) ? data : []).map((l) => l.name).filter(Boolean));
+    } catch {
+      setLocs([]);
+    }
+  }, [locs]);
+
+  // Revertir: el supervisor ELIGE a qué ubicación regresa el material. El backend
+  // crea las cajas ahí (conservando país/composición) y limpia el surtido.
+  const submitRevert = useCallback(async () => {
     if (reverting) return;
-    const ok = window.confirm(t('comment_revert_confirm', { n: pivot.totalPicked }));
-    if (!ok) return;
-    const reason = window.prompt(t('comment_revert_reason')) || "";
+    const destination_location = dest.trim();
+    if (!destination_location) {
+      toast.error(t('comment_revert_need_dest'));
+      return;
+    }
     setReverting(true);
     try {
       const res = await fetch(
         `${API}/wms/pick-tickets/${encodeURIComponent(ticket.ticket_id)}/revert`,
         { method: "POST", credentials: "include",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ reason }) }
+          body: JSON.stringify({ reason: reason.trim(), destination_location }) }
       );
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
-        toast.success(t('comment_revert_ok', { n: data.restored_units ?? pivot.totalPicked }));
+        toast.success(t('comment_revert_ok', { n: data.returned_units ?? pivot.totalPicked, loc: data.destination || destination_location }));
+        setPanelOpen(false);
+        setDest(""); setReason("");
         onReverted?.();
       } else {
         toast.error(data.detail || t('comment_revert_err'));
@@ -125,7 +146,7 @@ function TicketBlock({ ticket, currentUser, onReverted }) {
     } finally {
       setReverting(false);
     }
-  }, [reverting, ticket.ticket_id, pivot.totalPicked, onReverted, t]);
+  }, [reverting, dest, reason, ticket.ticket_id, pivot.totalPicked, onReverted, t]);
 
   if (pivot.rows.length === 0) return null;
 
@@ -154,17 +175,67 @@ function TicketBlock({ ticket, currentUser, onReverted }) {
         </span>
         {canRevert && !noSurtido && (
           <button
-            onClick={handleRevert}
+            onClick={() => (panelOpen ? setPanelOpen(false) : openPanel())}
             disabled={reverting}
             data-testid={`revert-surtido-${ticket.ticket_id}`}
             title={t('comment_revert_title')}
-            className="text-[10px] font-bold px-2 py-0.5 rounded flex items-center gap-1 border border-red-500/40 text-red-500 hover:bg-red-500/10 disabled:opacity-50"
+            className={`text-[10px] font-bold px-2 py-0.5 rounded flex items-center gap-1 border disabled:opacity-50 ${panelOpen ? "border-red-500 bg-red-500/10 text-red-500" : "border-red-500/40 text-red-500 hover:bg-red-500/10"}`}
           >
-            {reverting ? <Loader2 className="w-3 h-3 animate-spin" /> : <RotateCcw className="w-3 h-3" />}
+            <RotateCcw className="w-3 h-3" />
             {t('comment_revert_btn')}
           </button>
         )}
       </div>
+
+      {/* Panel de reversa: el supervisor elige a dónde regresa el material. */}
+      {canRevert && !noSurtido && panelOpen && (
+        <div className="px-3 py-2.5 border-b border-red-500/30 bg-red-500/5 space-y-2" data-testid={`revert-panel-${ticket.ticket_id}`}>
+          <p className="text-[11px] text-foreground/80">
+            {t('comment_revert_confirm', { n: pivot.totalPicked })}
+          </p>
+          <div className="flex flex-wrap items-end gap-2">
+            <label className="flex flex-col gap-0.5">
+              <span className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground">{t('comment_revert_dest')}</span>
+              <input
+                list={`revert-locs-${ticket.ticket_id}`}
+                value={dest}
+                onChange={(e) => setDest(e.target.value.toUpperCase())}
+                placeholder={locs === null ? t('comment_loading_picking') : t('comment_revert_dest_ph')}
+                className="w-48 px-2 py-1 text-xs rounded border border-input bg-card text-foreground focus:outline-none focus:ring-2 focus:ring-ring/25"
+                data-testid={`revert-dest-${ticket.ticket_id}`}
+              />
+              <datalist id={`revert-locs-${ticket.ticket_id}`}>
+                {(locs || []).map((n) => <option key={n} value={n} />)}
+              </datalist>
+            </label>
+            <label className="flex flex-col gap-0.5 flex-1 min-w-[10rem]">
+              <span className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground">{t('comment_revert_reason_label')}</span>
+              <input
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+                placeholder={t('comment_revert_reason_ph')}
+                className="w-full px-2 py-1 text-xs rounded border border-input bg-card text-foreground focus:outline-none focus:ring-2 focus:ring-ring/25"
+              />
+            </label>
+            <button
+              onClick={submitRevert}
+              disabled={reverting || !dest.trim()}
+              className="text-[11px] font-bold px-3 py-1 rounded flex items-center gap-1 bg-red-600 text-white hover:bg-red-700 disabled:opacity-50"
+              data-testid={`revert-confirm-${ticket.ticket_id}`}
+            >
+              {reverting ? <Loader2 className="w-3 h-3 animate-spin" /> : <RotateCcw className="w-3 h-3" />}
+              {t('comment_revert_do')}
+            </button>
+            <button
+              onClick={() => setPanelOpen(false)}
+              disabled={reverting}
+              className="text-[11px] font-medium px-3 py-1 rounded border border-border text-muted-foreground hover:bg-secondary disabled:opacity-50"
+            >
+              {t('cancel')}
+            </button>
+          </div>
+        </div>
+      )}
 
       {noSurtido ? (
         <div className="px-3 py-3 text-xs text-amber-600 dark:text-amber-400 flex items-start gap-2">
