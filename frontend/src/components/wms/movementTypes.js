@@ -98,6 +98,12 @@ export const mvDirection = (type, t) =>
     : MV_OUT_TYPES.has(type) ? t("wms_mv_dir_out")
     : "";
 
+// Signo del movimiento (independiente de idioma): +1 entra al inventario,
+// -1 sale, 0 cuando el tipo no lo define por sí solo (ajustes → se decide por
+// el Δ del renglón). Para firmar las unidades en el historial.
+export const mvSign = (type) =>
+  MV_IN_TYPES.has(type) ? 1 : MV_OUT_TYPES.has(type) ? -1 : 0;
+
 // Familias para el desplegable de Auditoría → Movimientos: un clic filtra
 // todas las variantes de un mismo hecho físico. El putaway de la PDA se
 // registra como `transit_relocation` (carro → ubicación) y el tipo `putaway`

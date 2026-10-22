@@ -8,7 +8,7 @@ import * as XLSX from "xlsx";
 import { saveAs } from "file-saver";
 import { useLang } from "../../contexts/LanguageContext";
 import { fetcher, poster, logLoadError, useWms } from "./lib";
-import { mvTypeLabel, mvDirection, MV_TYPE_FAMILIES } from "./movementTypes";
+import { mvTypeLabel, mvSign, MV_TYPE_FAMILIES } from "./movementTypes";
 import { Btn, Th, Chip, tableCls } from "./ui";
 
 // Módulo de Auditoría — admin nivel 5 y supersu (el backend valida con
@@ -360,8 +360,10 @@ const SkuTab = () => {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   // Rango de fecha para la hoja "Historial" del export (vacío = toda la vida).
+  // Se elige en un diálogo que se abre AL exportar.
   const [histFrom, setHistFrom] = useState("");
   const [histTo, setHistTo] = useState("");
+  const [showExport, setShowExport] = useState(false);
 
   const run = async (e) => {
     e?.preventDefault();
@@ -381,7 +383,7 @@ const SkuTab = () => {
   // Export a Excel: hoja "Cajas" (los números de caja recibidos) + hoja
   // "Resumen" (balance, desglose de cajas y diagnóstico). Cliente-side con
   // SheetJS, mismo patrón que Analytics/Art.
-  const exportExcel = () => {
+  const exportExcel = (rangeFrom = histFrom, rangeTo = histTo) => {
     if (!data) return;
     const wb = XLSX.utils.book_new();
 
@@ -413,47 +415,97 @@ const SkuTab = () => {
       { Campo: "Diagnóstico", Valor: dg.mensaje || "" },
       ...(dg.causas || []).map((x, i) => ({ Campo: `Causa ${i + 1}`, Valor: x })),
       { Campo: "", Valor: "" },
-      { Campo: "Historial — desde", Valor: histFrom || "(inicio)" },
-      { Campo: "Historial — hasta", Valor: histTo || "(hoy)" },
+      { Campo: "Historial — desde", Valor: rangeFrom || "(inicio)" },
+      { Campo: "Historial — hasta", Valor: rangeTo || "(hoy)" },
     ];
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(resumen), "Resumen");
 
     // Hoja "Historial": la vida completa del material — cada entrada, salida,
-    // ajuste y reubicación en orden cronológico, con tipo legible, dirección,
-    // fecha, caja, ubicación y referencia (orden/ticket/recibo). Acotada al
-    // rango de fecha elegido (vacío = toda la vida).
+    // ajuste y reubicación en orden cronológico. Acotada al rango de fecha
+    // elegido (vacío = toda la vida). Unidades FIRMADAS: entradas en positivo,
+    // salidas en negativo; los ajustes se firman por su Δ (un ajuste que baja
+    // inventario cuenta como salida). Primer renglón = saldo inicial (lo que
+    // había antes de la fecha de inicio, según los movimientos).
     const inRange = (iso) => {
       const d = (iso || "").slice(0, 10);
-      if (!d) return !histFrom && !histTo;   // sin fecha: solo si no hay filtro
-      if (histFrom && d < histFrom) return false;
-      if (histTo && d > histTo) return false;
+      if (!d) return !rangeFrom && !rangeTo;
+      if (rangeFrom && d < rangeFrom) return false;
+      if (rangeTo && d > rangeTo) return false;
       return true;
     };
-    const hist = (data.historial || []).filter((m) => inRange(m.created_at)).map((m) => ({
-      "Fecha": m.created_at ? new Date(m.created_at).toLocaleString() : "",
-      "Tipo": mvTypeLabel(m.type, t),
-      "Dirección": mvDirection(m.type, t),
-      "Caja": m.box_id || "",
-      "Talla": m.size || "",
-      "Unidades": m.units || "",
-      "Antes": m.before || "",
-      "Después": m.after || "",
-      "Δ": m.delta || "",
-      "De": m.from || "",
-      "A": m.to || "",
-      "Ubicación": m.location || "",
-      "Orden": m.order_number || "",
-      "Ticket": m.ticket_id || "",
-      "Recibo": m.receiving_id || "",
-      "Usuario": m.user_name || "",
-      "Detalle": m.detail || "",
-    }));
+    // Firma una fila: {dir, qty}. qty numérica con signo (o "" si no aplica).
+    // Si el renglón trae unidades, se firman por el tipo (entrada +, salida −);
+    // si NO (ajustes/conteos cuya cantidad va en Δ), se usa el Δ, cuyo signo ya
+    // dice si entró o salió. Así un ajuste a la baja cuenta como salida.
+    const IN = t("wms_mv_dir_in"), OUT = t("wms_mv_dir_out");
+    const classify = (m) => {
+      const s = mvSign(m.type);
+      const uRaw = Number(m.units);
+      const hasU = m.units !== "" && m.units != null && !Number.isNaN(uRaw) && uRaw !== 0;
+      const delta = (m.delta !== "" && m.delta != null && !Number.isNaN(Number(m.delta))) ? Number(m.delta) : null;
+      if (hasU) {
+        if (s > 0) return { dir: IN, qty: Math.abs(uRaw) };
+        if (s < 0) return { dir: OUT, qty: -Math.abs(uRaw) };
+        if (delta != null && delta !== 0) return { dir: delta < 0 ? OUT : IN, qty: delta };
+        // Tipo neutral con unidades (reubicación, staged_pick, putaway…): es un
+        // movimiento/registro interno, NO una entrada ni salida del stock total,
+        // así que no lleva cantidad firmada (evita doble conteo con pick_deduction).
+        return { dir: "", qty: "" };
+      }
+      if (delta != null && delta !== 0) return { dir: delta < 0 ? OUT : IN, qty: delta };
+      return { dir: "", qty: "" };
+    };
+    const styleOf = (m) => m.style || m.sku || data.style || "";
+
+    const COLS = ["Fecha", "Tipo", "Dirección", "Estilo", "Talla", "Unidades",
+      "Antes", "Después", "Δ", "De", "A", "Ubicación", "Orden", "Ticket", "Recibo", "Usuario", "Detalle"];
+    const blank = Object.fromEntries(COLS.map((c) => [c, ""]));
+    const movRows = (data.historial || []).filter((m) => inRange(m.created_at)).map((m) => {
+      const c = classify(m);
+      return {
+        ...blank,
+        "Fecha": m.created_at ? new Date(m.created_at).toLocaleString() : "",
+        "Tipo": mvTypeLabel(m.type, t),
+        "Dirección": c.dir,
+        "Estilo": styleOf(m),
+        "Talla": m.size || "",
+        "Unidades": c.qty,
+        "Antes": m.before || "",
+        "Después": m.after || "",
+        "Δ": m.delta || "",
+        "De": m.from || "",
+        "A": m.to || "",
+        "Ubicación": m.location || "",
+        "Orden": m.order_number || "",
+        "Ticket": m.ticket_id || "",
+        "Recibo": m.receiving_id || "",
+        "Usuario": m.user_name || "",
+        "Detalle": m.detail || "",
+      };
+    });
+    // Saldo inicial = inventario que había ANTES de la fecha de inicio.
+    // Se reconstruye desde el on-hand ACTUAL (no sumando movimientos viejos):
+    //   saldo_inicial = en_mano_actual − neto(movimientos del rango).
+    // Así el reporte CUADRA (saldo inicial + Σ firmadas = en mano actual). Anclar
+    // en el on-hand real evita el neto negativo/irreal de una bitácora de
+    // movimientos incompleta (ver Diagnóstico: recibos subregistrados).
+    const inRangeNet = movRows.reduce((s, r) => s + (typeof r["Unidades"] === "number" ? r["Unidades"] : 0), 0);
+    const opening = (Number(b.en_mano) || 0) - inRangeNet;
+    const openingRow = rangeFrom
+      ? [{ ...blank, "Fecha": `(antes de ${rangeFrom})`, "Tipo": t("wms_audit_hist_opening"),
+           "Estilo": data.style || "", "Talla": data.size || "", "Unidades": opening }]
+      : [];
+    const allRows = [...openingRow, ...movRows];
+    // Quita las columnas que quedan vacías en TODO el reporte (petición Aaron).
+    const nonEmpty = (v) => v !== "" && v !== null && v !== undefined;
+    const keep = COLS.filter((c) => allRows.some((r) => nonEmpty(r[c])));
+    const hist = allRows.map((r) => Object.fromEntries(keep.map((c) => [c, r[c]])));
     const wsHist = XLSX.utils.json_to_sheet(hist.length ? hist : [{ "Fecha": "(sin movimientos)" }]);
     XLSX.utils.book_append_sheet(wb, wsHist, "Historial");
 
     const buf = XLSX.write(wb, { bookType: "xlsx", type: "array" });
     const tag = [data.style, data.color, data.size].filter(Boolean).join("_").replace(/[^\w-]+/g, "");
-    const rango = (histFrom || histTo) ? `_${histFrom || "inicio"}_a_${histTo || "hoy"}` : "";
+    const rango = (rangeFrom || rangeTo) ? `_${rangeFrom || "inicio"}_a_${rangeTo || "hoy"}` : "";
     saveAs(new Blob([buf], { type: "application/octet-stream" }),
       `Balance_SKU_${tag || "export"}${rango}_${new Date().toISOString().split("T")[0]}.xlsx`);
     toast.success(t("wms_excel_exported"));
@@ -472,27 +524,48 @@ const SkuTab = () => {
       </form>
       {data && (
         <>
-          <div className="flex flex-wrap items-end justify-end gap-2">
-            <div className="flex items-center gap-2 mr-auto text-xs text-muted-foreground">
-              <span className="font-semibold uppercase tracking-wider">{t("wms_audit_hist_range")}</span>
-              <label className="flex items-center gap-1">
-                <span>{t("wms_aud_from")}</span>
-                <input type="date" value={histFrom} max={histTo || undefined} onChange={(e) => setHistFrom(e.target.value)}
-                  className="px-2 py-1 bg-card border border-input rounded-md text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-ring/25" />
-              </label>
-              <label className="flex items-center gap-1">
-                <span>{t("wms_aud_to")}</span>
-                <input type="date" value={histTo} min={histFrom || undefined} onChange={(e) => setHistTo(e.target.value)}
-                  className="px-2 py-1 bg-card border border-input rounded-md text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-ring/25" />
-              </label>
-              {(histFrom || histTo) && (
-                <button onClick={() => { setHistFrom(""); setHistTo(""); }} className="text-primary hover:underline">{t("wms_audit_hist_all")}</button>
-              )}
-            </div>
-            <Btn onClick={exportExcel} disabled={loading}>
+          <div className="flex justify-end">
+            <Btn onClick={() => setShowExport(true)} disabled={loading}>
               <Download className="w-4 h-4" /> {t("export_excel")}
             </Btn>
           </div>
+          {showExport && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setShowExport(false)} data-testid="sku-export-modal">
+              <div className="bg-card border border-border rounded-lg shadow-xl p-5 w-full max-w-sm space-y-4" onClick={(e) => e.stopPropagation()}>
+                <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
+                  <Download className="w-4 h-4 text-primary" /> {t("wms_audit_export_hist_title")}
+                </div>
+                <p className="text-xs text-muted-foreground">{t("wms_audit_export_hist_help")}</p>
+                <div className="flex items-end gap-2">
+                  <label className="flex flex-col gap-1 flex-1">
+                    <span className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground">{t("wms_aud_from")}</span>
+                    <input type="date" value={histFrom} max={histTo || undefined} onChange={(e) => setHistFrom(e.target.value)}
+                      className="px-2 py-1.5 bg-background border border-input rounded-md text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring/25" />
+                  </label>
+                  <label className="flex flex-col gap-1 flex-1">
+                    <span className="text-[10px] uppercase tracking-wider font-bold text-muted-foreground">{t("wms_aud_to")}</span>
+                    <input type="date" value={histTo} min={histFrom || undefined} onChange={(e) => setHistTo(e.target.value)}
+                      className="px-2 py-1.5 bg-background border border-input rounded-md text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring/25" />
+                  </label>
+                </div>
+                <div className="flex items-center justify-between gap-2 pt-1">
+                  <button onClick={() => { setHistFrom(""); setHistTo(""); exportExcel("", ""); setShowExport(false); }}
+                    className="text-xs text-primary hover:underline" data-testid="sku-export-all">
+                    {t("wms_audit_hist_all")}
+                  </button>
+                  <div className="flex gap-2">
+                    <button onClick={() => setShowExport(false)} className="px-3 py-1.5 text-xs rounded-md border border-border text-muted-foreground hover:bg-secondary">
+                      {t("cancel")}
+                    </button>
+                    <button onClick={() => { exportExcel(histFrom, histTo); setShowExport(false); }}
+                      className="px-3 py-1.5 text-xs rounded-md bg-primary text-primary-foreground font-medium hover:opacity-90 flex items-center gap-1" data-testid="sku-export-go">
+                      <Download className="w-3.5 h-3.5" /> {t("export_excel")}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
           <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
             <Card title={t("wms_received")} value={bal.recibido.toLocaleString()} sub={t("wms_audit_receipts_count", { n: data.recibos.length })} />
             <Card title={t("wms_picked")} value={bal.pickeado.toLocaleString()} sub={t("wms_audit_tickets_count", { n: data.tickets.length })} />
