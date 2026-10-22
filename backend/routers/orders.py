@@ -874,6 +874,11 @@ async def update_order(order_id: str, order: OrderUpdate, request: Request):
     if old_board == "CONTROL DE CALIDAD" and new_board and new_board != old_board:
         if user.get("role") not in ("supersu", "inspector_qc", "qc"):
             raise HTTPException(status_code=403, detail="Board CONTROL DE CALIDAD is locked for your role")
+    # Mover a mano: sólo lo permitido (los módulos del sistema marcan
+    # request.state.board_move_ok antes de llamar aquí).
+    if (new_board and new_board != old_board and not getattr(request.state, "board_move_ok", False)
+            and not manual_move_allowed(user, old_board, new_board)):
+        raise HTTPException(status_code=403, detail=MANUAL_MOVE_MSG)
 
     # Guardas / validaciones (automatizaciones tipo "guard"): pueden BLOQUEAR el
     # cambio de status o de tablero hasta que se cumpla un requisito (foto de
@@ -957,10 +962,37 @@ async def update_order(order_id: str, order: OrderUpdate, request: Request):
     await ws_manager.broadcast("order_change", {"action": "update", "order_id": order_id, "boards": boards_affected})
     return {**(_merge_custom_fields(final_order or updated)), "_automations_executed": executed_automations}
 
+# ── Mover a mano: sólo lo que el modelo de módulos permite ──────────────────
+# Las órdenes ya no viajan por tableros: el Production Status dice en qué parte
+# van. Un USUARIO sólo puede mover DATA ENTRY → SCHEDULING, máquina ↔ máquina y
+# a/desde la papelera (supersu, todo, para corregir). Los procesos del sistema
+# (Planeación, módulo Final Bill, automatizaciones) mueven por su propio camino:
+# move_order_core directo, request.state.board_move_ok o escritura de la
+# automatización. Antes sólo la pantalla escondía el menú y el servidor aceptaba
+# cualquier movimiento (la 3670 terminó en FINAL BILL).
+MANUAL_MOVE_MSG = ("Las órdenes ya no se mueven de tablero a mano: el Production Status dice en qué parte van. "
+                   "Sólo se puede mandar de DATA ENTRY a SCHEDULING o cambiar de máquina.")
+
+
+def manual_move_allowed(user: dict, old_board, new_board) -> bool:
+    from deps import user_roles
+    old_board, new_board = str(old_board or ""), str(new_board or "")
+    if not new_board or new_board == old_board or "supersu" in user_roles(user):
+        return True
+    if "PAPELERA DE RECICLAJE" in (old_board, new_board):
+        return True
+    if old_board == INTAKE_BOARD and new_board == PREP_BOARD:
+        return True
+    return old_board.startswith("MAQUINA") and new_board.startswith("MAQUINA")
+
+
 @router.post("/{order_id}/move")
 async def move_order(order_id: str, request: Request):
     user = await require_auth(request)
     body = await request.json()
+    current = await db.orders.find_one({"order_id": order_id}, {"_id": 0, "board": 1})
+    if current and not manual_move_allowed(user, current.get("board"), body.get("board")):
+        raise HTTPException(status_code=403, detail=MANUAL_MOVE_MSG)
     return await move_order_core(user, order_id, body.get("board"))
 
 
@@ -1116,6 +1148,11 @@ async def bulk_move_orders(request: Request):
         raise HTTPException(status_code=400, detail="scheduled_day must be a weekday name or null")
     original_orders = await db.orders.find({"order_id": {"$in": order_ids}}, {"_id": 0, "order_id": 1, "board": 1, "order_number": 1, "locked_by_qc": 1}).to_list(len(order_ids))
     original_boards = {o["order_id"]: o["board"] for o in original_orders}
+    # Mover a mano: sólo lo permitido; si una sola no se puede, no se mueve ninguna.
+    _no = [o.get("order_number") or o["order_id"] for o in original_orders
+           if not manual_move_allowed(user, o.get("board"), target_board)]
+    if _no:
+        raise HTTPException(status_code=403, detail=f"{MANUAL_MOVE_MSG} ({', '.join(map(str, _no[:10]))})")
 
     # Block non-supersu/inspector_qc if any order is locked by QC
     if user.get("role") not in ("supersu", "inspector_qc", "qc"):

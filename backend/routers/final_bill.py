@@ -276,6 +276,7 @@ async def _move_after_review(order_ids: list, reviewed: bool, request: Request) 
     from routers.orders import update_order   # lazy (evita ciclo)
     from deps import OrderUpdate
     moved = 0
+    request.state.board_move_ok = True   # movimiento del sistema (mover a mano está bloqueado)
     async for o in db.orders.find({"order_id": {"$in": order_ids}}, {"_id": 0, "order_id": 1, "board": 1}):
         board = o.get("board") or ""
         if reviewed and board not in _STAY_BOARDS:
