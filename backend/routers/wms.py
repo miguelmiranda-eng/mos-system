@@ -9694,6 +9694,22 @@ async def audit_sku(request: Request, style: str, color: str = "", size: str = "
     # Tope alto (2000): cubre la vida de un SKU sin reventar el payload.
     movements = await get_sku_movement_history(style.strip(), color.strip(), size.strip(), 2000)
     historial = [r for m in reversed(movements) for r in _explode_movement_rows(m)]
+    # Los RECIBOS no viven en wms_movements con identidad de SKU: el movimiento
+    # `receiving` solo guarda receiving_id/total_units (sin style/caja), así que
+    # get_sku_movement_history no los ve y el historial salía SIN las entradas más
+    # grandes. Se inyectan desde wms_receiving (recv_list) como filas "receiving"
+    # (entrada), con la misma forma aplanada, y se reordena cronológicamente.
+    recv_rows = [{
+        "created_at": r.get("created_at"), "type": "receiving",
+        "user_name": r.get("received_by_name") or "", "movement_id": "",
+        "box_id": "", "customer": "", "style": style.strip().upper(), "color": "",
+        "size": r.get("size") or "", "sku": "", "location": r.get("inv_location") or "",
+        "from": "", "to": "", "units": str(int(r.get("total_units") or 0)),
+        "before": "", "after": "", "delta": "", "order_number": "", "ticket_id": "",
+        "receiving_id": r.get("receiving_id") or "", "asn_id": "", "count_id": "",
+        "batch": "", "reason": "", "detail": "",
+    } for r in recv_list]
+    historial = sorted(historial + recv_rows, key=lambda r: r.get("created_at") or "")
     return {
         "style": style.strip().upper(), "color": color.strip().upper(), "size": size.strip().upper(),
         "balance": {"recibido": recibido, "pickeado": pickeado, "esperado": esperado,
