@@ -1,7 +1,9 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
-import { Boxes, RefreshCw, Loader2, User, AlertTriangle } from "lucide-react";
+import { Boxes, RefreshCw, Loader2, User, AlertTriangle, RotateCcw } from "lucide-react";
+import { toast } from "sonner";
 import { API } from "../../../lib/constants";
 import { useLang } from "../../../contexts/LanguageContext";
+import { canRevertSurtido } from "./roles";
 
 // Orden canónico de tallas (mismo que el WMS: components/wms/lib.js). Se inlinea
 // para no acoplar el modal de comentarios al módulo WMS.
@@ -86,13 +88,44 @@ function buildPivot(ticket) {
   return { sizes, countries, rows, colTotal, totalOrdered, totalPicked };
 }
 
-function TicketBlock({ ticket }) {
+function TicketBlock({ ticket, currentUser, onReverted }) {
   const { t } = useLang();
   const pivot = useMemo(() => buildPivot(ticket), [ticket]);
   const status = STATUS_META[ticket.picking_status] || STATUS_META.unassigned;
   const pct = pivot.totalOrdered ? Math.round((pivot.totalPicked / pivot.totalOrdered) * 100) : 0;
   const hasExtras = pivot.rows.some((r) => r.extra > 0);
   const noSurtido = pivot.totalPicked === 0; // 0 surtido en el WMS = nunca se pickeó aquí
+  const [reverting, setReverting] = useState(false);
+  const canRevert = canRevertSurtido(currentUser);
+
+  // Revertir surtido: devuelve el material al inventario, limpia los movimientos
+  // de surtido y regresa el ticket a pendiente. Destructivo: confirma primero.
+  const handleRevert = useCallback(async () => {
+    if (reverting) return;
+    const ok = window.confirm(t('comment_revert_confirm', { n: pivot.totalPicked }));
+    if (!ok) return;
+    const reason = window.prompt(t('comment_revert_reason')) || "";
+    setReverting(true);
+    try {
+      const res = await fetch(
+        `${API}/wms/pick-tickets/${encodeURIComponent(ticket.ticket_id)}/revert`,
+        { method: "POST", credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ reason }) }
+      );
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        toast.success(t('comment_revert_ok', { n: data.restored_units ?? pivot.totalPicked }));
+        onReverted?.();
+      } else {
+        toast.error(data.detail || t('comment_revert_err'));
+      }
+    } catch {
+      toast.error(t('comment_revert_err'));
+    } finally {
+      setReverting(false);
+    }
+  }, [reverting, ticket.ticket_id, pivot.totalPicked, onReverted, t]);
 
   if (pivot.rows.length === 0) return null;
 
@@ -119,6 +152,18 @@ function TicketBlock({ ticket }) {
           {pivot.totalPicked}/{pivot.totalOrdered}
           <span className="text-muted-foreground font-normal"> ({pct}%)</span>
         </span>
+        {canRevert && !noSurtido && (
+          <button
+            onClick={handleRevert}
+            disabled={reverting}
+            data-testid={`revert-surtido-${ticket.ticket_id}`}
+            title={t('comment_revert_title')}
+            className="text-[10px] font-bold px-2 py-0.5 rounded flex items-center gap-1 border border-red-500/40 text-red-500 hover:bg-red-500/10 disabled:opacity-50"
+          >
+            {reverting ? <Loader2 className="w-3 h-3 animate-spin" /> : <RotateCcw className="w-3 h-3" />}
+            {t('comment_revert_btn')}
+          </button>
+        )}
       </div>
 
       {noSurtido ? (
@@ -196,7 +241,7 @@ function TicketBlock({ ticket }) {
 // comentario manual del picker por un desglose talla × país que refleja lo que
 // el WMS ya sabe que se surtió para la orden. Carga al abrir; botón para
 // refrescar. Si la orden no tiene tickets de picking, no renderiza nada.
-export function SurtidoTable({ order, isOpen }) {
+export function SurtidoTable({ order, isOpen, currentUser }) {
   const { t } = useLang();
   const [tickets, setTickets] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -256,7 +301,7 @@ export function SurtidoTable({ order, isOpen }) {
       ) : (
         <div className="space-y-2 max-h-[32vh] overflow-y-auto pr-1">
           {tickets.map((t) => (
-            <TicketBlock key={t.ticket_id} ticket={t} />
+            <TicketBlock key={t.ticket_id} ticket={t} currentUser={currentUser} onReverted={fetchSurtido} />
           ))}
         </div>
       )}

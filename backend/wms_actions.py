@@ -118,6 +118,8 @@ ACTIONS: dict = {
                                 desc="Resurtidos que acumulan más del umbral (default 10 %) de lo pedido en el ticket."),
     "picking.resupply_config": _a("Configurar resurtidos", "picking", 5, None, floor_admin=3, floor_inventory=3,
                                   desc="Motivos de resurtido y umbral que exige autorización."),
+    "picking.revert_surtido": _a("Revertir surtido (devolver material)", "picking", 5, None, floor_admin=5, floor_inventory=INV_OFF,
+                                 desc="Deshace un surtido ya hecho: regresa las piezas a sus cajas e inventario, limpia los movimientos de surtido (archivados) y devuelve el ticket a pendiente, como antes de surtir. Irreversible salvo respaldo. Solo admin nivel 5 (+supersu)."),
     "staging.operate": _a("Guardar surtido en OM / entregar a piso", "picking", 1, 1, floor_admin=0, floor_inventory=0,
                           desc="Escanear cajas de surtido hacia su ubicación destino (OM…) o entregarlas a producción."),
     "staging.config": _a("Configurar ubicaciones de surtido", "picking", 3, 3, floor_admin=1, floor_inventory=1,

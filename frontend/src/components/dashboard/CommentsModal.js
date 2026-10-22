@@ -219,7 +219,7 @@ export const CommentsModal = ({ order, isOpen, onClose, currentUser }) => {
             </button>
           </div>
           <div className="pb-4">
-            <SurtidoTable order={order} isOpen={showSurtido} />
+            <SurtidoTable order={order} isOpen={showSurtido} currentUser={currentUser} />
           </div>
         </DialogPrimitive.Content>
       </DialogPortal>

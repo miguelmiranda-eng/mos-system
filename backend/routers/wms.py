@@ -7858,6 +7858,152 @@ async def confirm_pick(ticket_id: str, request: Request, stocktake_id: str = Non
     await notify_badge_change("picking")
     return {"message": "Pick confirmado", "ticket_id": target_id}
 
+
+async def _revert_pick_ticket(ticket, user, reason=""):
+    """Reversa COMPLETA de un surtido ya hecho (no un borrado a ciegas):
+    - regresa cada pieza a su caja de origen (des-vacía las cajas vaciadas),
+    - re-acredita lo que salió SIN caja directo al inventario,
+    - reproyecta cada celda tocada DESDE las cajas (la caja es la verdad),
+    - anula el surtido en tránsito/OM (wms_staged_boxes) si existe,
+    - archiva los movimientos pick_deduction en UN 'pick_reverted' y los borra
+      (así el surtido sale de la pantalla de Surtido, que se arma de ellos),
+    - devuelve el ticket a pendiente/sin asignar (como antes de surtir).
+    Antes de tocar nada deja un respaldo en wms_pick_revert_bak.
+    Devuelve un resumen de lo restaurado."""
+    ticket_id = ticket["ticket_id"]
+    order_number = ticket.get("order_number")
+    order_id = ticket.get("order_id")
+    movs = await db.wms_movements.find(
+        {"type": "pick_deduction", "details.ticket_id": ticket_id}, {"_id": 0}).to_list(5000)
+    staged = await db[staging.COLL].find_one(
+        {"ticket_id": ticket_id, "status": {"$in": list(staging.LIVE)}}, {"_id": 0})
+
+    # ── Respaldo antes de mutar: permite reconstruir a mano si algo sale mal ──
+    revert_id = gen_id("rvt")
+    await db.wms_pick_revert_bak.insert_one({
+        "revert_id": revert_id, "ticket_id": ticket_id, "order_number": order_number,
+        "at": now_iso(), "by": user.get("user_id"), "by_name": user.get("name", ""),
+        "reason": reason, "ticket": ticket, "movements": movs, "staged": staged,
+    })
+
+    restored_boxes = 0
+    restored_units = 0
+    no_box_credit = 0
+    cells = {}          # (style, sku, color, size, location) -> None (dedupe para reproyectar)
+    no_box_cells = {}   # (style, color, size, location, customer) -> qty (saldo sin caja)
+
+    for mv in movs:
+        d = mv.get("details", {})
+        style = d.get("style") or ""
+        color = d.get("color") or ""
+        size = d.get("size") or ""
+        for b in (d.get("boxes") or []):
+            bid = b.get("box_id")
+            taken = int(b.get("taken") or 0)
+            if taken <= 0:
+                continue
+            box = await db.wms_boxes.find_one({"box_id": bid}) if bid else None
+            if not box:
+                # La caja ya no existe: re-acredita el saldo a inventario por ubicación.
+                loc = b.get("location") or d.get("location") or ""
+                k = (style, color, size, loc, "")
+                no_box_cells[k] = no_box_cells.get(k, 0) + taken
+                no_box_credit += taken
+                continue
+            set_fields = {"last_reverted_at": now_iso(), "last_revert_id": revert_id}
+            if box.get("status") == "depleted":
+                set_fields["status"] = "stored"   # des-vacía: la caja vuelve a estar viva
+            await db.wms_boxes.find_one_and_update(
+                {"_id": box["_id"]},
+                {"$inc": {"units": taken, "qty": taken}, "$set": set_fields})
+            restored_boxes += 1
+            restored_units += taken
+            cells[(box.get("style") or style, box.get("sku") or style,
+                   box.get("color", color), box.get("size", size),
+                   box.get("location") or b.get("location") or "")] = None
+        nb = int(d.get("no_box_units") or 0)
+        if nb > 0:
+            loc = d.get("location") or ""
+            k = (style, color, size, loc, "")
+            no_box_cells[k] = no_box_cells.get(k, 0) + nb
+            no_box_credit += nb
+
+    # Reproyecta cada celda con caja DESDE las cajas (fija units/total_boxes = suma real).
+    for (st, sku, col, sz, loc) in cells:
+        await _reproject_material_rows(st, sku, col, sz, loc, user=user,
+                                       contexto={"ticket_id": ticket_id, "reason": "revert_surtido"})
+    # El saldo SIN caja se suma DESPUÉS del reproyecto (el reproyecto fija el valor
+    # absoluto de las cajas; esto es papel heredado que no tiene caja detrás).
+    for (st, col, sz, loc, cust), qty in no_box_cells.items():
+        await _update_inventory_enhanced(st, col, sz, qty, "add", location=loc, customer=cust)
+
+    # Anula el surtido en tránsito/OM si lo había (sale del mapa de surtidos).
+    if staged:
+        await db[staging.COLL].update_one(
+            {"staged_id": staged["staged_id"]},
+            {"$set": {"status": "voided", "updated_at": now_iso()},
+             "$push": {"history": {"at": now_iso(), "action": "reverted",
+                                   "by": user.get("name", ""), "qty": staged.get("units"),
+                                   "revert_id": revert_id}}})
+
+    # Archiva los pick_deduction en UN movimiento de reversa (auditable) y los borra:
+    # la pantalla de Surtido se deriva de esos movimientos, así que al quitarlos el
+    # surtido desaparece de ahí sin perder la historia (queda en 'pick_reverted').
+    await log_movement(user, "pick_reverted", {
+        "ticket_id": ticket_id, "order_number": order_number, "revert_id": revert_id,
+        "reason": reason, "restored_boxes": restored_boxes, "restored_units": restored_units,
+        "no_box_credit": no_box_credit, "reverted_movements": len(movs),
+        "original_deductions": movs,
+    })
+    if movs:
+        await db.wms_movements.delete_many({"type": "pick_deduction", "details.ticket_id": ticket_id})
+
+    # Devuelve el ticket a pendiente/sin asignar: como antes de surtir. El pedido
+    # (sizes) se conserva para poder resurtir; se limpia TODO el progreso de surtido.
+    await db.wms_pick_tickets.update_one({"ticket_id": ticket_id}, {
+        "$set": {"status": "pending", "picking_status": "unassigned",
+                 "reverted_at": now_iso(), "reverted_by": user.get("user_id"),
+                 "reverted_by_name": user.get("name", ""), "reverted_reason": reason,
+                 "revert_id": revert_id},
+        "$unset": {"deducted_map": "", "picked_sizes": "", "confirmed_at": "",
+                   "confirmed_by": "", "assigned_to": "", "assigned_to_name": "",
+                   "assigned_at": "", "total_pick_qty": "", "last_picked_at": "",
+                   "picked_boxes": "", "scanned_boxes": ""},
+    })
+
+    # Si la orden ya no tiene ningún surtido vivo, quita el wms_status "picked".
+    onums = [x for x in {order_number, order_id} if x]
+    remaining = await db.wms_movements.count_documents(
+        {"type": "pick_deduction", "details.order_number": {"$in": onums}}) if onums else 0
+    if order_id and remaining == 0:
+        await db.orders.update_one({"order_id": order_id}, {"$unset": {"wms_status": ""}})
+
+    await notify_badge_change("picking")
+    return {"revert_id": revert_id, "restored_boxes": restored_boxes,
+            "restored_units": restored_units, "no_box_credit": no_box_credit,
+            "reverted_movements": len(movs), "staged_voided": bool(staged)}
+
+
+@router.post("/pick-tickets/{ticket_id}/revert")
+async def revert_pick_ticket(ticket_id: str, request: Request):
+    """Revierte un surtido ya hecho: devuelve el material al inventario, limpia
+    los movimientos de surtido (archivados en 'pick_reverted') y regresa el
+    ticket a pendiente. Solo admin nivel 5 (picking.revert_surtido). Irreversible
+    salvo el respaldo en wms_pick_revert_bak."""
+    user = await require_action(request, "picking.revert_surtido")
+    body = await request.json() if request.headers.get("content-length") else {}
+    reason = str(body.get("reason") or "").strip()
+    ticket = await db.wms_pick_tickets.find_one({"ticket_id": ticket_id})
+    if not ticket:
+        raise HTTPException(404, "Pick ticket no encontrado")
+    has_mov = await db.wms_movements.count_documents(
+        {"type": "pick_deduction", "details.ticket_id": ticket_id})
+    if not has_mov and not ticket.get("deducted_map") and not ticket.get("picked_sizes"):
+        raise HTTPException(409, "El ticket no tiene surtido que revertir.")
+    summary = await _revert_pick_ticket(ticket, user, reason=reason)
+    return {"message": "Surtido revertido", "ticket_id": ticket_id, **summary}
+
+
 @router.put("/pick-tickets/{ticket_id}/edit")
 async def edit_pick_ticket(ticket_id: str, request: Request):
     """Edit an existing pick ticket (only if not confirmed/completed)."""
