@@ -743,7 +743,7 @@ const BoardCard = ({ job, segs, seq, live, today, onAdjust, draggable, foreign, 
   const missing = started ? [] : Object.entries(job.ready || {}).filter(([, ok]) => !ok).map(([k]) => tr(
     { contado: "plan_req_counted", cuadros: "plan_req_screens", label: "plan_req_label", ejemplo: "plan_req_sample" }[k] || k));
   const others = (job.machines || []).filter((m) => m !== first.machine).map((m) => m.replace("MAQUINA", "M"));
-  const garment = [job.color, live?.style].filter(Boolean).join(" · ");
+  const garment = [job.color, live?.style].map((v) => String(v || "").trim()).filter(Boolean).join(" · ");
   const mocks = live?.mocks?.length ? live.mocks : (live?.mock ? [live.mock] : []);
   const [viewing, setViewing] = useState(false);
   return (
@@ -767,20 +767,18 @@ const BoardCard = ({ job, segs, seq, live, today, onAdjust, draggable, foreign, 
         </span>
       </div>
       <div className="min-w-0 flex-1">
-        <div className="flex items-start gap-2">
-          <div className="min-w-0">
-            <div className="flex items-baseline gap-1.5 flex-wrap">
-              <span className="text-base font-black text-slate-900 tabular-nums">{job.order_number}</span>
-              {job.customer_po && <span className="text-[11px] text-slate-400 tabular-nums">PO {job.customer_po}</span>}
-              <OverrideBadges manual={job.manual} warnings={job.warnings} locked={job.locked_machine} tr={tr} />
-            </div>
-            <div className="text-xs text-slate-500 break-words leading-snug" title={job.client}>
-              {[job.branding || job.client, job.design].filter(Boolean).join(" · ")}
-            </div>
-          </div>
-          <div className="ml-auto text-right shrink-0">
-            <div className="text-[11px] font-bold text-slate-500 whitespace-nowrap">{ends}</div>
-          </div>
+        {/* Número y PO en una línea; "termina" y el branding debajo a todo el
+            ancho (antes iban lado a lado y el texto se partía letra por letra). */}
+        <div className="flex items-baseline gap-x-1.5 flex-wrap">
+          <span className="text-base font-black text-slate-900 tabular-nums">{job.order_number}</span>
+          {job.customer_po && <span className="text-[11px] text-slate-400 tabular-nums whitespace-nowrap">PO {job.customer_po}</span>}
+          <OverrideBadges manual={job.manual} warnings={job.warnings} locked={job.locked_machine} tr={tr} />
+        </div>
+        {ends && <div className="text-[11px] font-bold text-slate-500">{ends}</div>}
+        <div className="text-xs text-slate-500 leading-snug overflow-hidden"
+          style={{ display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}
+          title={[job.branding || job.client, job.design].filter(Boolean).join(" · ")}>
+          {[job.branding || job.client, job.design].filter(Boolean).join(" · ")}
         </div>
 
         <div className="mt-1 flex items-baseline gap-1.5">
@@ -1220,7 +1218,7 @@ const TvTile = ({ col, live, op, today, now, wide, tr, lang }) => {
               {job.color && (
                 <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[12px] font-bold min-w-0" style={{ background: "#f1f5f9" }}>
                   <span className="shrink-0 w-2.5 h-2.5 rounded-full border" style={{ background: garmentHex(job.color) || "transparent", borderColor: "#cbd5e1" }} />
-                  <span className="truncate">{[job.color, card?.style].filter(Boolean).join(" · ")}</span>
+                  <span className="truncate">{[job.color, card?.style].map((v) => String(v || "").trim()).filter(Boolean).join(" · ")}</span>
                 </span>
               )}
             </div>
