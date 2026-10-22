@@ -6484,6 +6484,7 @@ const es = {
   emp_load_no_type: "Sin tipo",
   emp_station: "Estación iPad",
   ps_title: "Estación de empaque",
+  ps_no_comments: "Sin comentarios. Toca 💬 para escribir uno.",
   ps_who: "¿Quién empaca?",
   ps_new_name: "Escribe tu nombre",
   ps_ok: "Listo",

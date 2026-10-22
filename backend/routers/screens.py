@@ -105,11 +105,11 @@ async def queue(request: Request, days: float = om.DEFAULT_WINDOW_DAYS):
     midnight = datetime.now(TZ).replace(hour=0, minute=0, second=0, microsecond=0)
     done_today = await db.orders.count_documents(
         {"screens_done_at": {"$gte": midnight.astimezone(timezone.utc).isoformat()}})
-    return {"sim_at": sim["at"],
+    return await om.with_comments({"sim_at": sim["at"],
             "days": om.window_days(days), "programados": programados,
             "pendientes": pendientes, "adelantar": adelantar, "alertas": alertas,
             "preordenes": [_card(o, {}) for o in preorders if not all(_ready_map(o).values())],
-            "done_today": done_today, "can_edit": await _can_edit(user)}
+            "done_today": done_today, "can_edit": await _can_edit(user)})
 
 
 async def _write(order_id: str, request: Request, set_ready) -> dict:

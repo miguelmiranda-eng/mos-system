@@ -9,7 +9,7 @@ import { useLang } from '../contexts/LanguageContext';
 import { Toaster } from './ui/sonner';
 import NeckCaptureModal from './NeckCaptureModal';
 import {
-  REFRESH_MS, call, fmtDay, fmtTime, isOverdue, readWindow, saveWindow, WindowSelect, useOrderChangeReload, Components, PrintavoLink,
+  REFRESH_MS, call, fmtDay, fmtTime, isOverdue, readWindow, saveWindow, WindowSelect, useOrderChangeReload, Components, PrintavoLink, CommentsButton, useComments,
 } from './modules/shared';
 
 // Módulo de Neck. Reemplazará a los tableros NECK y READY TO SCHEDULED. Une el
@@ -28,13 +28,14 @@ function ProgressBar({ pct }) {
   );
 }
 
-function OrderCard({ c, t, canEdit, statuses, confirmStatus, busy, onStatus, onCut }) {
+function OrderCard({ c, t, onComments, canEdit, statuses, confirmStatus, busy, onStatus, onCut }) {
   return (
     <div className="rounded-xl border border-border bg-card p-4 flex flex-col gap-3 lg:flex-row">
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-base font-black">#{c.order_number}</span>
           <PrintavoLink url={c.printavo_url} t={t} />
+          <CommentsButton count={c.comments} onClick={() => onComments(c)} t={t} />
           {c.priority && <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-red-500/15 text-red-500">{c.priority}</span>}
           <span className="text-sm text-muted-foreground truncate">{c.client}{c.branding ? ` · ${c.branding}` : ''}</span>
         </div>
@@ -128,6 +129,8 @@ export default function NeckModule() {
   const [busyId, setBusyId] = useState('');
   const [cutOrder, setCutOrder] = useState(null);
   const loadRef = useRef(null);
+  // Comentarios de la orden (los mismos del maestro); al cerrar, recarga el conteo.
+  const [openComments, commentsModal] = useComments(() => loadRef.current?.());
 
   const load = useCallback(async () => {
     try {
@@ -195,6 +198,7 @@ export default function NeckModule() {
   return (
     <div className="min-h-screen bg-background text-foreground">
       <Toaster />
+      {commentsModal}
       <header className="sticky top-0 z-10 bg-background/95 border-b border-border px-4 md:px-8 py-4">
         <div className="flex items-center gap-3 flex-wrap">
           <button type="button" onClick={() => navigate('/')} className="p-2 rounded-lg hover:bg-secondary" title={t('back')}>
@@ -248,7 +252,7 @@ export default function NeckModule() {
           <div className="text-center text-sm text-muted-foreground py-16">{t('scr_empty')}</div>
         ) : (
           shown.map((c) => (
-            <OrderCard key={c.order_id} c={c} t={t} canEdit={canEdit} statuses={statuses}
+            <OrderCard onComments={openComments} key={c.order_id} c={c} t={t} canEdit={canEdit} statuses={statuses}
               confirmStatus={data?.confirm_status || 'LABEL LISTO'} busy={busyId === c.order_id}
               onStatus={onStatus} onCut={setCutOrder} />
           ))

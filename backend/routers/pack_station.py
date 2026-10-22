@@ -53,6 +53,7 @@ from fastapi import APIRouter, HTTPException, Request
 from deps import db, require_auth, user_roles, get_machines, OrderUpdate, log_activity
 from routers.empaque import WRITE_ROLES, NEEDS, IN_PROCESS
 from services import dpl_sync as dpl
+from services import order_modules as om
 
 router = APIRouter(prefix="/api/pack-station")
 
@@ -149,6 +150,7 @@ async def packed_totals(order_ids: list) -> dict:
 async def _view(order_id: str) -> dict:
     o = await _order(order_id)
     doc = await _pack_doc(order_id)
+    ci = await om.comment_info([order_id])
     boxes = [b async for b in db.pack_boxes.find({"order_id": order_id, "voided": {"$ne": True}}, {"_id": 0})
              .sort("created_at", 1)]
     ordered = _ordered(o)
@@ -178,6 +180,8 @@ async def _view(order_id: str) -> dict:
         "pallets": pallets, "active_pallet": doc.get("active_pallet"),
         "finish": f or None,
         "in_packing": str(o.get("production_status") or "").strip().upper() in PACKING_STATUSES,
+        "comments": (ci.get(order_id) or {}).get("count", 0),
+        "last_comment": (ci.get(order_id) or {}).get("last"),
         # Espejo en el DPL de Google (services/dpl_sync.py).
         "dpl": {"enabled": dpl.enabled(), "pending": dpl.pending(order_id), **(doc.get("dpl_sync") or {})},
     }

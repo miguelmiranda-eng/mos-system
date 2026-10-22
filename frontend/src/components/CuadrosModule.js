@@ -6,7 +6,7 @@ import { useLang } from '../contexts/LanguageContext';
 import { Toaster } from './ui/sonner';
 import {
   REFRESH_MS, call, fmtDay, fmtTime, isOverdue, readWindow, saveWindow, WindowSelect,
-  useOrderChangeReload, Components, PrintavoLink,
+  useOrderChangeReload, Components, PrintavoLink, CommentsButton, useComments,
 } from './modules/shared';
 
 // Módulo de Cuadros: reemplaza al tablero SCREENS. La cola sale de una
@@ -35,7 +35,7 @@ function PositionChip({ p, disabled, busy, onToggle }) {
   );
 }
 
-function OrderCard({ c, t, canEdit, busyKey, onToggle, onAll, mode }) {
+function OrderCard({ c, t, onComments, canEdit, busyKey, onToggle, onAll, mode }) {
   const pending = c.positions.filter((p) => !p.ready).length;
   const screensEst = c.colors ? c.colors * pending : null;
   return (
@@ -44,6 +44,7 @@ function OrderCard({ c, t, canEdit, busyKey, onToggle, onAll, mode }) {
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-base font-black">#{c.order_number}</span>
           <PrintavoLink url={c.printavo_url} t={t} />
+          <CommentsButton count={c.comments} onClick={() => onComments(c)} t={t} />
           {c.priority && <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-red-500/15 text-red-500">{c.priority}</span>}
           <span className="text-sm text-muted-foreground truncate">{c.client}{c.branding ? ` · ${c.branding}` : ''}</span>
         </div>
@@ -110,6 +111,8 @@ export default function CuadrosModule() {
   const [busyKey, setBusyKey] = useState('');
   const [advQ, setAdvQ] = useState('');
   const loadRef = useRef(null);
+  // Comentarios de la orden (los mismos del maestro); al cerrar, recarga el conteo.
+  const [openComments, commentsModal] = useComments(() => loadRef.current?.());
 
   // El backend simula el plan (con caché corta); aquí sólo se pide la cola.
   const load = useCallback(async () => {
@@ -181,6 +184,7 @@ export default function CuadrosModule() {
   return (
     <div className="min-h-screen bg-background text-foreground">
       <Toaster />
+      {commentsModal}
       <header className="sticky top-0 z-10 bg-background/95 border-b border-border px-4 md:px-8 py-4">
         <div className="flex items-center gap-3 flex-wrap">
           <button type="button" onClick={() => navigate('/')} className="p-2 rounded-lg hover:bg-secondary" title={t('back')}>
@@ -264,7 +268,7 @@ export default function CuadrosModule() {
           <div className="text-center text-sm text-muted-foreground py-16">{t('scr_empty')}</div>
         ) : (
           (tab === 'prog' ? [...progPending, ...prog.filter((c) => !progPending.includes(c))] : list).map((c) => (
-            <OrderCard key={c.order_id} c={c} t={t} canEdit={canEdit} busyKey={busyKey}
+            <OrderCard onComments={openComments} key={c.order_id} c={c} t={t} canEdit={canEdit} busyKey={busyKey}
               onToggle={onToggle} onAll={onAll} mode={tab} />
           ))
         )}

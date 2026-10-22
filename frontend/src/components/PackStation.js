@@ -7,7 +7,7 @@ import {
 import { toast } from 'sonner';
 import { useLang } from '../contexts/LanguageContext';
 import { Toaster } from './ui/sonner';
-import { call, useOrderChangeReload } from './modules/shared';
+import { call, useOrderChangeReload, CommentsButton, useComments } from './modules/shared';
 
 // Estación de empaque: un iPad por máquina, en CUATRO pantallas, una decisión
 // por pantalla:
@@ -559,6 +559,7 @@ export default function PackStation() {
   const [busy, setBusy] = useState(false);
   const [sheet, setSheet] = useState('');
   const loadRef = useRef(null);
+  const [openComments, commentsModal] = useComments(() => loadRef.current?.());
 
   useEffect(() => { call('/pack-station/machines').then((d) => setMachines(d.machines)).catch((e) => toast.error(e.message)); }, []);
   const loadStation = useCallback(async () => {
@@ -631,6 +632,7 @@ export default function PackStation() {
   return (
     <div className="min-h-screen bg-background text-foreground">
       <Toaster />
+      {commentsModal}
       <header className="sticky top-0 z-10 bg-background/95 backdrop-blur border-b border-border px-4 py-3 flex items-center gap-3">
         <button type="button" onClick={back} className="p-3 rounded-full bg-secondary active:scale-95"><ArrowLeft size={24} /></button>
         <PackageCheck className="text-amber-500" />
@@ -644,6 +646,17 @@ export default function PackStation() {
       </header>
 
       <main className="px-4 py-6 max-w-5xl mx-auto space-y-5">
+        {/* Comentarios de la orden (los mismos del maestro): el último a la vista. */}
+        {view && step >= 3 && (
+          <div className="flex items-center gap-3 rounded-2xl border border-sky-500/40 bg-sky-500/5 px-4 py-3">
+            <CommentsButton big count={view.comments} t={t} onClick={() => openComments(view.order)} />
+            <div className="flex-1 min-w-0 text-sm">
+              {view.last_comment ? (
+                <span className="line-clamp-2"><b>{view.last_comment.user_name}:</b> {view.last_comment.content}</span>
+              ) : <span className="text-muted-foreground">{t('ps_no_comments')}</span>}
+            </div>
+          </div>
+        )}
         {/* 1 · Máquina */}
         {step === 1 && (
           <>

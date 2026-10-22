@@ -6670,6 +6670,7 @@ const en = {
   emp_load_no_type: "No type",
   emp_station: "iPad station",
   ps_title: "Packing station",
+  ps_no_comments: "No comments. Tap 💬 to write one.",
   ps_who: "Who is packing?",
   ps_new_name: "Type your name",
   ps_ok: "Done",

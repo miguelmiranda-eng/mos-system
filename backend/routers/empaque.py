@@ -265,9 +265,9 @@ async def queue(request: Request):
     for k, lst in tabs.items():
         lst.sort(key=_by_due)
         tabs[k] = lst[:LIST_MAX]
-    return {"statuses": PACK_STATUSES, "confirm_status": QC_STATUS, "stuck_days": STUCK_DAYS,
+    return await om.with_comments({"statuses": PACK_STATUSES, "confirm_status": QC_STATUS, "stuck_days": STUCK_DAYS,
             "dpl_pending": dpl_pending, **tabs,
-            "can_edit": bool(user_roles(user) & WRITE_ROLES)}
+            "can_edit": bool(user_roles(user) & WRITE_ROLES)})
 
 
 @router.get("/kpis")

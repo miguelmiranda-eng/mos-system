@@ -133,9 +133,9 @@ async def queue(request: Request, days: float = om.DEFAULT_WINDOW_DAYS):
                 continue
             tabs[("pendientes" if is_plan else "adelantar") if g == "needs" else g].append(c)
     sugeridas = [c for c in alertas + plan + rest if c["suggest_ready"]]
-    return {"sim_at": sim["at"], "statuses": LABEL_STATUSES, "confirm_status": READY_STATUS,
+    return await om.with_comments({"sim_at": sim["at"], "statuses": LABEL_STATUSES, "confirm_status": READY_STATUS,
             "days": om.window_days(days), "programados": programados, **tabs, "sugeridas": sugeridas, "alertas": alertas,
-            "can_edit": bool(user_roles(user) & WRITE_ROLES)}
+            "can_edit": bool(user_roles(user) & WRITE_ROLES)})
 
 
 async def _set_status(order_id: str, status: str, request: Request) -> dict:

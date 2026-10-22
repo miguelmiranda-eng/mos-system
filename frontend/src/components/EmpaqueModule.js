@@ -9,7 +9,7 @@ import { useLang } from '../contexts/LanguageContext';
 import { Toaster } from './ui/sonner';
 import { EmpaqueSummary } from './modules/PackingLoadChart';
 import {
-  REFRESH_MS, call, fmtDay, useOrderChangeReload, Components, PrintavoLink,
+  REFRESH_MS, call, fmtDay, useOrderChangeReload, Components, PrintavoLink, CommentsButton, useComments,
 } from './modules/shared';
 
 // Módulo de Empaque. Reemplazará al tablero EMPAQUE. Entra lo que dice
@@ -31,7 +31,7 @@ function ProgressBar({ pct }) {
 
 const n = (v) => Number(v || 0).toLocaleString('es-MX');
 
-function OrderCard({ c, t, canEdit, readOnly, statuses, confirmStatus, busy, onStatus }) {
+function OrderCard({ c, t, onComments, canEdit, readOnly, statuses, confirmStatus, busy, onStatus }) {
   const editable = canEdit && !readOnly;
   return (
     <div className="rounded-xl border border-border bg-card p-4">
@@ -39,6 +39,7 @@ function OrderCard({ c, t, canEdit, readOnly, statuses, confirmStatus, busy, onS
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-base font-black">#{c.order_number}</span>
           <PrintavoLink url={c.printavo_url} t={t} />
+          <CommentsButton count={c.comments} onClick={() => onComments(c)} t={t} />
           {c.priority && <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-red-500/15 text-red-500">{c.priority}</span>}
           {c.packing_type && <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-secondary">{c.packing_type}</span>}
           {c.printed_on && (
@@ -132,6 +133,8 @@ export default function EmpaqueModule() {
   const [q, setQ] = useState('');
   const [busyId, setBusyId] = useState('');
   const loadRef = useRef(null);
+  // Comentarios de la orden (los mismos del maestro); al cerrar, recarga el conteo.
+  const [openComments, commentsModal] = useComments(() => loadRef.current?.());
   const dplRetry = useRef(0);
 
   const [kpis, setKpis] = useState(null);
@@ -211,6 +214,7 @@ export default function EmpaqueModule() {
   return (
     <div className="min-h-screen bg-background text-foreground">
       <Toaster />
+      {commentsModal}
       <header className="sticky top-0 z-10 bg-background/95 border-b border-border px-4 md:px-8 py-4">
         <div className="flex items-center gap-3 flex-wrap">
           <button type="button" onClick={() => navigate('/')} className="p-2 rounded-lg hover:bg-secondary" title={t('back')}>
@@ -268,7 +272,7 @@ export default function EmpaqueModule() {
           <div className="text-center text-sm text-muted-foreground py-16">{t('scr_empty')}</div>
         ) : (
           shown.map((c) => (
-            <OrderCard key={`${tab}-${c.order_id}`} c={c} t={t} canEdit={canEdit} readOnly={readOnlyTab}
+            <OrderCard onComments={openComments} key={`${tab}-${c.order_id}`} c={c} t={t} canEdit={canEdit} readOnly={readOnlyTab}
               statuses={statuses} confirmStatus={data?.confirm_status || 'NECESITA QC'}
               busy={busyId === c.order_id} onStatus={onStatus} />
           ))

@@ -1502,6 +1502,19 @@ async def react_to_comment(order_id: str, comment_id: str, request: Request):
     logger.info(f"Reaction {action} for {comment_id}. Current reactions: {list(reactions.keys())}")
     return {"reactions": reactions, "action": action}
 
+@router.post("/comment-counts")
+async def comment_counts(request: Request):
+    """{order_id: n} de las órdenes que la pantalla tiene cargadas, en UNA
+    consulta. Lo usa el puntito de comentarios del maestro (el listado de
+    órdenes va cacheado y no trae este dato)."""
+    from services.order_modules import comment_info
+    await require_auth(request)
+    body = await request.json()
+    ids = [str(i) for i in (body.get("order_ids") or [])][:5000]
+    info = await comment_info(ids)
+    return {oid: i["count"] for oid, i in info.items()}
+
+
 @router.get("/{order_id}/comments")
 async def get_comments(order_id: str, request: Request):
     await require_auth(request)

@@ -1,6 +1,7 @@
-import React, { useEffect, useRef } from 'react';
-import { ExternalLink } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { ExternalLink, MessageSquare } from 'lucide-react';
 import { API } from '../../lib/constants';
+import { CommentsModal } from '../dashboard/CommentsModal';
 
 // Piezas compartidas de los MÓDULOS que reemplazan tableros (Cuadros, Blanks…):
 // llamada al API, fechas, avisos en vivo, mini tabla de
@@ -104,6 +105,35 @@ export function Components({ items, t }) {
       ))}
     </div>
   );
+}
+
+// ── Comentarios ─────────────────────────────────────────────────────────────
+// Los comentarios viven pegados a la ORDEN (no al tablero): desde un módulo se
+// leen y escriben los mismos que en el maestro, QC y máquina. El backend manda
+// `comments` (cuántos) y `last_comment` en cada tarjeta (om.with_comments).
+
+export function CommentsButton({ count, onClick, t, big }) {
+  const has = count > 0;
+  return (
+    <button type="button" onClick={onClick} title={t('comments')}
+      className={`inline-flex items-center gap-1 rounded-md border font-bold transition-colors
+        ${big ? 'px-3 py-2 text-sm' : 'px-1.5 py-0.5 text-[11px]'}
+        ${has ? 'border-sky-500/50 bg-sky-500/10 text-sky-700 dark:text-sky-300' : 'border-border text-muted-foreground hover:bg-secondary'}`}>
+      <MessageSquare size={big ? 16 : 12} /> {has ? count : ''}
+    </button>
+  );
+}
+
+// [abrir(orden), ventana]: la ventana de comentarios de siempre (CommentsModal).
+export function useComments(onClosed) {
+  const [order, setOrder] = useState(null);
+  const [user, setUser] = useState(null);
+  useEffect(() => { call('/auth/me').then(setUser).catch(() => {}); }, []);
+  const modal = (
+    <CommentsModal order={order} isOpen={!!order} currentUser={user}
+      onClose={() => { setOrder(null); onClosed?.(); }} />
+  );
+  return [setOrder, modal];
 }
 
 export function PrintavoLink({ url, t }) {

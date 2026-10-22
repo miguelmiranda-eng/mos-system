@@ -216,11 +216,11 @@ async def queue(request: Request, days: float = om.DEFAULT_WINDOW_DAYS):
     done_today = await db.orders.count_documents({
         "blank_status_at": {"$gte": midnight.astimezone(timezone.utc).isoformat()},
         "blank_status": {"$in": [x for x in (await _statuses()) if x.upper() in DONE_STATUSES] or list(DONE_STATUSES)}})
-    return {"sim_at": sim["at"], "ok_statuses": sorted(ok_set),
+    return await om.with_comments({"sim_at": sim["at"], "ok_statuses": sorted(ok_set),
             "statuses": await _statuses(), "confirm_status": CONFIRM_STATUS,
             "days": om.window_days(days), "programados": programados, **tabs, "alertas": alertas,
             "sugeridas": sugeridas, "done_today": done_today,
-            "can_edit": bool(user_roles(user) & WRITE_ROLES)}
+            "can_edit": bool(user_roles(user) & WRITE_ROLES)})
 
 
 async def _statuses() -> list:

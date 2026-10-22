@@ -227,6 +227,49 @@ def blank_ok_from(cfg: dict) -> set:
     return {str(s).strip().upper() for s in (cfg.get("ready_blank_statuses") or [])} or BLANK_OK
 
 
+def _plain_comment(text) -> str:
+    """Texto legible de un comentario: las marcas internas de foto y archivo
+    ([img]…[/img], [file]etiqueta|url[/file]) se vuelven "📷 foto" / "📎 etiqueta"."""
+    import re
+    s = str(text or "")
+    s = re.sub(r"\[file\](.*?)\|.*?\[/file\]", lambda m: f"📎 {m.group(1)}", s, flags=re.S)
+    s = re.sub(r"\[img\].*?(\[/img\]|$)", "📷 foto", s, flags=re.S)
+    s = re.sub(r"\s+", " ", s).strip()
+    return re.sub(r"(?:📷 foto ?){2,}", lambda m: f"📷 {m.group(0).count('📷')} fotos ", s).strip()
+
+
+async def comment_info(order_ids) -> dict:
+    """{order_id: {count, last: {content, user_name, created_at}}} de varias
+    órdenes en UNA consulta (los comentarios viven pegados a la orden, no al
+    tablero: los módulos los muestran igual que el maestro)."""
+    ids = [i for i in set(order_ids) if i]
+    out = {}
+    if not ids:
+        return out
+    pipe = [{"$match": {"order_id": {"$in": ids}}},
+            {"$sort": {"created_at": 1}},
+            {"$group": {"_id": "$order_id", "count": {"$sum": 1},
+                        "content": {"$last": "$content"}, "user_name": {"$last": "$user_name"},
+                        "created_at": {"$last": "$created_at"}}}]
+    async for r in db.comments.aggregate(pipe):
+        out[r["_id"]] = {"count": r["count"], "last": {"content": _plain_comment(r.get("content"))[:280],
+                                                       "user_name": r.get("user_name") or "",
+                                                       "created_at": r.get("created_at")}}
+    return out
+
+
+async def with_comments(resp: dict) -> dict:
+    """Agrega `comments` (cuántos) y `last_comment` a cada tarjeta de las
+    listas de una respuesta de módulo."""
+    cards = [c for v in resp.values() if isinstance(v, list) for c in v if isinstance(c, dict) and c.get("order_id")]
+    info = await comment_info([c["order_id"] for c in cards])
+    for c in cards:
+        i = info.get(c["order_id"]) or {}
+        c["comments"] = i.get("count", 0)
+        c["last_comment"] = i.get("last")
+    return resp
+
+
 def printavo_url(o: dict) -> str:
     """Work order de Printavo: el enlace capturado en Job Title A (o B)."""
     for f in ("job_title_a", "job_title_b"):

@@ -384,6 +384,21 @@ const Dashboard = () => {
     dynamicBoards, hiddenBoards, createBoard, deleteBoard, fetchBoards, toggleBoardVisibility,
     groupConfig, fetchGroups
   } = useOrders(currentBoard, boardFilters);
+  // Puntito de comentarios: el listado viene cacheado y no trae el conteo, así
+  // que se pide aparte, de UN jalón para las órdenes cargadas (POST
+  // /orders/comment-counts). Se refresca al cambiar la lista y al cerrar la
+  // ventana de comentarios. Antes leía order._comments_count, que nadie llenaba.
+  const [commentCounts, setCommentCounts] = useState({});
+  const commentIdsKey = (orders || []).map((o) => o.order_id).join(',');
+  const loadCommentCounts = useCallback(() => {
+    const ids = commentIdsKey ? commentIdsKey.split(',') : [];
+    if (!ids.length) { setCommentCounts({}); return; }
+    fetch(`${API}/orders/comment-counts`, {
+      method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ order_ids: ids }),
+    }).then((r) => (r.ok ? r.json() : {})).then(setCommentCounts).catch(() => {});
+  }, [commentIdsKey]);
+  useEffect(() => { loadCommentCounts(); }, [loadCommentCounts]);
 
   // Search wiring for <SearchBox>. Stable callbacks so the debounce effect inside
   // SearchBox doesn't re-subscribe on every Dashboard render.
@@ -1296,7 +1311,7 @@ const Dashboard = () => {
           <div className="flex flex-row gap-2 items-center justify-center">
             <button onClick={() => setCommentsOrder(order)} className="p-1 rounded-lg transition-all hover:bg-secondary hover:scale-110 active:scale-95 text-slate-500 dark:text-slate-400 hover:text-primary relative" title={t('comments')}>
               <MessageSquare className="w-4 h-4" />
-              {order._comments_count > 0 && <span className="absolute -top-0.5 -right-0.5 w-2 h-2 bg-royal rounded-full border border-background" />}
+              {(commentCounts[order.order_id] || 0) > 0 && <span className="absolute -top-0.5 -right-0.5 w-2 h-2 bg-royal rounded-full border border-background" />}
             </button>
             {isAdmin && (
               <button onClick={() => setHistoryOrder(order)} className="p-1 rounded-lg transition-all hover:bg-secondary hover:scale-110 active:scale-95 text-slate-500 dark:text-slate-400 hover:text-primary" title={t('dash_extended_history')}>
@@ -1576,7 +1591,7 @@ const Dashboard = () => {
                 aria-label={t('comments')}
               >
                 <MessageSquare className="w-4 h-4" />
-                {order._comments_count > 0 && <span className="absolute top-1 right-1 w-2 h-2 bg-royal rounded-full" />}
+                {(commentCounts[order.order_id] || 0) > 0 && <span className="absolute top-1 right-1 w-2 h-2 bg-royal rounded-full" />}
               </button>
               <input
                 type="checkbox"
@@ -2912,7 +2927,7 @@ const Dashboard = () => {
 
       {/* Modals */}
       <NewOrderModal isOpen={showNewOrder} onClose={() => setShowNewOrder(false)} onCreate={(order) => { setOrders(prev => [order, ...prev]); }} options={options} groupConfig={groupConfig} columns={columns} />
-      <CommentsModal order={commentsOrder} isOpen={!!commentsOrder} onClose={() => { setCommentsOrder(null); setHighlightedCommentId(null); }} currentUser={user} highlightedCommentId={highlightedCommentId} />
+      <CommentsModal order={commentsOrder} isOpen={!!commentsOrder} onClose={() => { setCommentsOrder(null); setHighlightedCommentId(null); loadCommentCounts(); }} currentUser={user} highlightedCommentId={highlightedCommentId} />
       <WorkOrderModal order={workOrderObj} isOpen={!!workOrderObj} onClose={() => setWorkOrderObj(null)} isDark={isDark} canDesign={isSuperAdmin} />
       {evidenceOrder && <SampleEvidenceModal order={evidenceOrder} onClose={() => setEvidenceOrder(null)} />}
       <AutomationsModal isOpen={showAutomations} onClose={() => setShowAutomations(false)} options={options} columns={columns} dynamicBoards={activeBoards} />
