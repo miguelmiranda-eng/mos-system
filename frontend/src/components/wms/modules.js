@@ -16,7 +16,7 @@
 import {
   Package, MapPin, ClipboardList, BarChart3, ClipboardCheck,
   CheckCircle, History, FileDown, ScanLine, Settings,
-  LayoutDashboard, Scissors, Clock, Truck, Move, ShieldCheck, ShieldAlert, Boxes, PackageCheck, Target,
+  LayoutDashboard, Scissors, Clock, Truck, Move, ShieldCheck, ShieldAlert, Boxes, PackageCheck, Target, Scale,
 } from "lucide-react";
 
 /* Grupos del menú. `label`/`hint` son el respaldo en español para quien llame
@@ -74,6 +74,8 @@ export const buildModules = (t) => [
   // ── Inventario ──────────────────────────────────────────────────────────
   { id: 'inventory', group: 'inv', label: t('wms_mod_inventory'), icon: BarChart3, color: 'text-emerald-400',
     desc: t('wms_mod_inventory_desc') },
+  { id: 'demand_balance', group: 'inv', label: t('wms_mod_demand_balance'), icon: Scale, color: 'text-fuchsia-400',
+    desc: t('wms_mod_demand_balance_desc') },
   { id: 'locations', group: 'inv', label: t('wms_mod_locations'), icon: MapPin, color: 'text-cyan-400',
     desc: t('wms_mod_locations_desc') },
   { id: 'mover', group: 'inv', label: t('wms_mod_mover'), icon: Move, color: 'text-teal-400',
@@ -132,7 +134,7 @@ export const buildModules = (t) => [
    discrepar sobre qué ve cada quien. El backend valida igual por su cuenta. */
 // Respaldo de la escalera de inventarios por módulo (= WMS_MODULE_INVENTORY_DEFAULTS
 // del backend) por si /module-access aún no cargó: la lista blanca histórica.
-const INVENTORY_LEVEL_DEFAULTS = { locations: 1, mover: 1, cycle_count: 1, inventory: 1, aging: 1, movements: 1, staging: 1 };
+const INVENTORY_LEVEL_DEFAULTS = { locations: 1, mover: 1, cycle_count: 1, inventory: 1, demand_balance: 1, aging: 1, movements: 1, staging: 1 };
 
 // Roles SCOPEADOS en el frontend: no reciben el menú base; cada uno trae su
 // propia lista. `customer`/`shipping_guest`/`operator` son exclusivos (van

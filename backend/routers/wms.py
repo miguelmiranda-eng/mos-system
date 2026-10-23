@@ -5489,16 +5489,62 @@ async def inventory_summary(request: Request, customer: str = ""):
     agg = result[0] if result else {}
     total_locations = len(locations_raw) if customer else locations_raw
 
-    # En tránsito: material esperado que aún NO se recibe, de las entradas
-    # (wms_asn: ASN o BPO). = suma de (qty_expected - qty_received) de las líneas
-    # de entradas no completadas.
+    # En tránsito: material esperado que aún NO se recibe (wms_asn no "received"),
+    # = Σ (qty_expected − qty_received). Se ACOTA a una ventana de frescura porque
+    # hay ASN viejos que ya llegaron o se cancelaron pero nadie marcó recibido
+    # (zombis): sumarlos infla el número. Lo que cae fuera de la ventana se reporta
+    # aparte como "sin cerrar", no como tránsito real.
+    IN_TRANSIT_FRESH_DAYS = 90
+    cutoff = datetime.now(timezone.utc) - timedelta(days=IN_TRANSIT_FRESH_DAYS)
+
+    def _as_dt(v):
+        if isinstance(v, datetime):
+            return v if v.tzinfo else v.replace(tzinfo=timezone.utc)
+        if isinstance(v, str) and v:
+            try:
+                d = datetime.fromisoformat(v)
+                return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+            except ValueError:
+                return None
+        return None
+
+    def _picked(pv):
+        if isinstance(pv, dict):
+            try:
+                return int(pv.get("total", 0) or 0)
+            except (TypeError, ValueError):
+                return 0
+        try:
+            return int(pv or 0)
+        except (TypeError, ValueError):
+            return 0
+
     asn_match = {"status": {"$ne": AsnStatus.RECEIVED}}
     if customer:
         asn_match["customer"] = {"$regex": customer, "$options": "i"}
     in_transit = 0
-    async for a in db.wms_asn.find(asn_match, {"_id": 0, "items": 1}):
+    stale_in_transit = 0
+    async for a in db.wms_asn.find(asn_match, {"_id": 0, "items": 1, "created_at": 1}):
+        pend = 0
         for it in a.get("items", []):
-            in_transit += max(0, int(it.get("qty_expected", 0) or 0) - int(it.get("qty_received", 0) or 0))
+            pend += max(0, int(it.get("qty_expected", 0) or 0) - int(it.get("qty_received", 0) or 0))
+        dt = _as_dt(a.get("created_at"))
+        if dt is not None and dt < cutoff:
+            stale_in_transit += pend     # ASN viejo sin cerrar: no es tránsito real
+        else:
+            in_transit += pend
+
+    # Demanda REAL = tallas PENDIENTES de los pick tickets ABIERTOS (pedido −
+    # surtido). Antes "On Demand" era disponible + tránsito (proyección de OFERTA),
+    # que NO es demanda. Ahora mide lo que de verdad piden las órdenes.
+    tk_match = dict(TICKET_OPEN_QUERY)
+    if customer:
+        tk_match["customer"] = {"$regex": customer, "$options": "i"}
+    total_demand = 0
+    async for tk in db.wms_pick_tickets.find(tk_match, {"_id": 0, "sizes": 1, "picked_sizes": 1}):
+        ps = tk.get("picked_sizes") or {}
+        for sz, q in (tk.get("sizes") or {}).items():
+            total_demand += max(0, int(q or 0) - _picked(ps.get(sz)))
 
     total_available = agg.get("total_available", 0)
     summary = {
@@ -5510,8 +5556,13 @@ async def inventory_summary(request: Request, customer: str = ""):
         "total_locations": total_locations,
         "low_stock_items": len(low_stock),
         "low_stock": low_stock,
-        # In-Transit y On Demand (disponibilidad proyectada = disponible + en tránsito).
+        # En tránsito REAL (ventana de frescura) + ASN viejos sin cerrar (aparte).
         "total_in_transit": in_transit,
+        "stale_in_transit": stale_in_transit,
+        # Demanda REAL (pick tickets abiertos) y Balance = Disponible − Demanda.
+        "total_demand": total_demand,
+        "total_balance": total_available - total_demand,
+        # Compat: "On Demand" (disponibilidad proyectada) para consumidores viejos.
         "total_on_demand": total_available + in_transit,
     }
     return summary
@@ -9719,6 +9770,78 @@ async def audit_sku(request: Request, style: str, color: str = "", size: str = "
         "cajas_lista": cajas_lista, "diagnostico": diagnostico,
         "movimientos": movements[:100], "historial": historial,
     }
+
+
+@router.get("/inventory/demand-balance")
+async def inventory_demand_balance(request: Request, only_short: bool = False, limit: int = 5000):
+    """Balance DEMANDA vs EXISTENCIA por SKU de blank (Fase 0 del "pool").
+    - Demanda = Σ tallas PENDIENTES de los pick tickets ABIERTOS (pedido − surtido).
+    - On hand / Disponible = wms_inventory (units_on_hand; disponible = on_hand −
+      allocated).
+    - Balance = Disponible − Demanda (negativo = faltante), ordenado por el más
+      corto primero. `only_short=true` deja solo los negativos.
+    NOTA: no incluye "en tránsito desde proveedor": el ASN trae part_number, no
+    style, así que aún no se puede mapear a SKU (hueco de captura, aparte)."""
+    await require_wms_module_access(request, "inventory")
+
+    def _up(s):
+        return (s or "").strip().upper()
+
+    def _picked_of(ps, sz):
+        v = (ps or {}).get(sz)
+        if isinstance(v, dict):
+            try:
+                return int(v.get("total", 0) or 0)
+            except (TypeError, ValueError):
+                return 0
+        try:
+            return int(v or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    # Demanda: tallas pendientes de los pick tickets abiertos.
+    demand, orders = {}, {}
+    async for tk in db.wms_pick_tickets.find(
+            TICKET_OPEN_QUERY,
+            {"_id": 0, "style": 1, "color": 1, "sizes": 1, "picked_sizes": 1, "order_number": 1}):
+        S, C = _up(tk.get("style")), _up(tk.get("color"))
+        ps = tk.get("picked_sizes") or {}
+        for sz, q in (tk.get("sizes") or {}).items():
+            need = int(q or 0) - _picked_of(ps, sz)
+            if need > 0:
+                k = (S, C, _up(sz))
+                demand[k] = demand.get(k, 0) + need
+                orders.setdefault(k, set()).add(tk.get("order_number"))
+
+    # Existencia: on_hand y allocated por SKU (style/color/talla).
+    onhand, alloc = {}, {}
+    async for g in db.wms_inventory.aggregate([
+        {"$match": {"units_on_hand": {"$gt": 0}}},
+        {"$group": {"_id": {"s": {"$toUpper": {"$ifNull": ["$style", "$sku"]}},
+                            "c": {"$toUpper": "$color"}, "z": {"$toUpper": "$size"}},
+                    "oh": {"$sum": "$units_on_hand"}, "al": {"$sum": "$units_allocated"}}}]):
+        k = (g["_id"]["s"] or "", g["_id"]["c"] or "", g["_id"]["z"] or "")
+        onhand[k] = onhand.get(k, 0) + int(g["oh"] or 0)
+        alloc[k] = alloc.get(k, 0) + int(g["al"] or 0)
+
+    rows = []
+    for k in (set(demand) | set(onhand)):
+        oh, al, dem = onhand.get(k, 0), alloc.get(k, 0), demand.get(k, 0)
+        avail = oh - al
+        bal = avail - dem
+        if only_short and bal >= 0:
+            continue
+        ords = sorted(x for x in orders.get(k, set()) if x)
+        rows.append({
+            "style": k[0], "color": k[1], "size": k[2],
+            "on_hand": oh, "allocated": al, "available": avail,
+            "demand": dem, "balance": bal,
+            "order_count": len(ords), "orders": ords[:50],
+        })
+    rows.sort(key=lambda r: (r["balance"], -r["demand"]))
+    return {"generated_at": now_iso(), "count": len(rows),
+            "short_count": sum(1 for r in rows if r["balance"] < 0),
+            "rows": rows[:max(1, min(int(limit or 5000), 20000))]}
 
 
 # ── Movimientos aplanados a columnas (Auditoría → Movimientos) ──────────────

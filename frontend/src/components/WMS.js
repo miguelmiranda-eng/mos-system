@@ -26,6 +26,7 @@ const SettingsModule      = named(() => import("./wms/Settings"), "SettingsModul
 const ReceivingModule     = named(() => import("./wms/Receiving"), "ReceivingModule");
 const PutawayModule       = named(() => import("./wms/Putaway"), "PutawayModule");
 const InventoryModule     = named(() => import("./wms/Inventory"), "InventoryModule");
+const DemandBalanceModule = named(() => import("./wms/DemandBalance"), "DemandBalanceModule");
 const AgingModule         = named(() => import("./wms/Aging"), "AgingModule");
 const LocationsModule     = named(() => import("./wms/Locations"), "LocationsModule");
 const PickingModule       = named(() => import("./wms/Picking"), "PickingModule");
@@ -60,6 +61,7 @@ const renderActiveModule = (moduleId, ctx) => {
     case 'mover':        return <MoverModule currentUser={ctx.currentUser} />;
     case 'putaway':      return <PutawayModule />;
     case 'inventory':    return <InventoryModule initialCustomer={ctx.associatedCustomer} currentUser={ctx.currentUser} />;
+    case 'demand_balance': return <DemandBalanceModule />;
     case 'aging':        return <AgingModule initialCustomer={ctx.associatedCustomer} />;
     case 'locations':    return <LocationsModule currentUser={ctx.currentUser} />;
     case 'picking':      return <PickingModule currentUser={ctx.currentUser} />;

@@ -790,19 +790,22 @@ export const InventoryModule = ({ initialCustomer = '', currentUser = null }) =>
         </SoftAlert>
       )}
 
-      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3">
         {[
-          { key: 'wms_total_skus', value: summary.total_skus || 0 },
-          { key: 'wms_on_hand', value: summary.total_on_hand || 0 },
-          { key: 'wms_allocated', value: summary.total_allocated || 0 },
-          { key: 'wms_available', value: summary.total_available || 0 },
-          // Material que viene en camino (ASN/BPO no recibido) y disponibilidad
-          // proyectada (disponible + en tránsito).
-          { key: 'wms_inv_in_transit', value: summary.total_in_transit || 0 },
-          { key: 'wms_inv_on_demand', value: summary.total_on_demand || 0 },
-          { key: 'wms_locations', value: summary.total_locations || 0 },
+          { key: 'wms_total_skus', value: (summary.total_skus || 0).toLocaleString() },
+          { key: 'wms_on_hand', value: (summary.total_on_hand || 0).toLocaleString() },
+          { key: 'wms_allocated', value: (summary.total_allocated || 0).toLocaleString() },
+          { key: 'wms_available', value: (summary.total_available || 0).toLocaleString() },
+          // En tránsito = ASN no recibido dentro de la ventana de frescura.
+          { key: 'wms_inv_in_transit', value: (summary.total_in_transit || 0).toLocaleString() },
+          // Demanda REAL (pick tickets abiertos) y Balance = Disponible − Demanda.
+          { key: 'wms_inv_demand', value: (summary.total_demand || 0).toLocaleString() },
+          { key: 'wms_inv_balance',
+            value: <span className={(summary.total_balance || 0) < 0 ? 'text-red-500' : 'text-emerald-500'}>
+              {(summary.total_balance || 0).toLocaleString()}</span> },
+          { key: 'wms_locations', value: (summary.total_locations || 0).toLocaleString() },
         ].map((s) => (
-          <StatCard key={s.key} label={t(s.key)} value={(s.value || 0).toLocaleString()} />
+          <StatCard key={s.key} label={t(s.key)} value={s.value} />
         ))}
       </div>
 
