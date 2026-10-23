@@ -9780,8 +9780,10 @@ async def inventory_demand_balance(request: Request, only_short: bool = False, l
       allocated).
     - Balance = Disponible − Demanda (negativo = faltante), ordenado por el más
       corto primero. `only_short=true` deja solo los negativos.
-    NOTA: no incluye "en tránsito desde proveedor": el ASN trae part_number, no
-    style, así que aún no se puede mapear a SKU (hueco de captura, aparte)."""
+    - En tránsito = Σ (qty_expected − qty_received) de las líneas de ASN ABIERTOS
+      con style/color/talla capturados (ventana de frescura 90 días). Proyectado =
+      Disponible + En tránsito − Demanda (si ya no es negativo, lo cubre lo que
+      viene). Las líneas de ASN sin style/talla no se pueden mapear y no cuentan."""
     await require_wms_module_access(request, "inventory")
 
     def _up(s):
@@ -9824,9 +9826,40 @@ async def inventory_demand_balance(request: Request, only_short: bool = False, l
         onhand[k] = onhand.get(k, 0) + int(g["oh"] or 0)
         alloc[k] = alloc.get(k, 0) + int(g["al"] or 0)
 
+    # En tránsito por SKU: líneas de ASN ABIERTOS (no "received") con style y talla
+    # capturados a mano, dentro de la ventana de frescura (90 días; los ASN viejos
+    # sin cerrar no cuentan). Lo que no trae style/talla no se mapea y se omite.
+    cutoff = datetime.now(timezone.utc) - timedelta(days=90)
+
+    def _as_dt(v):
+        if isinstance(v, datetime):
+            return v if v.tzinfo else v.replace(tzinfo=timezone.utc)
+        if isinstance(v, str) and v:
+            try:
+                d = datetime.fromisoformat(v)
+                return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+            except ValueError:
+                return None
+        return None
+
+    transit = {}
+    async for a in db.wms_asn.find({"status": {"$ne": AsnStatus.RECEIVED}},
+                                   {"_id": 0, "items": 1, "created_at": 1}):
+        dt = _as_dt(a.get("created_at"))
+        if dt is not None and dt < cutoff:
+            continue
+        for it in (a.get("items") or []):
+            st, sz = _up(it.get("style")), _up(it.get("size"))
+            if not st or not sz:
+                continue
+            pend = max(0, int(it.get("qty_expected", 0) or 0) - int(it.get("qty_received", 0) or 0))
+            if pend > 0:
+                k = (st, _up(it.get("color")), sz)
+                transit[k] = transit.get(k, 0) + pend
+
     rows = []
-    for k in (set(demand) | set(onhand)):
-        oh, al, dem = onhand.get(k, 0), alloc.get(k, 0), demand.get(k, 0)
+    for k in (set(demand) | set(onhand) | set(transit)):
+        oh, al, dem, tr = onhand.get(k, 0), alloc.get(k, 0), demand.get(k, 0), transit.get(k, 0)
         avail = oh - al
         bal = avail - dem
         if only_short and bal >= 0:
@@ -9836,11 +9869,13 @@ async def inventory_demand_balance(request: Request, only_short: bool = False, l
             "style": k[0], "color": k[1], "size": k[2],
             "on_hand": oh, "allocated": al, "available": avail,
             "demand": dem, "balance": bal,
+            "in_transit": tr, "projected": avail + tr - dem,
             "order_count": len(ords), "orders": ords[:50],
         })
     rows.sort(key=lambda r: (r["balance"], -r["demand"]))
     return {"generated_at": now_iso(), "count": len(rows),
             "short_count": sum(1 for r in rows if r["balance"] < 0),
+            "covered_by_transit": sum(1 for r in rows if r["balance"] < 0 and r["projected"] >= 0),
             "rows": rows[:max(1, min(int(limit or 5000), 20000))]}
 
 

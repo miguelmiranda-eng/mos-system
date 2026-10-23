@@ -46,7 +46,8 @@ export const DemandBalanceModule = () => {
     const out = rows.map((r) => ({
       "Estilo": r.style, "Color": r.color, "Talla": r.size,
       "On hand": r.on_hand, "Disponible": r.available, "Demanda": r.demand,
-      "Balance": r.balance, "# Órdenes": r.order_count, "Órdenes": (r.orders || []).join(", "),
+      "Balance": r.balance, "En tránsito": r.in_transit ?? 0, "Proyectado": r.projected ?? r.balance,
+      "# Órdenes": r.order_count, "Órdenes": (r.orders || []).join(", "),
     }));
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(out.length ? out : [{ "Estilo": "(sin datos)" }]), "Balance");
@@ -77,10 +78,11 @@ export const DemandBalanceModule = () => {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <StatCard label={t("wms_dbal_skus")} value={fmt(data?.count)} />
         <StatCard label={t("wms_dbal_short_skus")} value={fmt(data?.short_count)} />
         <StatCard label={t("wms_dbal_short_units")} value={fmt(shortUnits)} />
+        <StatCard label={t("wms_dbal_covered")} value={fmt(data?.covered_by_transit)} />
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
@@ -111,6 +113,8 @@ export const DemandBalanceModule = () => {
                 <Th right>{t("wms_dbal_available")}</Th>
                 <Th right>{t("wms_dbal_demand")}</Th>
                 <Th right>{t("wms_dbal_balance")}</Th>
+                <Th right>{t("wms_dbal_in_transit")}</Th>
+                <Th right>{t("wms_dbal_projected")}</Th>
                 <Th right>{t("wms_dbal_orders")}</Th>
               </tr>
             </thead>
@@ -125,6 +129,10 @@ export const DemandBalanceModule = () => {
                   <td className="px-3 py-1.5 text-right font-mono tabular-nums">{fmt(r.demand)}</td>
                   <td className={`px-3 py-1.5 text-right font-mono tabular-nums font-bold ${r.balance < 0 ? "text-red-500" : "text-emerald-500"}`}>
                     {r.balance > 0 ? "+" : ""}{fmt(r.balance)}
+                  </td>
+                  <td className="px-3 py-1.5 text-right font-mono tabular-nums text-sky-400">{r.in_transit ? fmt(r.in_transit) : "—"}</td>
+                  <td className={`px-3 py-1.5 text-right font-mono tabular-nums ${(r.projected ?? r.balance) < 0 ? "text-red-400" : "text-emerald-400"}`}>
+                    {(r.projected ?? r.balance) > 0 ? "+" : ""}{fmt(r.projected ?? r.balance)}
                   </td>
                   <td className="px-3 py-1.5 text-right text-muted-foreground tabular-nums"
                     title={(r.orders || []).join(", ")}>{r.order_count}</td>
