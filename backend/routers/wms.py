@@ -6176,21 +6176,42 @@ async def _compute_size_locations(style: str, color: str, sizes: dict, strategy:
 
 
 async def internal_create_picking_ticket(data: dict, user: dict, *, ticket_id: str | None = None,
-                                        extra: dict | None = None) -> dict:
+                                        extra: dict | None = None, allow_force: bool = False) -> dict:
     """
     Internal function to create a pick ticket.
     Expected data: order_number, customer, client, manufacturer, style, color, quantity, sizes, board_category, assigned_to...
-    `ticket_id`/`extra` solo los usa código interno (rondas de resurtido): nunca
-    salen del body de una petición.
+    `ticket_id`/`extra`/`allow_force` solo los usa código interno (rondas de
+    resurtido): nunca salen del body de una petición.
     """
     ticket_id = ticket_id or gen_id("pick")
     order_number = data.get("order_number", "").strip()
     style = data.get("style", "").strip()
-    force_duplicate = bool(data.get("force_duplicate", False))
+    # force_duplicate SOLO lo puede pedir código interno (el resurtido, con su
+    # ronda hija del mismo order+style+color). Desde la UI NO se puede forzar:
+    # una orden + un blank = UN ticket, sin excepción. Si falta material por
+    # dañadas/incidencia, el camino es RESURTIR sobre el ticket, no un duplicado.
+    force_duplicate = bool(allow_force) and bool(data.get("force_duplicate", False))
 
     # Validation for manual creation might be stricter than automated skeleton
     if not order_number:
         raise HTTPException(400, "Numero de orden requerido")
+
+    # Un ticket NACE de un pre-ticket: una orden abierta. El piso solo CONVIERTE
+    # pre-tickets (crear desde Pre-tickets). Crear "de cero" para una orden que no
+    # existe como orden abierta es de admin (nivel 3+). El resurtido (allow_force)
+    # y el flujo de allocation no pasan por aquí. Mismo predicado del pre-ticket
+    # virtual (ver list_pick_tickets).
+    if not allow_force and get_admin_level(user) < 3:
+        open_order = await db.orders.find_one({
+            "order_number": order_number,
+            "status": {"$nin": ["cancelled", "shipped", "completed", "COMPLETADO", "CERRADO"]},
+            "wms_status": {"$ne": "picked"},
+            "board": {"$not": {"$regex": r"(?i)^\s*(FINAL BILL|COMPLETOS|CANCELLED|PAPELERA|RESPALDO MONDAY|EDI|INVENTARIO)\b"}},
+        }, {"_id": 1})
+        if not open_order:
+            raise HTTPException(403, (
+                f"La orden {order_number} no existe como orden abierta: el pick ticket "
+                f"se crea convirtiendo su pre-ticket. Crear desde cero es de admin."))
 
     color = data.get("color", "").strip()
 
@@ -6228,8 +6249,10 @@ async def internal_create_picking_ticket(data: dict, user: dict, *, ticket_id: s
                 {
                     "message": (f"Ya existe un pick ticket activo para la orden "
                                 f"{order_number} en {style or '(sin style)'} / "
-                                f"{color or '(sin color)'}."),
+                                f"{color or '(sin color)'}. Si falta material "
+                                f"(dañadas/incidencia), usa Resurtir sobre ese ticket."),
                     "existing_ticket": existing,
+                    "duplicate_blocked": True,
                 },
             )
     # -------------------------------------------------------------------------------

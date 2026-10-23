@@ -196,7 +196,7 @@ async def create_round(*, user: dict, parent_id: str, sizes: dict, reason: str, 
         "resupply_pct": pv["pct"], "resupply_over_threshold": pv["over"],
         "order_id": parent.get("order_id"),
     }
-    child = await internal_create_picking_ticket(data, user, ticket_id=child_id, extra=extra)
+    child = await internal_create_picking_ticket(data, user, ticket_id=child_id, extra=extra, allow_force=True)
     await db.wms_pick_tickets.update_one({"ticket_id": parent_id}, {
         "$push": {"resupplies": {"ticket_id": child_id, "round": n, "sizes": sizes, "total": total,
                                  "reason": reason, "created_at": _now(),

@@ -5,6 +5,7 @@ import { Plus, Loader2, Search, X, AlertTriangle, Printer, Zap, Edit3, Clipboard
 import SearchableSelect from "../SearchableSelect";
 import { useLang } from "../../contexts/LanguageContext";
 import { API, fetcher, poster, putter, logLoadError, useWms, useWmsSizes, isYouthSize, isToddlerSize, isAdultSize } from "./lib";
+import { adminLevelOf } from "./modules";
 import { ResupplyModal } from "./ResupplyModal";
 import { TicketStatus, PickingStatus, PickDestination } from "./constants";
 import { Btn, StatCard, cls, EmptyState } from "./ui";
@@ -82,6 +83,9 @@ export const PickingModule = ({ currentUser } = {}) => {
   const [dupWarning, setDupWarning] = useState(null); // null | { pendingPayload, existing_ticket }
 
   const isAdmin = ['admin', 'supersu', 'ceo'].includes(currentUser?.role);
+  // Crear un pick ticket DESDE CERO (orden en blanco) es solo de admin nivel 3+.
+  // El piso solo CONVIERTE pre-tickets (clic en un pre-ticket). Espejo del backend.
+  const canFreeCreate = adminLevelOf(currentUser) >= 3;
 
   // Load customers + colores curados on mount (styles se cargan por customer abajo)
   useEffect(() => {
@@ -330,13 +334,6 @@ export const PickingModule = ({ currentUser } = {}) => {
       }
     } catch { toast.error(t('wms_conn_err')); }
     finally { setLoading(false); }
-  };
-
-  // Called when user clicks "Create anyway" in the duplicate warning modal
-  const handleForceDuplicate = async () => {
-    if (!dupWarning) return;
-    setDupWarning(null);
-    await handleSubmit(true);
   };
 
   // Open the confirm modal (replaces the old blocking window.confirm).
@@ -859,21 +856,23 @@ export const PickingModule = ({ currentUser } = {}) => {
             );
           })}
         </div>
-        <Btn
-          variant="primary"
-          onClick={() => {
-            setEditingTicket(null);
-            setForm(emptyForm);
-            setSizeLocations({});
-            setOptions(prev => ({ ...prev, manufacturers: [], styles: [], colors: [] }));
-            setShowForm(true);
-            setActiveTab('tickets');
-          }}
-          className="whitespace-nowrap"
-        >
-          <Plus className="w-4 h-4" />
-          {t('wms_new_pick')}
-        </Btn>
+        {canFreeCreate && (
+          <Btn
+            variant="primary"
+            onClick={() => {
+              setEditingTicket(null);
+              setForm(emptyForm);
+              setSizeLocations({});
+              setOptions(prev => ({ ...prev, manufacturers: [], styles: [], colors: [] }));
+              setShowForm(true);
+              setActiveTab('tickets');
+            }}
+            className="whitespace-nowrap"
+          >
+            <Plus className="w-4 h-4" />
+            {t('wms_new_pick')}
+          </Btn>
+        )}
       </div>
 
       {/* Progressive load indicator */}
@@ -1511,9 +1510,9 @@ export const PickingModule = ({ currentUser } = {}) => {
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
           <div className="bg-card border border-border rounded-lg w-full max-w-md shadow-xl p-6 space-y-4 animate-in zoom-in-95 duration-200">
             <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2 text-amber-600 dark:text-amber-400">
+              <div className="flex items-center gap-2 text-red-600 dark:text-red-400">
                 <AlertTriangle className="w-5 h-5" />
-                <h3 className="font-semibold text-sm">{t('wms_pk_possible_dup')}</h3>
+                <h3 className="font-semibold text-sm">{t('wms_pk_dup_blocked_title')}</h3>
               </div>
               <button onClick={() => setDupWarning(null)} disabled={loading} className="p-1 hover:bg-muted rounded-md transition-colors disabled:opacity-50"><X className="w-5 h-5" /></button>
             </div>
@@ -1530,21 +1529,26 @@ export const PickingModule = ({ currentUser } = {}) => {
                 </div>
               )}
               <p className="mt-3 text-xs italic text-muted-foreground">
-                {t('wms_pk_dup_hint_1')} <strong>{t('wms_pk_dup_hint_b')}</strong>{t('wms_pk_dup_hint_2')}
+                {t('wms_pk_dup_resupply_hint')}
               </p>
             </div>
 
             <div className="flex gap-2 pt-2">
-              <button
-                onClick={handleForceDuplicate}
+              <Btn
+                variant="primary"
+                onClick={() => {
+                  const on = dupWarning.pendingPayload?.order_number || '';
+                  if (on) setSearch(on);
+                  setActiveTab('tickets');
+                  setDupWarning(null);
+                }}
                 disabled={loading}
-                className="flex-1 bg-amber-600 hover:bg-amber-700 text-white font-medium text-sm py-2 rounded-md transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                className="flex-1"
               >
-                {loading && <Loader2 className="w-4 h-4 animate-spin" />}
-                {t('wms_pk_create_anyway')}
-              </button>
+                {t('wms_pk_dup_goto')}
+              </Btn>
               <Btn onClick={() => setDupWarning(null)} disabled={loading} className="flex-1">
-                {t('cancel')}
+                {t('close')}
               </Btn>
             </div>
           </div>
