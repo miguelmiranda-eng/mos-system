@@ -78,11 +78,12 @@ export const DemandBalanceModule = () => {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
         <StatCard label={t("wms_dbal_skus")} value={fmt(data?.count)} />
         <StatCard label={t("wms_dbal_short_skus")} value={fmt(data?.short_count)} />
         <StatCard label={t("wms_dbal_short_units")} value={fmt(shortUnits)} />
         <StatCard label={t("wms_dbal_covered")} value={fmt(data?.covered_by_transit)} />
+        <StatCard label={t("wms_dbal_unmapped")} value={fmt(data?.unmapped_orders)} />
       </div>
 
       <div className="flex flex-wrap items-center gap-2">

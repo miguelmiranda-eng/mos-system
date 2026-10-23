@@ -6580,15 +6580,22 @@ async def list_pick_tickets(
         
         # Limit to 500 to avoid performance issues
         virtual_orders = await db.orders.find(virtual_query, {"_id": 0}).sort("created_at", -1).to_list(500)
-        
+        # Estilos reales del WMS para traducir el código de Printavo (GI5000 → 5000)
+        # al que entiende el almacén; si no mapea se conserva el crudo.
+        wms_styles = await _get_wms_styles()
+
         for vo in virtual_orders:
+            raw_style = vo.get("style") or vo.get("garment_style") or ""
+            mapped_style = normalize_blank_style(raw_style, wms_styles)
             real_tickets.append({
                 "ticket_id": f"virt_{vo.get('order_id')}",
                 "order_number": vo.get("order_number"),
                 "customer": vo.get("client") or vo.get("customer") or vo.get("branding") or "No Client",
                 "client": vo.get("client") or vo.get("customer") or vo.get("branding"),
                 "manufacturer": vo.get("manufacturer") or vo.get("branding"),
-                "style": vo.get("style") or vo.get("garment_style") or "",
+                "style": mapped_style or raw_style,
+                "style_printavo": raw_style,
+                "style_mapped": bool(mapped_style),
                 "color": vo.get("color") or vo.get("garment_color") or "",
                 "sizes": vo.get("sizes", {}),
                 "quantity": vo.get("quantity") or 0,
@@ -9772,10 +9779,56 @@ async def audit_sku(request: Request, style: str, color: str = "", size: str = "
     }
 
 
+# ── Normalizador de estilo de blank (Printavo → WMS) ────────────────────────
+# El código de Printavo antepone el proveedor al estilo real (GI5000 = Gildan
+# 5000). Se traduce al estilo del WMS quitando SOLO el prefijo, y SIEMPRE
+# validando el resto EXACTO contra el catálogo de estilos — así nunca se inventa
+# ni se colapsa un sufijo (5000B sigue siendo 5000B, distinto de 5000). El
+# formato combinado "A - B" en una celda es ambiguo y no se adivina.
+_BLANK_STYLE_PREFIXES = ("GILDAN", "NEXTLEVEL", "CANVAS", "ANVIL", "BELLA",
+                         "TSC", "GI", "BC", "PC", "DT", "NL", "AN", "ST", "CT", "G", "C")
+_WMS_STYLES_CACHE = {"at": 0.0, "set": None}
+
+
+async def _get_wms_styles() -> set:
+    """Set (MAYÚSCULAS) de los estilos reales del inventario. Cacheado 10 min."""
+    import time as _t
+    if _WMS_STYLES_CACHE["set"] is not None and _t.monotonic() - _WMS_STYLES_CACHE["at"] < 600:
+        return _WMS_STYLES_CACHE["set"]
+    styles = {str(s).strip().upper() for s in await db.wms_inventory.distinct("style")
+              if s and str(s).strip()}
+    _WMS_STYLES_CACHE.update(at=_t.monotonic(), set=styles)
+    return styles
+
+
+def normalize_blank_style(raw, wms_styles: set):
+    """Estilo de Printavo → estilo del WMS (GI5000 → 5000). Devuelve el estilo
+    WMS o None si no mapea sin ambigüedad. Valida el resto exacto contra
+    `wms_styles`; no toca el sufijo (5000B ≠ 5000); 'A - B' → None (ambiguo)."""
+    s = (raw or "").strip().upper()
+    if not s:
+        return None
+    if " - " in s or " / " in s:          # combinado/corrección: ambiguo
+        return None
+    if s in wms_styles:
+        return s
+    compact = s.replace(" ", "")
+    if compact in wms_styles:
+        return compact
+    for p in sorted(_BLANK_STYLE_PREFIXES, key=len, reverse=True):
+        if compact.startswith(p):
+            rest = compact[len(p):]
+            if rest in wms_styles:
+                return rest
+    return None
+
+
 @router.get("/inventory/demand-balance")
 async def inventory_demand_balance(request: Request, only_short: bool = False, limit: int = 5000):
     """Balance DEMANDA vs EXISTENCIA por SKU de blank (Fase 0 del "pool").
-    - Demanda = Σ tallas PENDIENTES de los pick tickets ABIERTOS (pedido − surtido).
+    - Demanda = pick tickets REALES abiertos (pedido − surtido) + PRE-TICKETS
+      virtuales (órdenes abiertas sin ticket real) con el estilo de Printavo
+      traducido al del WMS (GI5000 → 5000, validado contra el catálogo).
     - On hand / Disponible = wms_inventory (units_on_hand; disponible = on_hand −
       allocated).
     - Balance = Disponible − Demanda (negativo = faltante), ordenado por el más
@@ -9801,11 +9854,14 @@ async def inventory_demand_balance(request: Request, only_short: bool = False, l
         except (TypeError, ValueError):
             return 0
 
-    # Demanda: tallas pendientes de los pick tickets abiertos.
+    # Demanda (1): tallas pendientes de los pick tickets REALES abiertos.
     demand, orders = {}, {}
+    real_order_nums = set()
     async for tk in db.wms_pick_tickets.find(
             TICKET_OPEN_QUERY,
             {"_id": 0, "style": 1, "color": 1, "sizes": 1, "picked_sizes": 1, "order_number": 1}):
+        if tk.get("order_number"):
+            real_order_nums.add(tk.get("order_number"))
         S, C = _up(tk.get("style")), _up(tk.get("color"))
         ps = tk.get("picked_sizes") or {}
         for sz, q in (tk.get("sizes") or {}).items():
@@ -9814,6 +9870,36 @@ async def inventory_demand_balance(request: Request, only_short: bool = False, l
                 k = (S, C, _up(sz))
                 demand[k] = demand.get(k, 0) + need
                 orders.setdefault(k, set()).add(tk.get("order_number"))
+
+    # Demanda (2): PRE-TICKETS virtuales = órdenes ABIERTAS sin ticket real, con
+    # el estilo de Printavo traducido al del WMS (GI5000 → 5000). Antes esta
+    # demanda era invisible (el pre-ticket virtual nacía con el style basura de la
+    # orden). Las órdenes cuyo estilo no mapea no cuentan (se afinan/capturan).
+    wms_styles = await _get_wms_styles()
+    dismissed = {d["order_number"] for d in await db.wms_dismissed_pretickets.find(
+        {}, {"_id": 0, "order_number": 1}).to_list(5000) if d.get("order_number")}
+    virtual_q = {
+        "status": {"$nin": ["cancelled", "shipped", "completed", "COMPLETADO", "CERRADO"]},
+        "wms_status": {"$ne": "picked"},
+        "board": {"$not": {"$regex": r"(?i)^\s*(FINAL BILL|COMPLETOS|CANCELLED|PAPELERA|RESPALDO MONDAY|EDI|INVENTARIO)\b"}},
+    }
+    unmapped_orders = 0
+    async for o in db.orders.find(virtual_q, {"_id": 0, "order_number": 1, "style": 1, "color": 1, "sizes": 1}).limit(5000):
+        on = o.get("order_number")
+        if not on or on in real_order_nums or on in dismissed:
+            continue
+        ns = normalize_blank_style(o.get("style"), wms_styles)
+        if not ns:
+            if (o.get("style") or "").strip():
+                unmapped_orders += 1
+            continue
+        C = _up(o.get("color"))
+        for sz, q in (o.get("sizes") or {}).items():
+            need = int(q or 0)
+            if need > 0:
+                k = (ns, C, _up(sz))
+                demand[k] = demand.get(k, 0) + need
+                orders.setdefault(k, set()).add(on)
 
     # Existencia: on_hand y allocated por SKU (style/color/talla).
     onhand, alloc = {}, {}
@@ -9876,6 +9962,9 @@ async def inventory_demand_balance(request: Request, only_short: bool = False, l
     return {"generated_at": now_iso(), "count": len(rows),
             "short_count": sum(1 for r in rows if r["balance"] < 0),
             "covered_by_transit": sum(1 for r in rows if r["balance"] < 0 and r["projected"] >= 0),
+            # Órdenes abiertas con estilo pero que NO mapearon a un estilo WMS
+            # (combinados "A - B", prefijos raros, diseños): demanda no contada.
+            "unmapped_orders": unmapped_orders,
             "rows": rows[:max(1, min(int(limit or 5000), 20000))]}
 
 
