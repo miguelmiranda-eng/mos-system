@@ -68,8 +68,6 @@ export const PickingModule = ({ currentUser } = {}) => {
   const { can, canTab } = useWms();
   const [incidentDraft, setIncidentDraft] = useState({ sku: '', qty: '1', reason: 'Dañado', replacement_sizes: {}, replacement_description: '', notes: '' });
   const [incidentSaving, setIncidentSaving] = useState(false);
-  const [confirmTicket, setConfirmTicket] = useState(null);
-  const [confirmSaving, setConfirmSaving] = useState(false);
   const [editingTicket, setEditingTicket] = useState(null);
   const [loading, setLoading] = useState(false);
   const [sizeLocations, setSizeLocations] = useState({});
@@ -337,20 +335,6 @@ export const PickingModule = ({ currentUser } = {}) => {
   };
 
   // Open the confirm modal (replaces the old blocking window.confirm).
-  const handleConfirm = (ticket) => setConfirmTicket(ticket);
-
-  const doConfirm = async () => {
-    const ticket = confirmTicket;
-    if (!ticket) return;
-    setConfirmSaving(true);
-    try {
-      const res = await putter(`/pick-tickets/${ticket.ticket_id}/confirm`, { lines: ticket.lines || [] });
-      if (res.ok) { toast.success(t('wms_pick_confirmed')); setConfirmTicket(null); loadTickets(); loadStats(); }
-      else { const err = await res.json().catch(() => ({})); toast.error(err.detail || t('error')); }
-    } catch { toast.error(t('wms_conn_err')); }
-    finally { setConfirmSaving(false); }
-  };
-
   const openIncident = (ticket) => {
     setIncidentTicket(ticket);
     const initSizes = Object.keys(ticket.sizes || {}).reduce((acc, sz) => ({ ...acc, [sz]: '' }), {});
@@ -816,9 +800,6 @@ export const PickingModule = ({ currentUser } = {}) => {
                 <Edit3 className="w-4 h-4" />
               )}
             </button>
-          )}
-          {ticket.status === TicketStatus.PENDING && !ticket.is_virtual && (
-            <button onClick={() => handleConfirm(ticket)} className="px-2.5 py-1 rounded-md border text-xs font-medium bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100 dark:bg-emerald-500/10 dark:text-emerald-300 dark:border-emerald-500/25 dark:hover:bg-emerald-500/20 transition-colors ml-1">OK</button>
           )}
         </div>
       </div>
@@ -1555,41 +1536,6 @@ export const PickingModule = ({ currentUser } = {}) => {
         </div>
       )}
 
-      {confirmTicket && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="bg-card border border-border rounded-lg w-full max-w-md shadow-xl p-6 space-y-4 animate-in zoom-in-95 duration-200">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2 text-emerald-600 dark:text-emerald-400">
-                <CheckCircle className="w-5 h-5" />
-                <h3 className="font-semibold text-sm">{t('confirm')}</h3>
-              </div>
-              <button onClick={() => setConfirmTicket(null)} disabled={confirmSaving} className="p-1 hover:bg-muted rounded-md transition-colors disabled:opacity-50"><X className="w-5 h-5" /></button>
-            </div>
-
-            <p className="text-sm text-muted-foreground">
-              {t('wms_pk_confirm_deduct')}
-            </p>
-            <div className="bg-muted/40 rounded-lg p-3 border border-border text-xs font-mono">
-              <span className="text-foreground font-medium">{confirmTicket.ticket_id}</span>
-              <span className="text-muted-foreground"> · #{confirmTicket.order_number} · {confirmTicket.customer || ''} · {confirmTicket.style || ''}</span>
-            </div>
-
-            <div className="flex gap-2 pt-1">
-              <button
-                onClick={doConfirm}
-                disabled={confirmSaving}
-                className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-medium text-sm py-2 rounded-md transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
-              >
-                {confirmSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />}
-                {t('confirm')}
-              </button>
-              <Btn onClick={() => setConfirmTicket(null)} disabled={confirmSaving} className="flex-1">
-                {t('cancel')}
-              </Btn>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };
